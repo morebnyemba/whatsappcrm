@@ -2,7 +2,7 @@
 import React from 'react';
 import { FiCpu, FiCheckSquare, FiClock, FiMessageSquare, FiLoader } from 'react-icons/fi';
 import { Progress } from "@/components/ui/progress"; // Assuming shadcn/ui progress
-
+import { Label } from '@/components/ui/label';
 export default function BotPerformanceDisplay({ data, isLoading }) {
   if (isLoading) {
     return <div className="flex items-center justify-center h-full"><FiLoader className="animate-spin h-8 w-8 text-slate-500"/></div>;

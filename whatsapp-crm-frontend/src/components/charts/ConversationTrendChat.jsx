@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { FiLoader } from 'react-icons/fi';
-
+import { Label } from '@/components/ui/label';
 // Helper to format date ticks on XAxis if needed
 const formatDateTick = (tickItem) => {
   // Assuming tickItem is "YYYY-MM-DD"

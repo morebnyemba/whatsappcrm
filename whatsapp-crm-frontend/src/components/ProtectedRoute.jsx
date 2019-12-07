@@ -1,33 +1,38 @@
 // Filename: src/components/ProtectedRoute.jsx
 import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext'; // Ensure path is correct
 import { Skeleton } from '@/components/ui/skeleton'; // For loading state
+import { FiLoader } from 'react-icons/fi'; // Optional: for a spinner icon
 
 export default function ProtectedRoute({ children }) {
   const auth = useAuth();
   const location = useLocation();
 
   if (auth.isLoading) {
-    // Show a loading indicator while checking auth status
+    // Display a full-page loading indicator while auth status is being checked
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-full max-w-md p-8 space-y-4">
-            <Skeleton className="h-12 w-full rounded-md" />
-            <Skeleton className="h-8 w-3/4 rounded-md" />
-            <Skeleton className="h-8 w-1/2 rounded-md" />
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background dark:bg-slate-900 p-4">
+        <FiLoader className="h-12 w-12 animate-spin text-blue-500 dark:text-blue-400 mb-6" />
+        <p className="text-lg text-foreground dark:text-slate-300 mb-2">Authenticating...</p>
+        <div className="w-full max-w-sm space-y-3">
+            <Skeleton className="h-8 w-full rounded-md dark:bg-slate-700" />
+            <Skeleton className="h-8 w-3/4 rounded-md dark:bg-slate-700" />
         </div>
       </div>
     );
   }
 
   if (!auth.isAuthenticated) {
-    // Redirect them to the /login page, but save the current location they were
-    // trying to go to when they were redirected. This allows us to send them
-    // along to that page after they login, which is a nicer user experience
-    // than dropping them off on the home page.
+    // User is not authenticated after loading, redirect to login.
+    // Preserve the intended location to redirect back after successful login.
+    console.log("ProtectedRoute: Not authenticated, redirecting to login. From:", location.pathname);
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // If authenticated and not loading, render the children.
+  // In your App.jsx setup, `children` is typically <DashboardLayout />,
+  // which then contains an <Outlet /> for its own nested routes.
+  // If ProtectedRoute itself was defining child routes in App.jsx, it would render <Outlet /> here.
   return children;
 };
