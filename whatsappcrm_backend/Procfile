@@ -1,0 +1,4 @@
+web: python manage.py runserver
+worker: celery -A whatsappcrm_backend worker -l info --pool=solo
+beat: celery -A whatsappcrm_backend beat -l info
+flower: celery -A whatsappcrm_backend flower --port=5558
