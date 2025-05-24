@@ -1,0 +1,30 @@
+# Django Core
+django
+
+# Environment variable management
+python-dotenv
+
+# Admin interface theme
+django-jazzmin
+
+# REST API framework
+djangorestframework
+djangorestframework-simplejwt
+
+# CORS handling
+django-cors-headers
+
+# Celery and related packages
+celery
+django-celery-results
+django-celery-beat
+redis # For Celery broker if using Redis
+
+# Database connector (PostgreSQL)
+psycopg2-binary # Or psycopg2 if you manage build dependencies
+
+# WSGI server for production
+gunicorn
+
+# ASGI server (since ASGI_APPLICATION is defined)
+daphne
