@@ -2,13 +2,14 @@
 
 from rest_framework import serializers
 from .models import Contact, Message
-# from meta_integration.serializers import MetaAppConfigSerializer # If you uncomment associated_app_config
+from customer_data.serializers import CustomerProfileSerializer # <--- IMPORT CustomerProfileSerializer
 
 class ContactSerializer(serializers.ModelSerializer):
     """
-    Serializer for the Contact model.
+    Serializer for basic Contact model information.
     """
-    # associated_app_config_details = MetaAppConfigSerializer(source='associated_app_config', read_only=True) # Example if FK is active
+    # If you have a method on the model to get a display name or prefer contact.name
+    # display_name = serializers.CharField(source='get_display_name', read_only=True) # Example
 
     class Meta:
         model = Contact
@@ -16,42 +17,40 @@ class ContactSerializer(serializers.ModelSerializer):
             'id',
             'whatsapp_id',
             'name',
-            # 'associated_app_config', # ID of the config
-            # 'associated_app_config_details', # Full details of the config
-            'first_seen',
+            'first_seen', # This is the contact creation timestamp
             'last_seen',
             'is_blocked',
-            # 'custom_fields',
-            # 'current_flow_state',
+            'needs_human_intervention', # From your updated Contact model
+            'intervention_requested_at', # From your updated Contact model
+            # 'display_name', # If you add a property for it
         ]
-        read_only_fields = ('id', 'first_seen', 'last_seen') # whatsapp_id might also be read_only after creation
+        read_only_fields = ('id', 'first_seen', 'last_seen', 'intervention_requested_at')
 
-    # You could add a method to validate whatsapp_id format if needed
+    # Example validation if you need it (not strictly required by current setup)
     # def validate_whatsapp_id(self, value):
-    #     # Add validation logic for WhatsApp ID format
-    #     if not value.isdigit() or len(value) < 10: # Basic example
+    #     if not re.match(r"^\+?\d{10,15}$", value): # Basic international phone number regex
     #         raise serializers.ValidationError("Invalid WhatsApp ID format.")
     #     return value
 
 class MessageSerializer(serializers.ModelSerializer):
     """
-    Serializer for the Message model.
+    Detailed serializer for the Message model.
     """
-    contact_details = ContactSerializer(source='contact', read_only=True) # Nested contact details for read operations
-    contact = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), write_only=True) # For creating/linking messages
+    # For read operations, showing basic contact details with the message
+    contact_details = ContactSerializer(source='contact', read_only=True)
+    # For write operations (creating a message), frontend will send contact PK
+    contact = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), write_only=True)
+    
     message_type_display = serializers.CharField(source='get_message_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     direction_display = serializers.CharField(source='get_direction_display', read_only=True)
-    # app_config_details = MetaAppConfigSerializer(source='app_config', read_only=True) # Example if FK is active
 
     class Meta:
         model = Message
         fields = [
             'id',
             'contact', # Write-only ID for associating message
-            'contact_details', # Read-only nested object
-            # 'app_config', # ID of the config
-            # 'app_config_details', # Full details of the config
+            'contact_details', # Read-only nested object for display
             'wamid',
             'direction',
             'direction_display',
@@ -69,57 +68,105 @@ class MessageSerializer(serializers.ModelSerializer):
         read_only_fields = (
             'id', 'wamid', 'timestamp', 'status_timestamp', 'error_details',
             'message_type_display', 'status_display', 'direction_display',
-            'contact_details', # 'app_config_details'
+            'contact_details',
         )
-        # For creating outgoing messages, some fields will be set by the backend
-        # 'direction' might be set based on the endpoint, 'status' initialized to 'pending'
 
     def create(self, validated_data):
-        # Example: If creating an outgoing message, set direction and initial status
-        # This logic might be better handled in the view or a service layer
-        # if 'direction' not in validated_data: # Or based on some other logic
-        #     validated_data['direction'] = 'out'
-        # if 'status' not in validated_data:
-        #     validated_data['status'] = 'pending'
-        
+        # This create method is for when your frontend POSTs to /crm-api/conversations/messages/
+        # to send an outgoing message.
+        # The actual sending via WhatsApp API should be handled by a Celery task
+        # triggered from the MessageViewSet's perform_create method.
+
+        # Set defaults for outgoing messages created via API
+        validated_data['direction'] = 'out'
+        validated_data['status'] = 'pending_dispatch' # Or 'pending_send'
+        if 'timestamp' not in validated_data:
+             validated_data['timestamp'] = timezone.now()
+
         message = Message.objects.create(**validated_data)
+        
+        # Trigger Celery task to send the message
+        # from meta_integration.tasks import send_whatsapp_message_task
+        # from meta_integration.models import MetaAppConfig
+        # active_config = MetaAppConfig.objects.get_active_config() # Or pass config_id
+        # if active_config:
+        #     send_whatsapp_message_task.delay(message.id, active_config.id)
+        # else:
+        #     logger.error(f"No active MetaAppConfig found. Message {message.id} cannot be dispatched.")
+        #     message.status = 'failed'
+        #     message.error_details = {'error': 'No active MetaAppConfig for sending.'}
+        #     message.save()
+            
         return message
 
 class MessageListSerializer(MessageSerializer):
     """
-    A more concise serializer for listing Messages, potentially excluding bulky fields.
+    A more concise serializer for listing Messages, excluding bulky fields like full content_payload.
     """
-    class Meta(MessageSerializer.Meta):
-        fields = [
-            f for f in MessageSerializer.Meta.fields if f not in ['content_payload', 'error_details']
-        ] + ['content_preview'] # Add a custom preview field
-        read_only_fields = fields
-
-
     content_preview = serializers.SerializerMethodField()
 
-    def get_content_preview(self, obj):
+    class Meta(MessageSerializer.Meta):
+        # Override fields from MessageSerializer.Meta
+        fields = [
+            'id',
+            # 'contact', # Usually not needed in a list if messages are already filtered by contact
+            'contact_details', # Or just contact_id and contact_name if contact_details is too much
+            'wamid',
+            'direction',
+            'direction_display',
+            'message_type',
+            'message_type_display',
+            'timestamp',
+            'status',
+            'status_display',
+            'content_preview', # Custom preview field
+            'is_internal_note',
+        ]
+        # read_only_fields are inherited and all listed fields are effectively read_only here.
+
+    def get_content_preview(self, obj: Message) -> str:
         if obj.text_content:
-            return (obj.text_content[:100] + '...') if len(obj.text_content) > 100 else obj.text_content
-        elif obj.message_type != 'text' and isinstance(obj.content_payload, dict):
-            if obj.message_type == 'interactive' and obj.content_payload.get('type'):
-                return f"Interactive: {obj.content_payload.get('type')}"
-            if obj.content_payload.get('caption'): # For media
-                 caption = obj.content_payload.get('caption')
-                 return (f"[{obj.message_type.capitalize()}] {caption[:70]}" + ('...' if len(caption) > 70 else ''))
-            return f"({obj.message_type.capitalize()} message)"
-        return "N/A"
+            return (obj.text_content[:75] + '...') if len(obj.text_content) > 75 else obj.text_content
+        
+        # Provide more specific previews for common non-text types
+        if obj.message_type == 'image': return "[Image]"
+        if obj.message_type == 'document': return f"[Document: {obj.content_payload.get('document', {}).get('filename', 'file')}]"
+        if obj.message_type == 'audio': return "[Audio]"
+        if obj.message_type == 'video': return "[Video]"
+        if obj.message_type == 'sticker': return "[Sticker]"
+        if obj.message_type == 'location': return "[Location Shared]"
+        if obj.message_type == 'contacts': return "[Contact Card Shared]"
+        
+        if obj.message_type == 'interactive' and isinstance(obj.content_payload, dict):
+            interactive_type = obj.content_payload.get('type')
+            if interactive_type == 'button_reply' and obj.content_payload.get('button_reply'):
+                return f"Button Click: {obj.content_payload['button_reply'].get('title', obj.content_payload['button_reply'].get('id'))}"
+            if interactive_type == 'list_reply' and obj.content_payload.get('list_reply'):
+                return f"List Selection: {obj.content_payload['list_reply'].get('title', obj.content_payload['list_reply'].get('id'))}"
+            return f"Interactive: {interactive_type or 'message'}"
+        
+        if obj.message_type == 'button': # This is for user's button *reply*
+             if isinstance(obj.content_payload, dict) and obj.content_payload.get('button', {}).get('text'):
+                 return f"Button Reply: {obj.content_payload['button']['text']}"
+             return "Button Reply"
+
+        if obj.message_type == 'system' and isinstance(obj.content_payload, dict) and obj.content_payload.get('system', {}).get('body'):
+            return f"System: {obj.content_payload['system']['body']}"
+
+        return f"({obj.get_message_type_display()})"
+
 
 class ContactDetailSerializer(ContactSerializer):
     """
-    Contact serializer that includes a list of recent messages.
+    Contact serializer that includes the nested CustomerProfile 
+    and a list of recent messages for detailed views.
     """
-    recent_messages = MessageListSerializer(many=True, read_only=True, source='messages_preview') # Use a property/method on model
+    customer_profile = CustomerProfileSerializer(read_only=True) # <--- NESTED PROFILE
+    recent_messages = MessageListSerializer(many=True, read_only=True, source='get_recent_messages_for_serializer') 
+    # 'get_recent_messages_for_serializer' should be a method on your Contact model
 
     class Meta(ContactSerializer.Meta):
-        fields = ContactSerializer.Meta.fields + ['recent_messages']
-
-    # The 'messages_preview' source would refer to a method or property on the Contact model, e.g.:
-    # @property
-    # def messages_preview(self):
-    #     return self.messages.order_by('-timestamp')[:10] # Get last 10 messages
+        # Inherit fields from ContactSerializer and add new ones
+        fields = ContactSerializer.Meta.fields + ['customer_profile', 'recent_messages']
+        # read_only_fields are inherited from ContactSerializer.Meta.
+        # 'customer_profile' and 'recent_messages' are defined as read_only=True here.
