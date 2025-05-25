@@ -87,7 +87,14 @@ class Message(models.Model):
         ('crm_note', 'CRM Internal Note'),
         ('flow_trigger', 'Flow Trigger (Internal)'),
     ]
-
+    triggered_by_flow_step = models.ForeignKey(
+        'flows.FlowStep',  # Adjust 'flows.FlowStep' if your app/model name is different
+        on_delete=models.SET_NULL,  # Or models.PROTECT, models.CASCADE as appropriate
+        null=True,
+        blank=True,
+        related_name='triggered_messages',
+        help_text="The flow step that triggered the creation of this message, if any."
+    )
     # Status for outgoing messages, reflecting Meta's statuses
     STATUS_CHOICES = [
         ('pending', 'Pending Send'), # CRM has generated it, not yet sent to Meta
