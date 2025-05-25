@@ -267,13 +267,13 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
         path_to_traverse = parts[1:]
     elif source_object_name == 'customer_profile':
         try:
-            current_value = contact.customer_profile # Adjusted for OneToOneField (no .get() needed if sure it exists or handle DoesNotExist)
+            current_value = contact.customer_profile 
             path_to_traverse = parts[1:]
         except CustomerProfile.DoesNotExist:
             logger.debug(f"CustomerProfile does not exist for contact {contact.id} when accessing '{variable_path}'")
             return None
-        except AttributeError:
-            logger.debug(f"Contact {contact.id} has no customer_profile attribute for '{variable_path}'") # customer_profile (lowercase)
+        except AttributeError: 
+            logger.debug(f"Contact {contact.id} has no customer_profile attribute for '{variable_path}'")
             return None
     else:
         current_value = flow_context
@@ -285,7 +285,7 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
                     current_value = current_value.get(part)
             elif hasattr(current_value, part):
                     attr_or_method = getattr(current_value, part)
-                    current_value = attr_or_method() if callable(attr_or_method) and attr_or_method.__code__.co_argcount == 0 else attr_or_method
+                    current_value = attr_or_method() if callable(attr_or_method) and hasattr(attr_or_method, '__code__') and attr_or_method.__code__.co_argcount == 0 else attr_or_method
             else:
                     return None
         except Exception as e:
@@ -553,7 +553,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 interactive_reply_id = interactive_payload.get('list_reply', {}).get('id')
         reply_is_valid = False
         value_to_save = None
-        if expected_reply_type == 'text' and user_text:
+        if expected_reply_type == 'text' and user_text: # An empty string for user_text will make this false
             value_to_save = user_text; reply_is_valid = True
         elif expected_reply_type == 'email':
             email_r = validation_regex_ctx or r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -568,19 +568,17 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             except ValueError: pass
         elif expected_reply_type == 'interactive_id' and interactive_reply_id:
             value_to_save = interactive_reply_id; reply_is_valid = True
+        
         if validation_regex_ctx and not reply_is_valid and user_text and expected_reply_type == 'text':
             if re.match(validation_regex_ctx, user_text):
                 value_to_save = user_text; reply_is_valid = True
         
-        # --- MODIFICATION START: Removed premature pop of context variables ---
         if reply_is_valid and variable_to_save_name:
             flow_context[variable_to_save_name] = value_to_save
             logger.info(f"Saved valid reply for '{variable_to_save_name}' in question step '{current_step.name}': {value_to_save}")
-            # The _question_awaiting_reply_for and _fallback_count will be cleared by _transition_to_step
-            # or handled by fallback logic if staying on the same step.
+            # Premature pop calls were removed here. Clearing is handled by _transition_to_step or specific fallbacks.
         else:
-            logger.info(f"Reply for question step '{current_step.name}' was not valid or no variable to save. Expected: {expected_reply_type}")
-        # --- MODIFICATION END ---
+            logger.info(f"Reply for question step '{current_step.name}' was not valid or no variable to save. Expected: {expected_reply_type}, Received text: '{user_text}', Interactive ID: '{interactive_reply_id}'")
 
     transitions = FlowTransition.objects.filter(current_step=current_step).select_related('next_step').order_by('priority')
     next_step_to_transition_to = None
@@ -589,15 +587,17 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             next_step_to_transition_to = transition.next_step
             logger.info(f"Transition condition met: From '{current_step.name}' to '{next_step_to_transition_to.name}'.")
             break
+            
     if next_step_to_transition_to:
         actions, _ = _transition_to_step(
             contact_flow_state, next_step_to_transition_to, flow_context, contact, message_data
         )
         actions_to_perform.extend(actions)
-    else:
+    else: # No transition condition met - Fallback logic
         fallback_config = current_step.config.get('fallback_config', {}) if isinstance(current_step.config, dict) else {}
-        max_fallbacks = fallback_config.get('max_retries', 1)
+        max_fallbacks = fallback_config.get('max_retries', 1) 
         current_fallback_count = flow_context.get('_fallback_count', 0)
+
         if current_step.step_type == 'question' and \
             fallback_config.get('action') == 're_prompt' and \
             current_fallback_count < max_fallbacks:
@@ -613,9 +613,13 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             else:
                 step_actions, updated_context = _execute_step_actions(current_step, contact, flow_context.copy(), is_re_execution=True)
                 actions_to_perform.extend(step_actions)
-                flow_context = updated_context
+                flow_context = updated_context 
+            
+            # Save the updated context (with incremented fallback_count)
+            # This is important so the re-prompt doesn't reset _question_awaiting_reply_for if it was re-set by _execute_step_actions
             contact_flow_state.flow_context_data = flow_context
             contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+
         elif fallback_config.get('fallback_message_text'):
             resolved_fallback_text = _resolve_value(fallback_config['fallback_message_text'], flow_context, contact)
             actions_to_perform.append({
@@ -623,25 +627,28 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 'message_type': 'text', 'data': {'body': resolved_fallback_text}
             })
             if fallback_config.get('handover_after_message', False) or \
-                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks):
+                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks): # Also handover if max retries for a question are done
                 logger.info(f"Fallback: Initiating human handover after fallback message or max retries for {contact.whatsapp_id}.")
+                # _clear_contact_flow_state(contact) # This will be handled by the internal command
                 actions_to_perform.append({'type': '_internal_command_clear_flow_state'})
                 contact.needs_human_intervention = True
                 contact.intervention_requested_at = timezone.now()
                 contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
+        
         elif fallback_config.get('action') == 'human_handover' or \
-                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks):
-            logger.info(f"Fallback: Initiating human handover directly or after max retries for {contact.whatsapp_id}.")
-            pre_handover_msg = fallback_config.get('pre_handover_message_text', "I'm having a bit of trouble. Let me connect you to a human agent.")
+                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks and not fallback_config.get('fallback_message_text') ): # Only if no specific fallback message was sent for max_retries
+            logger.info(f"Fallback: Initiating human handover directly or after max retries (no specific fallback message) for {contact.whatsapp_id}.")
+            pre_handover_msg = fallback_config.get('pre_handover_message_text', "I'm having a bit of trouble understanding. Let me connect you to a human agent for assistance.")
             resolved_msg = _resolve_value(pre_handover_msg, flow_context, contact)
             actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_msg}})
+            # _clear_contact_flow_state(contact) # This will be handled by the internal command
             actions_to_perform.append({'type': '_internal_command_clear_flow_state'})
             contact.needs_human_intervention = True
             contact.intervention_requested_at = timezone.now()
             contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
         else:
-            logger.info(f"No transition met for step '{current_step.name}' and no specific fallback action taken for {contact.whatsapp_id}.")
-            if not actions_to_perform:
+            logger.info(f"No transition met for step '{current_step.name}' and no specific fallback action configured or applicable for {contact.whatsapp_id}.")
+            if not actions_to_perform: 
                 actions_to_perform.append({
                     'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
                     'message_type': 'text', 'data': {'body': "Sorry, I'm not sure how to proceed with that. Can you try something else?"}
@@ -680,9 +687,16 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             )
             step_actions, updated_flow_context = _execute_step_actions(entry_point_step, contact, initial_flow_context.copy())
             actions_to_perform.extend(step_actions)
-            if contact_flow_state.flow_context_data != updated_flow_context:
-                contact_flow_state.flow_context_data = updated_flow_context
-                contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+            
+            # Save context if it changed and state still exists (wasn't cleared by step_actions)
+            current_db_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
+            if current_db_state:
+                if current_db_state.flow_context_data != updated_flow_context:
+                    current_db_state.flow_context_data = updated_flow_context
+                    current_db_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+            else:
+                logger.info(f"Flow state for contact {contact.whatsapp_id} was cleared by entry step '{entry_point_step.name}'. Context not saved.")
+
         else:
             logger.error(f"Flow '{triggered_flow.name}' is active but has no entry point step defined.")
     else:
@@ -795,26 +809,46 @@ def _evaluate_transition_condition(transition: FlowTransition, contact: Contact,
     return False
 
 def _transition_to_step(contact_flow_state: ContactFlowState, next_step: FlowStep, current_flow_context: dict, contact: Contact, message_data: dict) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    logger.info(f"Transitioning contact {contact.whatsapp_id} from '{contact_flow_state.current_step.name}' to '{next_step.name}' in flow '{contact_flow_state.current_flow.name}'.")
+    previous_step_name = contact_flow_state.current_step.name # For logging
+    logger.info(f"Transitioning contact {contact.whatsapp_id} from '{previous_step_name}' to '{next_step.name}' in flow '{contact_flow_state.current_flow.name}'.")
+
+    # 1. Clear question-specific context from the *previous* step's context if it was a question
     if contact_flow_state.current_step.step_type == 'question':
         current_flow_context.pop('_question_awaiting_reply_for', None)
         current_flow_context.pop('_fallback_count', None)
-        logger.debug(f"Cleared question expectation and fallback count from previous step '{contact_flow_state.current_step.name}'.")
-    contact_flow_state.current_step = next_step
-    contact_flow_state.last_updated_at = timezone.now()
+        logger.debug(f"Cleared question expectation and fallback count from previous step '{previous_step_name}'.")
+
+    # 2. Execute actions for the new step (next_step)
+    # Pass a copy of the (potentially cleaned) current_flow_context for the new step to use and modify.
     actions_from_new_step, context_after_new_step_execution = _execute_step_actions(
         next_step, contact, current_flow_context.copy()
     )
-    current_db_state = ContactFlowState.objects.filter(contact=contact).first()
-    if current_db_state and current_db_state.pk == contact_flow_state.pk and current_db_state.current_step == next_step:
-        current_db_state.flow_context_data = context_after_new_step_execution
-        current_db_state.save()
-        logger.debug(f"Saved updated context for contact {contact.whatsapp_id} after transitioning to and executing step '{next_step.name}'.")
-    elif not current_db_state:
-        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during execution of step '{next_step.name}'.")
-    else:
-        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} changed during execution of step '{next_step.name}'. New state: {current_db_state}")
+
+    # 3. After executing actions of the new step, check if the flow state record still exists and is the same one.
+    # It might have been cleared (end_flow, human_handover) or replaced (switch_flow) by actions in 'next_step'.
+    current_db_state_after_actions = ContactFlowState.objects.filter(contact=contact, pk=contact_flow_state.pk).first()
+
+    if current_db_state_after_actions:
+        # The state record still exists and is the one we were working with.
+        # Update it to reflect the new current_step and its resulting context.
+        current_db_state_after_actions.current_step = next_step
+        current_db_state_after_actions.flow_context_data = context_after_new_step_execution
+        current_db_state_after_actions.last_updated_at = timezone.now() 
+        current_db_state_after_actions.save(update_fields=['current_step', 'flow_context_data', 'last_updated_at'])
+        logger.debug(f"Saved ContactFlowState: contact {contact.whatsapp_id} is now at step '{next_step.name}' with context {context_after_new_step_execution}.")
+    
+    # Check if a switch_flow command was issued, which might have created a new state record
+    elif any(action.get('type') == '_internal_command_switch_flow' for action in actions_from_new_step):
+        # If a switch_flow happened, the new state is handled by that command's processing in process_message_for_flow
+        logger.info(f"A switch_flow command was processed during execution of step '{next_step.name}'. Original state (pk={contact_flow_state.pk}) might be invalid or cleared.")
+        # It's possible the original contact_flow_state.pk is now gone due to _clear_contact_flow_state in _internal_command_switch_flow
+        # and a new state record exists. The main process_message_for_flow handles this.
+    
+    elif not ContactFlowState.objects.filter(contact=contact).exists(): # No state record exists for the contact
+        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during execution of step '{next_step.name}'. No state to update.")
+        
     return actions_from_new_step, context_after_new_step_execution
+
 
 def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
     if not field_path:
@@ -932,28 +966,47 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             'message_type': 'text',
             'data': {'body': 'I seem to be having some technical difficulties. Please try again in a moment.'}
         }]
+        
     final_actions_for_meta_view = []
-    for action in actions_to_perform:
+    # Process a copy of actions_to_perform because _trigger_new_flow called by switch_flow might modify it
+    # by extending final_actions_for_meta_view which could affect iteration if iterating over original.
+    # However, current logic appends to final_actions_for_meta_view, so direct iteration is okay for now.
+    for action in actions_to_perform: 
         if action.get('type') == '_internal_command_clear_flow_state':
-            logger.debug(f"Internal command: Cleared flow state for {contact.whatsapp_id}")
+            logger.debug(f"Internal command: Cleared flow state for {contact.whatsapp_id} (already handled if direct).")
         elif action.get('type') == '_internal_command_switch_flow':
             logger.info(f"Processing internal command to switch flow for contact {contact.whatsapp_id}.")
-            _clear_contact_flow_state(contact)
+            # _clear_contact_flow_state(contact) is called within _trigger_new_flow or before calling it when switching.
+            # Ensure it's called before creating a new state.
+            # The original clear for switch was here, moving to be sure it happens before _trigger_new_flow for switch.
+            # _clear_contact_flow_state(contact) # This is good to ensure clean state for new flow.
+
             new_flow_name = action.get('target_flow_name')
-            initial_context_for_new_flow = action.get('initial_context', {})
+            initial_context_for_new_flow = action.get('initial_context', {}) # Should be a dict
             new_flow_trigger_msg_body = action.get('new_flow_trigger_message_body')
-            synthetic_message_data = {'type': 'text', 'text': {'body': new_flow_trigger_msg_body or ''}}
-            switched_flow_actions = _trigger_new_flow(contact, synthetic_message_data, incoming_message_obj)
+            
+            synthetic_message_data = {'type': 'text', 'text': {'body': new_flow_trigger_msg_body or f"trigger_{new_flow_name}"}} # Ensure some text body
+
+            # _clear_contact_flow_state(contact) is implicitly called by _trigger_new_flow if it finds an old state,
+            # but for an explicit switch, we ensure it's clean.
+            # Note: _trigger_new_flow itself has a _clear_contact_flow_state(contact) if a keyword triggers a new flow.
+            # If switching programmatically, we ensure the old one is gone.
+            ContactFlowState.objects.filter(contact=contact).delete() # Explicit clear for switch
+
+            switched_flow_actions = _trigger_new_flow(contact, synthetic_message_data, incoming_message_obj) # incoming_message_obj here is from original trigger
+            
             newly_created_state = ContactFlowState.objects.filter(contact=contact).first()
-            if newly_created_state and initial_context_for_new_flow:
+            if newly_created_state and initial_context_for_new_flow and isinstance(initial_context_for_new_flow, dict):
                 if not isinstance(newly_created_state.flow_context_data, dict):
                     newly_created_state.flow_context_data = {}
                 newly_created_state.flow_context_data.update(initial_context_for_new_flow)
-                newly_created_state.save(update_fields=['flow_context_data'])
+                newly_created_state.save(update_fields=['flow_context_data', 'last_updated_at'])
                 logger.info(f"Applied initial context to new flow state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
+
             final_actions_for_meta_view.extend(switched_flow_actions)
         elif action.get('type') == 'send_whatsapp_message':
             final_actions_for_meta_view.append(action)
         else:
             logger.warning(f"Unhandled action type in final processing: {action.get('type')}")
+            
     return final_actions_for_meta_view
