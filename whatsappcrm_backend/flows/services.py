@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-from typing import List, Dict, Any, Optional, Union, Literal # For Pydantic type hinting
+from typing import List, Dict, Any, Optional, Union, Literal 
 
 from django.utils import timezone
 from django.db import transaction
@@ -11,9 +11,9 @@ from pydantic import BaseModel, ValidationError, field_validator, root_validator
 
 from conversations.models import Contact, Message
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
-from customer_data.models import CustomerProfile # Make sure this import is correct
+from customer_data.models import CustomerProfile
 try:
-    from media_manager.models import MediaAsset # For asset_pk lookup
+    from media_manager.models import MediaAsset
     MEDIA_ASSET_ENABLED = True
 except ImportError:
     MEDIA_ASSET_ENABLED = False
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 if not MEDIA_ASSET_ENABLED:
     logger.warning("MediaAsset model not found or could not be imported. MediaAsset functionality (e.g., 'asset_pk') will be disabled in flows.")
 
+# --- Pydantic Models (Assuming these are unchanged from your last version) ---
 class BasePydanticConfig(BaseModel):
     class Config:
         extra = 'allow'
@@ -253,6 +254,7 @@ class StepConfigEndFlow(BasePydanticConfig):
 InteractiveMessagePayload.model_rebuild()
 
 
+# --- MODIFICATION: Refined _get_value_from_context_or_contact for method calls ---
 def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, contact: Contact) -> Any:
     if not variable_path: return None
     parts = variable_path.split('.')
@@ -282,18 +284,43 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
     for i, part in enumerate(path_to_traverse):
         try:
             if isinstance(current_value, dict):
-                    current_value = current_value.get(part)
+                current_value = current_value.get(part)
             elif hasattr(current_value, part):
-                    attr_or_method = getattr(current_value, part)
-                    current_value = attr_or_method() if callable(attr_or_method) and hasattr(attr_or_method, '__code__') and attr_or_method.__code__.co_argcount == 0 else attr_or_method
-            else:
-                    return None
+                attr_or_method = getattr(current_value, part)
+                if callable(attr_or_method):
+                    try:
+                        # Heuristic to call simple no-argument (other than self) methods
+                        num_args = -1
+                        if hasattr(attr_or_method, '__func__'): # Bound method
+                            num_args = attr_or_method.__func__.__code__.co_argcount
+                            if num_args == 1: # Only 'self'
+                                current_value = attr_or_method()
+                            else: # Method takes other arguments
+                                current_value = attr_or_method # Return method itself
+                        elif hasattr(attr_or_method, '__code__'): # Regular function
+                            num_args = attr_or_method.__code__.co_argcount
+                            if num_args == 0: # No args
+                                current_value = attr_or_method()
+                            else: # Function takes arguments
+                                current_value = attr_or_method # Return function itself
+                        else: # Unknown callable type, don't call if unsure about args
+                            current_value = attr_or_method 
+                    except AttributeError: # some callables might not have __func__ or __code__
+                        current_value = attr_or_method # Fallback
+                    except TypeError: # Call failed (e.g. wrong number of args if heuristic was off)
+                        logger.warning(f"TypeError calling {part} for {variable_path}. Returning method itself.")
+                        current_value = attr_or_method # Fallback
+                else: # Not callable
+                    current_value = attr_or_method
+            else: # Part not found
+                return None
         except Exception as e:
             logger.warning(f"Error accessing path '{'.'.join(path_to_traverse[:i+1])}' on object for '{variable_path}': {e}")
             return None
-        if current_value is None and i < len(path_to_traverse) - 1:
+        if current_value is None and i < len(path_to_traverse) - 1: # Intermediate part is None
             return None
     return current_value
+# --- END MODIFICATION ---
 
 def _resolve_value(template_value: Any, flow_context: dict, contact: Contact) -> Any:
     if isinstance(template_value, str):
@@ -553,7 +580,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 interactive_reply_id = interactive_payload.get('list_reply', {}).get('id')
         reply_is_valid = False
         value_to_save = None
-        if expected_reply_type == 'text' and user_text: # An empty string for user_text will make this false
+        if expected_reply_type == 'text' and user_text: 
             value_to_save = user_text; reply_is_valid = True
         elif expected_reply_type == 'email':
             email_r = validation_regex_ctx or r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -576,7 +603,6 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
         if reply_is_valid and variable_to_save_name:
             flow_context[variable_to_save_name] = value_to_save
             logger.info(f"Saved valid reply for '{variable_to_save_name}' in question step '{current_step.name}': {value_to_save}")
-            # Premature pop calls were removed here. Clearing is handled by _transition_to_step or specific fallbacks.
         else:
             logger.info(f"Reply for question step '{current_step.name}' was not valid or no variable to save. Expected: {expected_reply_type}, Received text: '{user_text}', Interactive ID: '{interactive_reply_id}'")
 
@@ -589,11 +615,13 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             break
             
     if next_step_to_transition_to:
-        actions, _ = _transition_to_step(
+        # Pass the current flow_context, which might have been updated by question reply processing.
+        # _transition_to_step will handle clearing question-specific keys from this context if current_step was a question.
+        actions_from_next_step, _ = _transition_to_step( # The second return value (updated context) is handled by _transition_to_step saving it.
             contact_flow_state, next_step_to_transition_to, flow_context, contact, message_data
         )
-        actions_to_perform.extend(actions)
-    else: # No transition condition met - Fallback logic
+        actions_to_perform.extend(actions_from_next_step)
+    else: 
         fallback_config = current_step.config.get('fallback_config', {}) if isinstance(current_step.config, dict) else {}
         max_fallbacks = fallback_config.get('max_retries', 1) 
         current_fallback_count = flow_context.get('_fallback_count', 0)
@@ -611,12 +639,11 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     'message_type': 'text', 'data': {'body': resolved_re_prompt_text}
                 })
             else:
-                step_actions, updated_context = _execute_step_actions(current_step, contact, flow_context.copy(), is_re_execution=True)
+                # Re-execute the original question's message_config actions
+                step_actions, updated_context_from_re_execution = _execute_step_actions(current_step, contact, flow_context.copy(), is_re_execution=True)
                 actions_to_perform.extend(step_actions)
-                flow_context = updated_context 
+                flow_context = updated_context_from_re_execution # Ensure context (like _question_awaiting_reply_for) is correctly re-set
             
-            # Save the updated context (with incremented fallback_count)
-            # This is important so the re-prompt doesn't reset _question_awaiting_reply_for if it was re-set by _execute_step_actions
             contact_flow_state.flow_context_data = flow_context
             contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
 
@@ -627,21 +654,19 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 'message_type': 'text', 'data': {'body': resolved_fallback_text}
             })
             if fallback_config.get('handover_after_message', False) or \
-                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks): # Also handover if max retries for a question are done
+                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks):
                 logger.info(f"Fallback: Initiating human handover after fallback message or max retries for {contact.whatsapp_id}.")
-                # _clear_contact_flow_state(contact) # This will be handled by the internal command
                 actions_to_perform.append({'type': '_internal_command_clear_flow_state'})
                 contact.needs_human_intervention = True
                 contact.intervention_requested_at = timezone.now()
                 contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
         
         elif fallback_config.get('action') == 'human_handover' or \
-                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks and not fallback_config.get('fallback_message_text') ): # Only if no specific fallback message was sent for max_retries
+                (current_step.step_type == 'question' and current_fallback_count >= max_fallbacks and not fallback_config.get('fallback_message_text') ):
             logger.info(f"Fallback: Initiating human handover directly or after max retries (no specific fallback message) for {contact.whatsapp_id}.")
             pre_handover_msg = fallback_config.get('pre_handover_message_text', "I'm having a bit of trouble understanding. Let me connect you to a human agent for assistance.")
             resolved_msg = _resolve_value(pre_handover_msg, flow_context, contact)
             actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_msg}})
-            # _clear_contact_flow_state(contact) # This will be handled by the internal command
             actions_to_perform.append({'type': '_internal_command_clear_flow_state'})
             contact.needs_human_intervention = True
             contact.intervention_requested_at = timezone.now()
@@ -677,7 +702,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         entry_point_step = FlowStep.objects.filter(flow=triggered_flow, is_entry_point=True).first()
         if entry_point_step:
             logger.info(f"Starting flow '{triggered_flow.name}' for contact {contact.whatsapp_id} at entry step '{entry_point_step.name}'.")
-            _clear_contact_flow_state(contact)
+            _clear_contact_flow_state(contact) # Clear any previous state before starting anew
             contact_flow_state = ContactFlowState.objects.create(
                 contact=contact,
                 current_flow=triggered_flow,
@@ -688,39 +713,41 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             step_actions, updated_flow_context = _execute_step_actions(entry_point_step, contact, initial_flow_context.copy())
             actions_to_perform.extend(step_actions)
             
-            # Save context if it changed and state still exists (wasn't cleared by step_actions)
             current_db_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
-            if current_db_state:
-                if current_db_state.flow_context_data != updated_flow_context:
+            if current_db_state: # Check if state was not cleared by entry step itself
+                if current_db_state.flow_context_data != updated_flow_context: # Save context if changed
                     current_db_state.flow_context_data = updated_flow_context
                     current_db_state.save(update_fields=['flow_context_data', 'last_updated_at'])
             else:
                 logger.info(f"Flow state for contact {contact.whatsapp_id} was cleared by entry step '{entry_point_step.name}'. Context not saved.")
-
         else:
             logger.error(f"Flow '{triggered_flow.name}' is active but has no entry point step defined.")
     else:
         logger.info(f"No active flow triggered for contact {contact.whatsapp_id} with message: {message_text_body[:100] if message_text_body else message_data.get('type')}")
     return actions_to_perform
 
-def _evaluate_transition_condition(transition: FlowTransition, contact: Contact, message_data: dict, flow_context: dict, incoming_message_obj: Message) -> bool:
+def _evaluate_transition_condition(transition: FlowTransition, contact: Contact, message_data: dict, flow_context: dict, incoming_message_obj: Optional[Message]) -> bool: # Made incoming_message_obj optional
     config = transition.condition_config
     if not isinstance(config, dict):
         logger.warning(f"Transition {transition.id} has invalid condition_config (not a dict): {config}")
         return False
     condition_type = config.get('type')
-    logger.debug(f"Evaluating condition type '{condition_type}' for transition {transition.id} of step '{transition.current_step.name}'. Context: {flow_context}, Message Type: {message_data.get('type')}")
+    
+    # For automatic transitions, message_data might be empty, and incoming_message_obj will be None.
+    # Log slightly differently or ensure conditions handle potentially empty message_data.
+    log_message_type = message_data.get('type') if message_data else "N/A (automatic transition check)"
+    logger.debug(f"Evaluating condition type '{condition_type}' for transition {transition.id} of step '{transition.current_step.name}'. Context: {flow_context}, Message Type: {log_message_type}")
 
     if not condition_type: return False
     if condition_type == 'always_true': return True
 
     user_text = ""
-    if message_data.get('type') == 'text' and isinstance(message_data.get('text'), dict):
+    if message_data and message_data.get('type') == 'text' and isinstance(message_data.get('text'), dict):
         user_text = message_data.get('text', {}).get('body', '').strip()
 
     interactive_reply_id = None
     nfm_response_data = None
-    if message_data.get('type') == 'interactive' and isinstance(message_data.get('interactive'), dict):
+    if message_data and message_data.get('type') == 'interactive' and isinstance(message_data.get('interactive'), dict):
         interactive_payload = message_data.get('interactive', {})
         interactive_type_from_payload = interactive_payload.get('type')
         if interactive_type_from_payload == 'button_reply' and isinstance(interactive_payload.get('button_reply'), dict):
@@ -737,22 +764,27 @@ def _evaluate_transition_condition(transition: FlowTransition, contact: Contact,
     value_for_condition = config.get('value')
 
     if condition_type == 'user_reply_matches_keyword':
+        if not user_text: return False # Condition needs user text
         keyword = str(config.get('keyword', '')).strip()
         if not keyword: return False
         case_sensitive = config.get('case_sensitive', False)
         return (keyword == user_text) if case_sensitive else (keyword.lower() == user_text.lower())
     elif condition_type == 'user_reply_contains_keyword':
+        if not user_text: return False
         keyword = str(config.get('keyword', '')).strip()
         if not keyword: return False
         case_sensitive = config.get('case_sensitive', False)
         return (keyword in user_text) if case_sensitive else (keyword.lower() in user_text.lower())
     elif condition_type == 'interactive_reply_id_equals':
-        return interactive_reply_id is not None and interactive_reply_id == str(value_for_condition)
+        if interactive_reply_id is None: return False
+        return interactive_reply_id == str(value_for_condition)
     elif condition_type == 'message_type_is':
+        if not message_data: return False # Condition needs message data
         return message_data.get('type') == str(value_for_condition)
     elif condition_type == 'user_reply_matches_regex':
+        if not user_text: return False
         regex = config.get('regex')
-        if regex and user_text:
+        if regex:
             try: return bool(re.match(regex, user_text))
             except re.error as e: logger.error(f"Invalid regex in transition {transition.id}: {regex}. Error: {e}"); return False
         return False
@@ -775,7 +807,8 @@ def _evaluate_transition_condition(transition: FlowTransition, contact: Contact,
         if isinstance(actual_value, str) and isinstance(expected_item, str): return expected_item in actual_value
         if isinstance(actual_value, list) and expected_item is not None: return expected_item in actual_value
         return False
-    elif condition_type == 'nfm_response_field_equals' and nfm_response_data:
+    elif condition_type == 'nfm_response_field_equals':
+        if not nfm_response_data: return False
         field_path = config.get('field_path')
         if not field_path: return False
         actual_val_from_nfm = nfm_response_data
@@ -791,62 +824,138 @@ def _evaluate_transition_condition(transition: FlowTransition, contact: Contact,
             return is_var_set_and_not_none if value_for_condition is True else not is_var_set_and_not_none
         return False
     elif condition_type == 'user_requests_human':
+        if not user_text: return False
         human_request_keywords = config.get('keywords', ['help', 'support', 'agent', 'human', 'operator'])
-        if user_text and isinstance(human_request_keywords, list):
+        if isinstance(human_request_keywords, list):
             user_text_lower = user_text.lower()
             for keyword in human_request_keywords:
                 if isinstance(keyword, str) and keyword.strip() and keyword.strip().lower() in user_text_lower:
                     logger.info(f"User requested human agent with keyword: '{keyword}'")
                     return True
         return False
-    elif condition_type == 'user_reply_received':
-        if message_data and message_data.get('type'):
+    elif condition_type == 'user_reply_received': # This condition specifically means a user sent *something*
+        if message_data and message_data.get('type'): # Check if there's actual message_data from user
             logger.info(f"Condition 'user_reply_received' met for contact {contact.whatsapp_id} as a message of type '{message_data.get('type')}' was received.")
             return True
         logger.debug(f"Condition 'user_reply_received' not met for contact {contact.whatsapp_id} (no valid message_data or message type).")
         return False
+        
     logger.warning(f"Unknown or unhandled condition type: '{condition_type}' for transition {transition.id} or condition logic not met.")
     return False
 
+# --- NEW FUNCTION: _process_automatic_transitions ---
+def _process_automatic_transitions(contact_flow_state: ContactFlowState, contact: Contact) -> List[Dict[str, Any]]:
+    """
+    Processes automatic transitions from the current step in contact_flow_state.
+    This is for transitions that don't require fresh user input (e.g., always_true, variable_exists).
+    It will iteratively transition and execute actions until a step is reached that
+    requires user input or the flow ends.
+
+    Args:
+        contact_flow_state: The current state of the contact in the flow. This object will be mutated.
+        contact: The Contact object.
+
+    Returns:
+        A list of actions generated from auto-transitioned steps.
+    """
+    accumulated_actions = []
+    max_auto_transitions = 10  # Safety break
+    transitions_count = 0
+
+    while transitions_count < max_auto_transitions:
+        current_step = contact_flow_state.current_step
+        flow_context = contact_flow_state.flow_context_data if contact_flow_state.flow_context_data is not None else {}
+
+        logger.debug(f"Auto-transition check for contact {contact.whatsapp_id} at step '{current_step.name}'.")
+
+        # Stop auto-transitions if the current step is a question that is actively awaiting a reply.
+        if current_step.step_type == 'question':
+            if flow_context.get('_question_awaiting_reply_for', {}).get('original_question_step_id') == current_step.id:
+                logger.debug(f"Step '{current_step.name}' is a question actively awaiting reply. Stopping automatic transitions.")
+                break
+        
+        transitions = FlowTransition.objects.filter(current_step=current_step).select_related('next_step').order_by('priority')
+        next_step_to_transition_to = None
+
+        for transition in transitions:
+            # Pass empty message_data and no incoming_message_obj for automatic transition checks
+            if _evaluate_transition_condition(transition, contact, message_data={}, flow_context=flow_context.copy(), incoming_message_obj=None):
+                next_step_to_transition_to = transition.next_step
+                logger.info(f"Automatic transition condition met: From '{current_step.name}' to '{next_step_to_transition_to.name}'.")
+                break
+        
+        if next_step_to_transition_to:
+            # _transition_to_step updates contact_flow_state (current_step, context) and saves it.
+            # It takes the current context of the step we are leaving.
+            actions_from_transitioned_step, updated_context = _transition_to_step(
+                contact_flow_state, # This object is updated by _transition_to_step
+                next_step_to_transition_to,
+                flow_context, # This is the context of the step we are leaving
+                contact,
+                message_data={} # Dummy message data
+            )
+            accumulated_actions.extend(actions_from_transitioned_step)
+
+            # Check if flow was cleared or switched by actions in the new step
+            if any(a.get('type') == '_internal_command_clear_flow_state' for a in actions_from_transitioned_step) or \
+               any(a.get('type') == '_internal_command_switch_flow' for a in actions_from_transitioned_step):
+                logger.debug("Flow state cleared or switched during auto-transition. Stopping further auto-transitions.")
+                break # Stop if flow ended or switched
+
+            # Refresh contact_flow_state in case _transition_to_step re-fetched/changed it fundamentally (though it shouldn't for non-switch)
+            # This ensures the loop condition uses the most accurate current step after the transition.
+            refreshed_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
+            if not refreshed_state: # State was cleared
+                break
+            contact_flow_state = refreshed_state # Continue loop with the possibly updated state object
+
+            transitions_count += 1
+        else:
+            logger.debug(f"No further automatic transitions from step '{current_step.name}'.")
+            break # No auto-transition possible from this step
+    
+    if transitions_count >= max_auto_transitions:
+        logger.warning(f"Reached max_auto_transitions ({max_auto_transitions}) for contact {contact.whatsapp_id} at step '{contact_flow_state.current_step.name}'.")
+
+    return accumulated_actions
+
+# --- MODIFIED: _transition_to_step to be more robust with state saving ---
 def _transition_to_step(contact_flow_state: ContactFlowState, next_step: FlowStep, current_flow_context: dict, contact: Contact, message_data: dict) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    previous_step_name = contact_flow_state.current_step.name # For logging
+    previous_step_name = contact_flow_state.current_step.name 
     logger.info(f"Transitioning contact {contact.whatsapp_id} from '{previous_step_name}' to '{next_step.name}' in flow '{contact_flow_state.current_flow.name}'.")
 
-    # 1. Clear question-specific context from the *previous* step's context if it was a question
     if contact_flow_state.current_step.step_type == 'question':
         current_flow_context.pop('_question_awaiting_reply_for', None)
         current_flow_context.pop('_fallback_count', None)
         logger.debug(f"Cleared question expectation and fallback count from previous step '{previous_step_name}'.")
 
-    # 2. Execute actions for the new step (next_step)
-    # Pass a copy of the (potentially cleaned) current_flow_context for the new step to use and modify.
     actions_from_new_step, context_after_new_step_execution = _execute_step_actions(
-        next_step, contact, current_flow_context.copy()
+        next_step, contact, current_flow_context.copy() 
     )
-
-    # 3. After executing actions of the new step, check if the flow state record still exists and is the same one.
-    # It might have been cleared (end_flow, human_handover) or replaced (switch_flow) by actions in 'next_step'.
-    current_db_state_after_actions = ContactFlowState.objects.filter(contact=contact, pk=contact_flow_state.pk).first()
-
-    if current_db_state_after_actions:
-        # The state record still exists and is the one we were working with.
-        # Update it to reflect the new current_step and its resulting context.
-        current_db_state_after_actions.current_step = next_step
-        current_db_state_after_actions.flow_context_data = context_after_new_step_execution
-        current_db_state_after_actions.last_updated_at = timezone.now() 
-        current_db_state_after_actions.save(update_fields=['current_step', 'flow_context_data', 'last_updated_at'])
-        logger.debug(f"Saved ContactFlowState: contact {contact.whatsapp_id} is now at step '{next_step.name}' with context {context_after_new_step_execution}.")
     
-    # Check if a switch_flow command was issued, which might have created a new state record
-    elif any(action.get('type') == '_internal_command_switch_flow' for action in actions_from_new_step):
-        # If a switch_flow happened, the new state is handled by that command's processing in process_message_for_flow
-        logger.info(f"A switch_flow command was processed during execution of step '{next_step.name}'. Original state (pk={contact_flow_state.pk}) might be invalid or cleared.")
-        # It's possible the original contact_flow_state.pk is now gone due to _clear_contact_flow_state in _internal_command_switch_flow
-        # and a new state record exists. The main process_message_for_flow handles this.
-    
-    elif not ContactFlowState.objects.filter(contact=contact).exists(): # No state record exists for the contact
-        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during execution of step '{next_step.name}'. No state to update.")
-        
+    # After executing actions of the new step, find the current state for this contact.
+    # It's possible an action (like switch_flow) has deleted this state and created a new one,
+    # or cleared it entirely.
+    effective_contact_flow_state = ContactFlowState.objects.filter(contact=contact).first()
+
+    if effective_contact_flow_state:
+        if effective_contact_flow_state.pk == contact_flow_state.pk:
+            # The original state record still exists, update it to the new step and its context.
+            effective_contact_flow_state.current_step = next_step
+            effective_contact_flow_state.flow_context_data = context_after_new_step_execution
+            effective_contact_flow_state.last_updated_at = timezone.now() 
+            effective_contact_flow_state.save(update_fields=['current_step', 'flow_context_data', 'last_updated_at'])
+            logger.debug(f"Saved ContactFlowState (pk={effective_contact_flow_state.pk}): contact {contact.whatsapp_id} is now at step '{next_step.name}' with context {context_after_new_step_execution}.")
+            contact_flow_state = effective_contact_flow_state # Ensure the in-memory object matches DB for caller
+        else:
+            # A new state record exists for this contact (e.g., due to switch_flow).
+            # The 'effective_contact_flow_state' is this new state. No further action needed on the old 'contact_flow_state' object.
+            logger.info(f"ContactFlowState for contact {contact.whatsapp_id} changed to a new record (pk={effective_contact_flow_state.pk}) during transition to step '{next_step.name}'. Current step is '{effective_contact_flow_state.current_step.name}'.")
+            contact_flow_state = effective_contact_flow_state # Update to the new state
+    else:
+        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during or after execution of step '{next_step.name}'.")
+        # contact_flow_state object is now stale, but there's no DB record to update.
+
     return actions_from_new_step, context_after_new_step_execution
 
 
@@ -967,37 +1076,53 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             'data': {'body': 'I seem to be having some technical difficulties. Please try again in a moment.'}
         }]
         
+    # --- MODIFICATION: Process automatic transitions after initial handling ---
+    current_contact_flow_state_after_initial_handling = ContactFlowState.objects.filter(contact=contact).first()
+    if current_contact_flow_state_after_initial_handling:
+        is_waiting_for_reply = False
+        current_step = current_contact_flow_state_after_initial_handling.current_step
+        current_context = current_contact_flow_state_after_initial_handling.flow_context_data or {}
+
+        if current_step.step_type == 'question':
+            # Check if this specific question instance is awaiting reply
+            question_expectation = current_context.get('_question_awaiting_reply_for')
+            if question_expectation and question_expectation.get('original_question_step_id') == current_step.id:
+                is_waiting_for_reply = True
+        
+        # Only try auto-transitions if not waiting for a reply from the current step,
+        # and if the flow wasn't cleared or switched by the initial actions.
+        if not is_waiting_for_reply and \
+           not any(a.get('type') == '_internal_command_clear_flow_state' for a in actions_to_perform) and \
+           not any(a.get('type') == '_internal_command_switch_flow' for a in actions_to_perform):
+            
+            logger.debug(f"Checking for automatic transitions for contact {contact.whatsapp_id} from step '{current_step.name}'.")
+            additional_auto_actions = _process_automatic_transitions(current_contact_flow_state_after_initial_handling, contact)
+            if additional_auto_actions:
+                logger.debug(f"Appending {len(additional_auto_actions)} actions from automatic transitions.")
+                actions_to_perform.extend(additional_auto_actions)
+    # --- END MODIFICATION ---
+            
     final_actions_for_meta_view = []
-    # Process a copy of actions_to_perform because _trigger_new_flow called by switch_flow might modify it
-    # by extending final_actions_for_meta_view which could affect iteration if iterating over original.
-    # However, current logic appends to final_actions_for_meta_view, so direct iteration is okay for now.
     for action in actions_to_perform: 
         if action.get('type') == '_internal_command_clear_flow_state':
             logger.debug(f"Internal command: Cleared flow state for {contact.whatsapp_id} (already handled if direct).")
         elif action.get('type') == '_internal_command_switch_flow':
             logger.info(f"Processing internal command to switch flow for contact {contact.whatsapp_id}.")
-            # _clear_contact_flow_state(contact) is called within _trigger_new_flow or before calling it when switching.
-            # Ensure it's called before creating a new state.
-            # The original clear for switch was here, moving to be sure it happens before _trigger_new_flow for switch.
-            # _clear_contact_flow_state(contact) # This is good to ensure clean state for new flow.
-
-            new_flow_name = action.get('target_flow_name')
-            initial_context_for_new_flow = action.get('initial_context', {}) # Should be a dict
-            new_flow_trigger_msg_body = action.get('new_flow_trigger_message_body')
             
-            synthetic_message_data = {'type': 'text', 'text': {'body': new_flow_trigger_msg_body or f"trigger_{new_flow_name}"}} # Ensure some text body
-
-            # _clear_contact_flow_state(contact) is implicitly called by _trigger_new_flow if it finds an old state,
-            # but for an explicit switch, we ensure it's clean.
-            # Note: _trigger_new_flow itself has a _clear_contact_flow_state(contact) if a keyword triggers a new flow.
-            # If switching programmatically, we ensure the old one is gone.
             ContactFlowState.objects.filter(contact=contact).delete() # Explicit clear for switch
 
-            switched_flow_actions = _trigger_new_flow(contact, synthetic_message_data, incoming_message_obj) # incoming_message_obj here is from original trigger
+            new_flow_name = action.get('target_flow_name')
+            initial_context_for_new_flow = action.get('initial_context', {}) 
+            new_flow_trigger_msg_body = action.get('new_flow_trigger_message_body')
+            synthetic_message_data = {'type': 'text', 'text': {'body': new_flow_trigger_msg_body or f"trigger_auto_{new_flow_name}"}}
             
+            # Call _trigger_new_flow. It will create the new state.
+            switched_flow_actions = _trigger_new_flow(contact, synthetic_message_data, incoming_message_obj) 
+            
+            # Apply initial context to the newly created state by _trigger_new_flow
             newly_created_state = ContactFlowState.objects.filter(contact=contact).first()
             if newly_created_state and initial_context_for_new_flow and isinstance(initial_context_for_new_flow, dict):
-                if not isinstance(newly_created_state.flow_context_data, dict):
+                if not isinstance(newly_created_state.flow_context_data, dict): # Should be dict by default
                     newly_created_state.flow_context_data = {}
                 newly_created_state.flow_context_data.update(initial_context_for_new_flow)
                 newly_created_state.save(update_fields=['flow_context_data', 'last_updated_at'])
