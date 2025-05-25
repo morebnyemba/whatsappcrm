@@ -1,6 +1,6 @@
 # Django Core
 django
-
+drf-nested-routers
 # Environment variable management
 python-dotenv
 
@@ -28,3 +28,5 @@ gunicorn
 
 # ASGI server (since ASGI_APPLICATION is defined)
 daphne
+requests
+pydantic
