@@ -1,386 +1,727 @@
 // src/pages/ContactsPage.jsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { FiUserPlus, FiEdit, FiTrash2, FiSearch, FiChevronDown, FiChevronUp, FiPlusCircle, FiStar, FiTrendingUp, FiTag, FiLoader, FiAlertCircle, FiPhone, FiMail, FiMapPin, FiBriefcase, FiCalendar, FiUsers, FiInfo, FiEdit3, FiToggleLeft, FiToggleRight, FiFilter, FiSave } from 'react-icons/fi';
+import { format, parseISO, isValid } from 'date-fns';
+import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose, DialogTrigger
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel
-} from '@/components/ui/select';
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { toast } from 'sonner';
-import { useForm, Controller } from 'react-hook-form';
-import {
-  FiUser, FiUsers, FiMessageSquare, FiSearch, FiLoader, FiAlertCircle, FiEdit, FiSave, FiMail,
-  FiPhone, FiTag, FiBriefcase, FiMapPin, FiInfo, FiCalendar, FiBarChart2, FiSmartphone, FiGlobe
-} from 'react-icons/fi';
-import { formatDistanceToNow, parseISO, format, isValid as isValidDate } from 'date-fns';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from '@/components/ui/skeleton';
 
-// --- API Configuration & Helper ---
+// --- API Configuration & Helper (Should be in a shared service file) ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const getAuthToken = () => localStorage.getItem('accessToken');
 
-async function apiCall(endpoint, method = 'GET', body = null, isPaginatedFallback = false) {
-    const token = getAuthToken();
+// It's highly recommended to move apiCall to src/services/api.js and import it.
+async function apiCall(endpoint, method = 'GET', body = null, isPaginatedFallback = false, includeAuth = true) {
+    const token = includeAuth ? getAuthToken() : null;
     const headers = {
         ...(!body || !(body instanceof FormData) && { 'Content-Type': 'application/json' }),
         ...(token && { 'Authorization': `Bearer ${token}` }),
     };
-    if (body && !(body instanceof FormData) && method !== 'GET') headers['Content-Type'] = 'application/json';
-    
-    const config = { method, headers, ...(body && method !== 'GET' && { body: (body instanceof FormData ? body : JSON.stringify(body)) }) };
+    const config = {
+        method,
+        headers,
+        ...(body && (body instanceof FormData ? { body } : { body: JSON.stringify(body) })),
+    };
+
     try {
         const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
         if (!response.ok) {
             let errorData = { detail: `Request to ${endpoint} failed: ${response.status} ${response.statusText}` };
             try {
                 const contentType = response.headers.get("content-type");
-                if (contentType && contentType.indexOf("application/json") !== -1) { errorData = await response.json(); }
-                else { errorData.detail = (await response.text()) || errorData.detail; }
-            } catch (e) { console.error("Failed to parse error response for a failed request:", e); }
-            const errorMessage = errorData.detail || 
-                               (typeof errorData === 'object' && errorData !== null && !errorData.detail ? 
-                                 Object.entries(errorData).map(([k,v])=>`${k.replace(/_/g, " ")}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('; ') : 
-                                 `API Error ${response.status}`);
-            const err = new Error(errorMessage); err.data = errorData; err.isApiError = true; throw err;
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                    errorData = await response.json();
+                } else {
+                    const text = await response.text();
+                    if (text) errorData.detail = text;
+                }
+            } catch (e) { console.error("Failed to parse error response:", e); }
+
+            const errorMessage = errorData.detail ||
+                (typeof errorData === 'object' && errorData !== null && !errorData.detail ?
+                    Object.entries(errorData).map(([k, v]) => `${k.replace(/_/g, " ")}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('; ') :
+                    `API Error ${response.status}`);
+            const err = new Error(errorMessage);
+            err.data = errorData;
+            err.isApiError = true;
+            throw err;
         }
         if (response.status === 204 || (response.headers.get("content-length") || "0") === "0") {
             return isPaginatedFallback ? { results: [], count: 0, next: null, previous: null } : null;
         }
         const data = await response.json();
-        return isPaginatedFallback ? { 
-            results: data.results || (Array.isArray(data) ? data : []), 
+        return isPaginatedFallback ? {
+            results: data.results || (Array.isArray(data) ? data : []),
             count: data.count === undefined ? (Array.isArray(data) ? data.length : 0) : data.count,
-            next: data.next, previous: data.previous 
+            next: data.next,
+            previous: data.previous
         } : data;
     } catch (error) {
         console.error(`API call to ${method} ${API_BASE_URL}${endpoint} failed:`, error);
         if (!error.isApiError || !error.message.includes("(toasted)")) {
-            toast.error(error.message || 'API error'); error.message = (error.message || "") + " (toasted)";
-        } throw error;
+            toast.error(error.message || 'An API error occurred. Check console.');
+            error.message = (error.message || "") + " (toasted)";
+        }
+        throw error;
     }
 }
 
-const ProfileFieldDisplay = ({ label, value, icon, children, isDate = false, isTagList = false }) => {
+
+const contactFormSchema = z.object({
+    name: z.string().min(1, "Name is required").max(255),
+    whatsapp_id: z.string().min(1, "WhatsApp ID is required").max(50), // Usually not editable after creation
+    email: z.string().email("Invalid email address").or(z.literal('')).nullable(),
+    phone_number: z.string().max(20).or(z.literal('')).nullable(), // Assuming max 20 for display
+    address: z.string().max(255).or(z.literal('')).nullable(),
+    city: z.string().max(100).or(z.literal('')).nullable(),
+    country: z.string().max(100).or(z.literal('')).nullable(),
+    date_of_birth: z.string().nullable().refine(val => val === null || val === '' || !isNaN(Date.parse(val)), { message: "Invalid date" }),
+    gender: z.string().max(50).or(z.literal('')).nullable(),
+    occupation: z.string().max(100).or(z.literal('')).nullable(),
+    industry: z.string().max(100).or(z.literal('')).nullable(),
+    company_name: z.string().max(255).or(z.literal('')).nullable(),
+    company_size: z.string().max(50).or(z.literal('')).nullable(), // Or number if you have specific ranges
+    company_website: z.string().url("Invalid URL").or(z.literal('')).nullable(),
+    lead_status: z.string().max(50).or(z.literal('')).nullable(),
+    acquisition_source: z.string().max(100).or(z.literal('')).nullable(), // Changed from lead_source
+    interest_level: z.string().max(50).or(z.literal('')).nullable(), // Or number
+    preferred_contact_method: z.string().max(50).or(z.literal('')).nullable(),
+    communication_frequency: z.string().max(50).or(z.literal('')).nullable(),
+    notes: z.string().or(z.literal('')).nullable(),
+    is_blocked: z.boolean().default(false),
+    needs_human_intervention: z.boolean().default(false),
+    // tags are handled separately
+});
+
+
+const ProfileFieldDisplay = ({ icon, label, value, type = "text", children }) => {
+    const IconComponent = icon;
     let displayValue = value;
-    if (isDate && value) {
-        try {
-            const dateObj = parseISO(value);
-            if (isValidDate(dateObj)) displayValue = format(dateObj, 'PPP'); // e.g., May 24th, 2025
-            else displayValue = value; // Show original if not a valid date string
-        } catch (e) { displayValue = value; } // In case parseISO throws for completely invalid string
+    if (type === "date" && value) {
+        const parsedDate = parseISO(value);
+        if (isValid(parsedDate)) {
+            displayValue = format(parsedDate, "MMMM d, yyyy");
+        } else {
+            displayValue = "N/A";
+        }
+    } else if (type === "boolean") {
+        displayValue = value ? "Yes" : "No";
+    } else if (value === null || value === undefined || value === '') {
+        displayValue = "N/A";
     }
-    if (!value && !children && value !== false && value !== 0) return null;
+
+
     return (
-        <div className="py-2.5 sm:grid sm:grid-cols-3 sm:gap-4 border-b dark:border-slate-700 last:border-b-0">
-            <dt className="text-sm font-medium text-slate-500 dark:text-slate-400 flex items-center">
-                {icon && React.cloneElement(icon, { className: "mr-2 h-4 w-4 opacity-80"})}
+        <div className="mb-3 text-sm">
+            <dt className="flex items-center text-slate-500 dark:text-slate-400">
+                {IconComponent && <IconComponent className="mr-2 h-4 w-4 text-slate-400" />}
                 {label}
             </dt>
-            <dd className="mt-1 text-sm text-slate-900 dark:text-slate-50 sm:mt-0 sm:col-span-2">
-                {children ? children : 
-                 isTagList && Array.isArray(displayValue) ? 
-                    (displayValue.length > 0 ? displayValue.map(tag => <Badge key={tag} variant="secondary" className="mr-1 mb-1 dark:bg-slate-600 dark:text-slate-200">{tag}</Badge>) : <span className="italic text-slate-400 dark:text-slate-500">No tags</span>) :
-                 (displayValue === null || displayValue === '' ? <span className="italic text-slate-400 dark:text-slate-500">Not set</span> : String(displayValue))
-                }
+            <dd className="mt-1 font-medium text-slate-700 dark:text-slate-200">
+                {children || displayValue}
             </dd>
         </div>
     );
 };
 
-const GENDER_CHOICES = [ { value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }, { value: 'prefer_not_to_say', label: 'Prefer not to say' }];
-const LIFECYCLE_STAGE_CHOICES = [ { value: 'lead', label: 'Lead' }, { value: 'opportunity', label: 'Opportunity' }, { value: 'customer', label: 'Customer' }, { value: 'vip', label: 'VIP Customer' }, { value: 'churned', label: 'Churned' }, { value: 'other', label: 'Other' }];
+
+const DataTable = ({ columns, data, isLoading, onRowClick, selectedRowId }) => {
+    if (isLoading && data.length === 0) {
+        return (
+            <div className="space-y-2 p-4">
+                {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+        );
+    }
+    if (!data.length && !isLoading) {
+        return <div className="p-4 text-center text-slate-500 dark:text-slate-400">No contacts found.</div>;
+    }
+
+    return (
+        <div className="overflow-x-auto">
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        {columns.map((column) => (
+                            <TableHead key={column.accessorKey} className="whitespace-nowrap">
+                                {column.header}
+                            </TableHead>
+                        ))}
+                        <TableHead>Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {data.map((row) => (
+                        <TableRow
+                            key={row.id}
+                            onClick={() => onRowClick(row.id)}
+                            className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${selectedRowId === row.id ? 'bg-slate-100 dark:bg-slate-700/50' : ''}`}
+                        >
+                            {columns.map((column) => {
+                                let cellValue = column.accessorKey.split('.').reduce((acc, part) => acc && acc[part], row);
+                                if (column.cell) {
+                                    cellValue = column.cell({ row });
+                                } else if (column.accessorKey === 'is_blocked' || column.accessorKey === 'needs_human_intervention') {
+                                    cellValue = cellValue ? <Badge variant="destructive">Yes</Badge> : <Badge variant="outline">No</Badge>;
+                                } else if (column.accessorKey === 'customer_profile.tags') {
+                                     // customer_profile not available in list view from ContactSerializer, so tags will be empty
+                                     // This will render an empty cell or you can show 'N/A'
+                                     cellValue = Array.isArray(cellValue) && cellValue.length > 0 ? cellValue.join(', ') : 'N/A';
+                                } else if (column.accessorKey === 'last_seen' && cellValue) {
+                                    const parsedDate = parseISO(cellValue);
+                                    cellValue = isValid(parsedDate) ? format(parsedDate, "PPpp") : "Invalid Date";
+                                } else if (cellValue === null || cellValue === undefined) {
+                                    cellValue = "N/A";
+                                }
+                                return <TableCell key={column.accessorKey} className="whitespace-nowrap">{cellValue}</TableCell>;
+                            })}
+                            <TableCell className="whitespace-nowrap">
+                                {/* Actions like Edit/Delete can be added here if needed directly in row,
+                                   but selection leading to side panel is the current pattern */}
+                                <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onRowClick(row.id); /* Could also open edit dialog directly */ }}>
+                                    View
+                                </Button>
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </div>
+    );
+};
 
 export default function ContactsPage() {
-  const [contacts, setContacts] = useState([]);
-  const [selectedContactDetails, setSelectedContactDetails] = useState(null);
-  const [isLoadingContacts, setIsLoadingContacts] = useState(true);
-  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
-  const [pagination, setPagination] = useState({ count: 0, next: null, previous: null, currentPage: 1 });
-  
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+    const [contacts, setContacts] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [selectedContact, setSelectedContact] = useState(null);
+    const [isFetchingDetail, setIsFetchingDetail] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+    const [pageCount, setPageCount] = useState(0);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingContact, setEditingContact] = useState(null);
 
-  const { register, handleSubmit, reset, control, formState: { isSubmitting, errors: formErrors }, setValue } = useForm({
-      defaultValues: { // Initialize with all possible fields to avoid uncontrolled to controlled input warnings
-          contact_name: '', is_blocked: false, needs_human_intervention: false,
-          first_name: '', last_name: '', email: '', ecocash_number: '', secondary_phone_number: '',
-          date_of_birth: '', gender: '', company_name: '', job_title: '',
-          address_line_1: '', address_line_2: '', city: '', state_province: '', postal_code: '', country: '',
-          lifecycle_stage: 'lead', acquisition_source: '', tags: '', notes: '',
-          preferences: '{}', custom_attributes: '{}'
-      }
-  });
+    const [existingTags, setExistingTags] = useState([]); // For tag input
+    const [newTag, setNewTag] = useState('');
+    const [currentContactTags, setCurrentContactTags] = useState([]);
 
-  const fetchContacts = useCallback(async (page = 1, currentSearchTerm = '') => {
-    setIsLoadingContacts(true);
-    try {
-      const filterParam = searchParams.get('filter');
-      const queryParams = new URLSearchParams({ page: page.toString() });
-      if (currentSearchTerm) queryParams.append('search', currentSearchTerm);
-      if (filterParam === 'needs_intervention') queryParams.append('needs_human_intervention', 'true');
-      
-      const endpoint = `/crm-api/conversations/contacts/?${queryParams.toString()}`;
-      const data = await apiCall(endpoint, 'GET', null, true);
-      setContacts(data.results || []);
-      setPagination({ count: data.count || 0, next: data.next, previous: data.previous, currentPage: page });
-    } catch (error) { /* toast handled by apiCall */ } 
-    finally { setIsLoadingContacts(false); }
-  }, [searchParams]);
+    const { register, handleSubmit, reset, formState: { errors }, control, setValue, watch } = useForm({
+        resolver: zodResolver(contactFormSchema),
+        defaultValues: {
+            name: '',
+            whatsapp_id: '',
+            email: '',
+            phone_number: '',
+            address: '',
+            city: '',
+            country: '',
+            date_of_birth: null,
+            gender: '',
+            occupation: '',
+            industry: '',
+            company_name: '',
+            company_size: '',
+            company_website: '',
+            lead_status: '',
+            acquisition_source: '', // Updated field
+            interest_level: '',
+            preferred_contact_method: '',
+            communication_frequency: '',
+            notes: '',
+            is_blocked: false,
+            needs_human_intervention: false,
+        }
+    });
+    
+    const watchedIsBlocked = watch('is_blocked');
+    const watchedNeedsIntervention = watch('needs_human_intervention');
 
-  useEffect(() => {
-    fetchContacts(1, searchTerm);
-  }, [fetchContacts, searchTerm]); // Re-fetch if searchTerm changes
 
-  const handleSelectContact = useCallback(async (contact) => {
-    setIsLoadingDetails(true);
-    setSelectedContactDetails(null); 
-    try {
-      const detailedData = await apiCall(`/crm-api/conversations/contacts/${contact.id}/`);
-      setSelectedContactDetails(detailedData);
-      reset({ // Pre-fill form for editing
-        contact_name: detailedData.name || '',
-        is_blocked: detailedData.is_blocked || false,
-        needs_human_intervention: detailedData.needs_human_intervention || false,
-        first_name: detailedData.customer_profile?.first_name || '',
-        last_name: detailedData.customer_profile?.last_name || '',
-        email: detailedData.customer_profile?.email || '',
-        ecocash_number: detailedData.customer_profile?.ecocash_number || '',
-        secondary_phone_number: detailedData.customer_profile?.secondary_phone_number || '',
-        date_of_birth: detailedData.customer_profile?.date_of_birth || '', // HTML date input expects YYYY-MM-DD
-        gender: detailedData.customer_profile?.gender || '',
-        company_name: detailedData.customer_profile?.company_name || '',
-        job_title: detailedData.customer_profile?.job_title || '',
-        address_line_1: detailedData.customer_profile?.address_line_1 || '',
-        address_line_2: detailedData.customer_profile?.address_line_2 || '',
-        city: detailedData.customer_profile?.city || '',
-        state_province: detailedData.customer_profile?.state_province || '',
-        postal_code: detailedData.customer_profile?.postal_code || '',
-        country: detailedData.customer_profile?.country || '',
-        lifecycle_stage: detailedData.customer_profile?.lifecycle_stage || 'lead',
-        acquisition_source: detailedData.customer_profile?.acquisition_source || '',
-        tags: (detailedData.customer_profile?.tags || []).join(', '),
-        notes: detailedData.customer_profile?.notes || '',
-        preferences: JSON.stringify(detailedData.customer_profile?.preferences || {}, null, 2),
-        custom_attributes: JSON.stringify(detailedData.customer_profile?.custom_attributes || {}, null, 2),
-      });
-    } catch (error) { /* toast handled by apiCall */ } 
-    finally { setIsLoadingDetails(false); }
-  }, [reset]);
+    const fetchContacts = useCallback(async (page = 1, search = '') => {
+        setIsLoading(true);
+        try {
+            const endpoint = `/crm-api/conversations/contacts/?page=${page}&search=${encodeURIComponent(search)}`;
+            const data = await apiCall(endpoint, 'GET', null, true);
+            setContacts(data.results || []);
+            setPageCount(Math.ceil((data.count || 0) / pagination.pageSize));
+        } catch (error) {
+            // toast handled by apiCall
+        } finally {
+            setIsLoading(false);
+        }
+    }, [pagination.pageSize]);
 
-  const onProfileFormSubmit = async (formData) => {
-    if (!selectedContactDetails?.id) return;
-    const contactId = selectedContactDetails.id;
+    useEffect(() => {
+        fetchContacts(pagination.pageIndex + 1, searchTerm);
+    }, [fetchContacts, pagination.pageIndex, searchTerm]);
 
-    const contactPayload = {
-        name: formData.contact_name,
-        is_blocked: formData.is_blocked,
-        needs_human_intervention: formData.needs_human_intervention,
+    const handleSelectContact = async (contactId) => {
+        if (selectedContact?.id === contactId) { // Toggle off if same contact is clicked
+            setSelectedContact(null);
+            return;
+        }
+        setIsFetchingDetail(true);
+        setSelectedContact(null); // Clear previous before fetching new
+        try {
+            const data = await apiCall(`/crm-api/customer-data/profiles/${contactId}/`); // Fetches using ContactDetailSerializer
+            setSelectedContact(data);
+        } catch (error) {
+            toast.error("Failed to fetch contact details.");
+        } finally {
+            setIsFetchingDetail(false);
+        }
     };
     
-    let parsedPreferences, parsedCustomAttributes;
-    try { parsedPreferences = JSON.parse(formData.preferences || '{}'); } catch (e) { toast.error("Invalid JSON for Preferences."); return; }
-    try { parsedCustomAttributes = JSON.parse(formData.custom_attributes || '{}'); } catch (e) { toast.error("Invalid JSON for Custom Attributes."); return; }
-
-    const profilePayload = {
-        first_name: formData.first_name, last_name: formData.last_name, email: formData.email,
-        secondary_phone_number: formData.secondary_phone_number, ecocash_number: formData.ecocash_number,
-        date_of_birth: formData.date_of_birth || null, gender: formData.gender || null,
-        company_name: formData.company_name, job_title: formData.job_title,
-        address_line_1: formData.address_line_1, address_line_2: formData.address_line_2, city: formData.city,
-        state_province: formData.state_province, postal_code: formData.postal_code, country: formData.country,
-        lifecycle_stage: formData.lifecycle_stage, acquisition_source: formData.acquisition_source,
-        tags: formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag),
-        notes: formData.notes, preferences: parsedPreferences, custom_attributes: parsedCustomAttributes,
+    const handleOpenEditModal = (contactData) => {
+        setEditingContact(contactData);
+        const profile = contactData.customer_profile || {};
+        reset({
+            name: contactData.name || '',
+            whatsapp_id: contactData.whatsapp_id || '', // Usually not editable
+            email: profile.email || '',
+            phone_number: profile.phone_number || '',
+            address: profile.address || '',
+            city: profile.city || '',
+            country: profile.country || '',
+            date_of_birth: profile.date_of_birth ? format(parseISO(profile.date_of_birth), 'yyyy-MM-dd') : '',
+            gender: profile.gender || '',
+            occupation: profile.occupation || '',
+            industry: profile.industry || '',
+            company_name: profile.company_name || '',
+            company_size: profile.company_size || '',
+            company_website: profile.company_website || '',
+            lead_status: profile.lead_status || '',
+            acquisition_source: profile.acquisition_source || '', // Use acquisition_source
+            interest_level: profile.interest_level || '',
+            preferred_contact_method: profile.preferred_contact_method || '',
+            communication_frequency: profile.communication_frequency || '',
+            notes: profile.notes || '',
+            is_blocked: contactData.is_blocked || false,
+            needs_human_intervention: contactData.needs_human_intervention || false,
+        });
+        setCurrentContactTags(profile.tags || []);
+        // Potentially fetch all existing tags for suggestions if needed
+        // setExistingTags(/* fetch all unique tags from system */);
+        setIsModalOpen(true);
     };
 
-    try {
-      // Using Promise.allSettled to ensure both calls are attempted
-      const [contactUpdateResult, profileUpdateResult] = await Promise.allSettled([
-        apiCall(`/crm-api/conversations/contacts/${contactId}/`, 'PATCH', contactPayload),
-        apiCall(`/crm-api/customer-data/profiles/${contactId}/`, 'PATCH', profilePayload) // contactId is PK of CustomerProfile
-      ]);
 
-      let anyError = false;
-      if (contactUpdateResult.status === 'rejected') {
-          toast.error(`Failed to update contact: ${contactUpdateResult.reason.message}`);
-          anyError = true;
-      }
-      if (profileUpdateResult.status === 'rejected') {
-          toast.error(`Failed to update profile: ${profileUpdateResult.reason.message}`);
-          anyError = true;
-      }
+    const onSubmit = async (formData) => {
+        if (!editingContact) return;
+        setIsSubmitting(true);
 
-      if (!anyError) {
-        toast.success("Customer data updated successfully!");
-        setIsEditProfileModalOpen(false);
-        // Re-fetch the selected contact's details to show updated info
-        handleSelectContact({ id: contactId, name: formData.contact_name }); // Pass basic info to re-trigger full fetch
-        // Also update the main contacts list with the potentially changed name or status
-        setContacts(prevList => prevList.map(c => c.id === contactId ? {...c, name: formData.contact_name, is_blocked: formData.is_blocked, needs_human_intervention: formData.needs_human_intervention } : c));
+        const contactPayload = {
+            name: formData.name,
+            is_blocked: formData.is_blocked,
+            needs_human_intervention: formData.needs_human_intervention,
+        };
+        // Remove undefined keys to prevent sending them if not changed
+        Object.keys(contactPayload).forEach(key => contactPayload[key] === undefined && delete contactPayload[key]);
 
-      }
-    } catch (error) { /* Should be caught by individual apiCalls */ }
-  };
+        const profilePayload = {
+            email: formData.email,
+            phone_number: formData.phone_number,
+            address: formData.address,
+            city: formData.city,
+            country: formData.country,
+            date_of_birth: formData.date_of_birth || null,
+            gender: formData.gender,
+            occupation: formData.occupation,
+            industry: formData.industry,
+            company_name: formData.company_name,
+            company_size: formData.company_size,
+            company_website: formData.company_website,
+            lead_status: formData.lead_status,
+            acquisition_source: formData.acquisition_source, // Use acquisition_source
+            interest_level: formData.interest_level,
+            preferred_contact_method: formData.preferred_contact_method,
+            communication_frequency: formData.communication_frequency,
+            notes: formData.notes,
+            tags: currentContactTags, // currentContactTags is the updated list of strings
+        };
+        Object.keys(profilePayload).forEach(key => profilePayload[key] === undefined && delete profilePayload[key]);
+        
+        try {
+            let contactUpdateSuccessful = true;
+            // 1. Update contact-specific fields
+            if (Object.keys(contactPayload).length > 0) {
+                 await apiCall(`/crm-api/contacts/${editingContact.id}/`, 'PATCH', contactPayload);
+            }
 
-  const handlePageChange = (newPage) => {
-    if (newPage >= 1 && newPage <= Math.ceil(pagination.count / 20)) { // Assuming page size 20
-        fetchContacts(newPage, searchTerm);
-    }
-  };
+            // 2. Update customer profile fields
+            if (Object.keys(profilePayload).length > 0 && editingContact.id) {
+                await apiCall(`/crm-api/customer-profiles/${editingContact.id}/`, 'PATCH', profilePayload);
+            }
+
+            toast.success("Contact updated successfully!");
+            setIsModalOpen(false);
+            setEditingContact(null);
+            fetchContacts(pagination.pageIndex + 1, searchTerm); // Refresh list
+            if (selectedContact?.id === editingContact.id) { // Refresh detail view if it was selected
+                handleSelectContact(editingContact.id);
+            }
+        } catch (error) {
+            // toast is handled by apiCall
+            // Optionally, handle specific error scenarios here if needed
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
 
-  return (
-    <div className="flex h-[calc(100vh-var(--header-height,4rem)-1rem)] border dark:border-slate-700 rounded-lg shadow-md overflow-hidden">
-      {/* Contacts List Panel */}
-      <div className="w-full sm:w-2/5 md:w-1/3 min-w-[300px] max-w-[450px] border-r dark:border-slate-700 flex flex-col bg-slate-50 dark:bg-slate-800/50">
-        <div className="p-3 border-b dark:border-slate-700">
-          <div className="relative">
-            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input type="search" placeholder="Search contacts..." className="pl-9 dark:bg-slate-700 dark:border-slate-600" value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)}/>
-          </div>
-        </div>
-        <ScrollArea className="flex-1">
-          {isLoadingContacts && contacts.length === 0 && (<div className="p-4 text-center"><FiLoader className="animate-spin h-6 w-6 mx-auto my-3 text-slate-500" /> <p className="text-xs text-slate-400">Loading contacts...</p></div>)}
-          {!isLoadingContacts && contacts.length === 0 && (<div className="p-4 text-center text-sm text-slate-500 dark:text-slate-400">No contacts match your search or filter.</div>)}
-          {contacts.map(contact => (
-            <div key={contact.id} onClick={() => handleSelectContact(contact)}
-              className={`p-3 border-b dark:border-slate-700 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${selectedContactDetails?.id === contact.id ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 dark:border-blue-400' : 'border-l-4 border-transparent'}`}>
-              <div className="flex items-center space-x-3">
-                <Avatar className="h-9 w-9"><AvatarImage src={`https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name || contact.whatsapp_id)}&background=random&size=96`} /><AvatarFallback>{(contact.name || contact.whatsapp_id || 'U').substring(0,1).toUpperCase()}</AvatarFallback></Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate dark:text-slate-100 text-sm">{contact.name || contact.whatsapp_id}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                    {contact.whatsapp_id}
-                    {contact.last_seen && ` · Seen ${formatDistanceToNow(parseISO(contact.last_seen), { addSuffix: true })}`}
-                  </p>
-                </div>
-                {contact.needs_human_intervention && <FiAlertCircle title="Needs Human Intervention" className="h-5 w-5 text-red-500 flex-shrink-0"/>}
-              </div>
-            </div>
-          ))}
-        </ScrollArea>
-        {/* Pagination for Contacts List */}
-        {pagination.count > 0 && (
-            <div className="p-2 border-t dark:border-slate-700 flex justify-between items-center text-xs">
-                <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.currentPage - 1)} disabled={!pagination.previous || isLoadingContacts}>Prev</Button>
-                <span>Page {pagination.currentPage} of {Math.ceil(pagination.count / 20)}</span>
-                <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.currentPage + 1)} disabled={!pagination.next || isLoadingContacts}>Next</Button>
-            </div>
-        )}
-      </div>
+    const handleAddTag = () => {
+        if (newTag && !currentContactTags.includes(newTag.trim())) {
+            setCurrentContactTags([...currentContactTags, newTag.trim()]);
+            setNewTag('');
+        }
+    };
+    const handleRemoveTag = (tagToRemove) => {
+        setCurrentContactTags(currentContactTags.filter(tag => tag !== tagToRemove));
+    };
 
-      {/* Contact Details & Profile Panel */}
-      <ScrollArea className="flex-1 bg-white dark:bg-slate-900">
-        {isLoadingDetails && <div className="flex items-center justify-center h-full p-10"><FiLoader className="animate-spin h-10 w-10 text-blue-500"/></div>}
-        {!isLoadingDetails && selectedContactDetails ? (
-          <div className="p-4 sm:p-6 space-y-6">
-            <Card className="dark:bg-slate-800 dark:border-slate-700">
-              <CardHeader className="flex flex-col sm:flex-row justify-between sm:items-start gap-2 pb-4">
-                <div className="flex items-center gap-4">
-                    <Avatar className="h-16 w-16 border-2 dark:border-slate-600"><AvatarImage src={`https://ui-avatars.com/api/?name=${encodeURIComponent(selectedContactDetails.name || selectedContactDetails.whatsapp_id)}&background=random&size=128`} /><AvatarFallback className="text-2xl">{(selectedContactDetails.name || selectedContactDetails.whatsapp_id || 'U').substring(0,2).toUpperCase()}</AvatarFallback></Avatar>
-                    <div>
-                        <CardTitle className="text-xl md:text-2xl dark:text-slate-50">{selectedContactDetails.name || selectedContactDetails.whatsapp_id}</CardTitle>
-                        <CardDescription className="dark:text-slate-400 mt-1">{selectedContactDetails.whatsapp_id}</CardDescription>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                           {selectedContactDetails.is_blocked && <Badge variant="destructive">Blocked</Badge>}
-                           {selectedContactDetails.needs_human_intervention && <Badge variant="warning">Needs Intervention</Badge>}
+    const columns = useMemo(() => [
+        { header: 'Name', accessorKey: 'name' },
+        { header: 'WhatsApp ID', accessorKey: 'whatsapp_id' },
+        { header: 'Blocked', accessorKey: 'is_blocked' },
+        { header: 'Needs Attention', accessorKey: 'needs_human_intervention' },
+        { header: 'Tags', accessorKey: 'customer_profile.tags' }, // Will be 'N/A' as profile not in list data
+        { header: 'Last Seen', accessorKey: 'last_seen' },
+    ], []);
+
+
+    return (
+        <div className="flex h-[calc(100vh-var(--header-height,4rem)-2rem)] gap-6 p-1">
+            {/* Main Contacts List */}
+            <Card className="w-2/3 flex flex-col">
+                <CardHeader>
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <CardTitle>Contacts</CardTitle>
+                            <CardDescription>Manage your customer contacts.</CardDescription>
                         </div>
+                        {/* <Button size="sm" onClick={() => handleOpenEditModal({})}> <FiUserPlus className="mr-2 h-4 w-4" /> Add New Contact </Button> */}
+                        {/* Add New Contact might be better as a separate flow if whatsapp_id is key */}
+                    </div>
+                    <div className="mt-4 relative">
+                        <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            type="search"
+                            placeholder="Search contacts by name or WhatsApp ID..."
+                            className="pl-9"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                </CardHeader>
+                <CardContent className="flex-grow overflow-hidden">
+                     <ScrollArea className="h-full">
+                        <DataTable
+                            columns={columns}
+                            data={contacts}
+                            isLoading={isLoading}
+                            onRowClick={handleSelectContact}
+                            selectedRowId={selectedContact?.id}
+                        />
+                    </ScrollArea>
+                </CardContent>
+                <div className="p-4 border-t flex items-center justify-between text-sm text-slate-600 dark:text-slate-300">
+                    <div>Page {pagination.pageIndex + 1} of {pageCount || 1}</div>
+                    <div className="space-x-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.max(0, prev.pageIndex - 1) }))}
+                            disabled={pagination.pageIndex === 0 || isLoading}
+                        >
+                            Previous
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.min(pageCount - 1, prev.pageIndex + 1) }))}
+                            disabled={pagination.pageIndex >= pageCount - 1 || isLoading}
+                        >
+                            Next
+                        </Button>
                     </div>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 sm:items-center pt-2 sm:pt-0 w-full sm:w-auto">
-                    <Button variant="outline" size="sm" onClick={() => navigate(`/conversation?contactId=${selectedContactDetails.id}`)} className="dark:text-slate-300 dark:border-slate-600 w-full sm:w-auto"> <FiMessageSquare className="mr-2 h-4 w-4"/> View Chat</Button>
-                    <Dialog open={isEditProfileModalOpen} onOpenChange={setIsEditProfileModalOpen}>
-                        <DialogTrigger asChild>
-                            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white w-full sm:w-auto"><FiEdit className="mr-2 h-4 w-4"/> Edit Profile</Button>
-                        </DialogTrigger>
-                        <DialogContent className="sm:max-w-2xl lg:max-w-3xl dark:bg-slate-800 dark:text-slate-50">
-                            <DialogHeader><DialogTitle>Edit Profile: {selectedContactDetails.name || selectedContactDetails.whatsapp_id}</DialogTitle><DialogDescription>Update contact and customer profile details.</DialogDescription></DialogHeader>
-                            <form onSubmit={handleSubmit(onProfileFormSubmit)} className="space-y-4 max-h-[70vh] overflow-y-auto p-1 custom-scrollbar mt-2 pr-3">
-                                <h3 className="text-md font-semibold border-b pb-1 dark:text-slate-200 dark:border-slate-700">Contact Info</h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div><Label htmlFor="contact_name">Display Name</Label><Input id="contact_name" {...register("contact_name")} className="dark:bg-slate-700 dark:border-slate-600"/></div>
-                                </div>
-                                <div className="flex items-center space-x-2"><Controller name="is_blocked" control={control} render={({ field }) => <Switch id="is_blocked" checked={field.value} onCheckedChange={field.onChange} />} /><Label htmlFor="is_blocked" className="cursor-pointer">Is Blocked</Label></div>
-                                <div className="flex items-center space-x-2"><Controller name="needs_human_intervention" control={control} render={({ field }) => <Switch id="needs_human_intervention" checked={field.value} onCheckedChange={field.onChange} />} /><Label htmlFor="needs_human_intervention" className="cursor-pointer">Needs Human Intervention</Label></div>
-                                <Separator className="my-4 dark:bg-slate-700"/>
-                                <h3 className="text-md font-semibold border-b pb-1 dark:text-slate-200 dark:border-slate-700">Profile Details</h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div><Label htmlFor="first_name">First Name</Label><Input id="first_name" {...register("first_name")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="last_name">Last Name</Label><Input id="last_name" {...register("last_name")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="email">Email</Label><Input id="email" type="email" {...register("email")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="ecocash_number">Ecocash Number</Label><Input id="ecocash_number" {...register("ecocash_number")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="secondary_phone_number">Secondary Phone</Label><Input id="secondary_phone_number" {...register("secondary_phone_number")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="date_of_birth">Date of Birth</Label><Input id="date_of_birth" type="date" {...register("date_of_birth")} className="dark:bg-slate-700 dark:[color-scheme:dark]"/></div>
-                                    <div><Label htmlFor="gender">Gender</Label><Controller name="gender" control={control} render={({ field }) => (<Select onValueChange={field.onChange} value={field.value || ""}><SelectTrigger className="dark:bg-slate-700"><SelectValue placeholder="Select gender" /></SelectTrigger><SelectContent className="dark:bg-slate-700">{GENDER_CHOICES.map(g=><SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}</SelectContent></Select>)}/></div>
-                                    <div><Label htmlFor="company_name">Company Name</Label><Input id="company_name" {...register("company_name")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="job_title">Job Title</Label><Input id="job_title" {...register("job_title")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="address_line_1">Address Line 1</Label><Input id="address_line_1" {...register("address_line_1")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="address_line_2">Address Line 2</Label><Input id="address_line_2" {...register("address_line_2")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="city">City</Label><Input id="city" {...register("city")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="state_province">State/Province</Label><Input id="state_province" {...register("state_province")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="postal_code">Postal Code</Label><Input id="postal_code" {...register("postal_code")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="country">Country</Label><Input id="country" {...register("country")} className="dark:bg-slate-700"/></div>
-                                    <div><Label htmlFor="lifecycle_stage">Lifecycle Stage</Label><Controller name="lifecycle_stage" control={control} render={({ field }) => (<Select onValueChange={field.onChange} value={field.value || ""}><SelectTrigger className="dark:bg-slate-700"><SelectValue placeholder="Select stage" /></SelectTrigger><SelectContent className="dark:bg-slate-700">{LIFECYCLE_STAGE_CHOICES.map(s=><SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent></Select>)}/></div>
-                                    <div><Label htmlFor="acquisition_source">Acquisition Source</Label><Input id="acquisition_source" {...register("acquisition_source")} className="dark:bg-slate-700"/></div>
-                                </div>
-                                <div><Label htmlFor="tags">Tags (comma-separated)</Label><Input id="tags" {...register("tags")} className="dark:bg-slate-700"/></div>
-                                <div><Label htmlFor="notes">Notes</Label><Textarea id="notes" {...register("notes")} className="dark:bg-slate-700" rows={3}/></div>
-                                <Separator className="my-4 dark:bg-slate-700"/>
-                                <h3 className="text-md font-semibold dark:text-slate-200">Advanced Data (JSON)</h3>
-                                <div><Label htmlFor="preferences">Preferences (JSON)</Label><Textarea id="preferences" {...register("preferences")} className="dark:bg-slate-700 font-mono text-xs" rows={3} placeholder='e.g., {"language": "en"}'/></div>
-                                <div><Label htmlFor="custom_attributes">Custom Attributes (JSON)</Label><Textarea id="custom_attributes" {...register("custom_attributes")} className="dark:bg-slate-700 font-mono text-xs" rows={3} placeholder='e.g., {"loyalty_id": "XYZ"}'/></div>
-
-                                <DialogFooter className="pt-4">
-                                    <DialogClose asChild><Button type="button" variant="outline" className="dark:text-slate-300 dark:border-slate-600">Cancel</Button></DialogClose>
-                                    <Button type="submit" disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white">{isSubmitting ? <FiLoader className="animate-spin"/> : "Save Changes"}</Button>
-                                </DialogFooter>
-                            </form>
-                        </DialogContent>
-                    </Dialog>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <dl className="divide-y dark:divide-slate-700">
-                    <ProfileFieldDisplay label="Profile Name" value={selectedContactDetails.customer_profile?.first_name || selectedContactDetails.customer_profile?.last_name ? `${selectedContactDetails.customer_profile?.first_name || ''} ${selectedContactDetails.customer_profile?.last_name || ''}`.trim() : (selectedContactDetails.name || 'N/A')} icon={<FiUser/>}/>
-                    <ProfileFieldDisplay label="Email" value={selectedContactDetails.customer_profile?.email} icon={<FiMail/>}/>
-                    <ProfileFieldDisplay label="Ecocash No." value={selectedContactDetails.customer_profile?.ecocash_number} icon={<FiSmartphone/>}/>
-                    <ProfileFieldDisplay label="Other Phone" value={selectedContactDetails.customer_profile?.secondary_phone_number} icon={<FiPhone/>}/>
-                    <ProfileFieldDisplay label="Company" value={selectedContactDetails.customer_profile?.company_name} icon={<FiBriefcase/>}/>
-                    <ProfileFieldDisplay label="Job Title" value={selectedContactDetails.customer_profile?.job_title} />
-                    <ProfileFieldDisplay label="Date of Birth" value={selectedContactDetails.customer_profile?.date_of_birth} isDate icon={<FiCalendar/>}/>
-                    <ProfileFieldDisplay label="Gender" value={LIFECYCLE_STAGE_CHOICES.find(g=>g.value === selectedContactDetails.customer_profile?.gender)?.label || selectedContactDetails.customer_profile?.gender} />
-                    <ProfileFieldDisplay label="Address" icon={<FiMapPin/>}>
-                        {/* ... address rendering (same as before) ... */}
-                    </ProfileFieldDisplay>
-                    <ProfileFieldDisplay label="Lifecycle Stage" value={LIFECYCLE_STAGE_CHOICES.find(s=>s.value === selectedContactDetails.customer_profile?.lifecycle_stage)?.label || selectedContactDetails.customer_profile?.lifecycle_stage} icon={<FiBarChart2/>}/>
-                    <ProfileFieldDisplay label="Acquisition Source" value={selectedContactDetails.customer_profile?.acquisition_source} />
-                    <ProfileFieldDisplay label="Tags" isTagList value={selectedContactDetails.customer_profile?.tags} icon={<FiTag/>}/>
-                    <ProfileFieldDisplay label="Notes" value={selectedContactDetails.customer_profile?.notes} icon={<FiInfo/>}/>
-                    <ProfileFieldDisplay label="Contact Created" value={selectedContactDetails.first_seen} isDate icon={<FiCalendar/>}/>
-                    <ProfileFieldDisplay label="Last Interaction" value={selectedContactDetails.last_seen} isDate icon={<FiCalendar/>}/>
-                </dl>
-              </CardContent>
             </Card>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 p-10 text-center">
-            <FiUsers className="h-24 w-24 mb-6 text-slate-300 dark:text-slate-600" />
-            <p className="text-lg font-medium">Select a contact to view their details.</p>
-            <p className="text-sm">Or use the search to find a specific contact.</p>
-          </div>
-        )}
-      </ScrollArea>
-    </div>
-  );
+
+            {/* Contact Detail Panel */}
+            <Card className="w-1/3 flex flex-col">
+                <CardHeader className="flex flex-row justify-between items-center">
+                    <div>
+                        <CardTitle>Contact Details</CardTitle>
+                        <CardDescription>View and edit contact information.</CardDescription>
+                    </div>
+                    {selectedContact && (
+                         <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="outline" size="icon" onClick={() => handleOpenEditModal(selectedContact)} disabled={isFetchingDetail}>
+                                        <FiEdit3 className="h-4 w-4" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent><p>Edit Contact</p></TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    )}
+                </CardHeader>
+                <ScrollArea className="flex-grow">
+                    <CardContent className="p-6">
+                        {isFetchingDetail && (
+                            <div className="space-y-3">
+                                <Skeleton className="h-8 w-3/4" />
+                                <Skeleton className="h-4 w-1/2" />
+                                <Skeleton className="h-4 w-1/3" />
+                                <hr className="my-4"/>
+                                <Skeleton className="h-6 w-1/4 mb-2" />
+                                <Skeleton className="h-4 w-full" />
+                                <Skeleton className="h-4 w-full" />
+                                <Skeleton className="h-4 w-3/4" />
+                            </div>
+                        )}
+                        {!isFetchingDetail && selectedContact && (
+                            <div>
+                                <div className="flex items-center mb-6">
+                                    <Avatar className="h-16 w-16 mr-4">
+                                        <AvatarImage src={`https://ui-avatars.com/api/?name=${encodeURIComponent(selectedContact.name || selectedContact.whatsapp_id)}&background=random`} />
+                                        <AvatarFallback>{(selectedContact.name || selectedContact.whatsapp_id || 'U').substring(0, 2).toUpperCase()}</AvatarFallback>
+                                    </Avatar>
+                                    <div>
+                                        <h2 className="text-xl font-semibold">{selectedContact.name || "N/A"}</h2>
+                                        <p className="text-sm text-slate-500 dark:text-slate-400">{selectedContact.whatsapp_id}</p>
+                                    </div>
+                                </div>
+
+                                <h3 className="text-md font-semibold mb-2 text-slate-700 dark:text-slate-200 border-b pb-1">Contact Info</h3>
+                                <ProfileFieldDisplay icon={FiPhone} label="Primary Phone" value={selectedContact.customer_profile?.phone_number} />
+                                <ProfileFieldDisplay icon={FiMail} label="Email" value={selectedContact.customer_profile?.email} />
+                                <ProfileFieldDisplay icon={FiMapPin} label="Address" value={`${selectedContact.customer_profile?.address || ''} ${selectedContact.customer_profile?.city || ''} ${selectedContact.customer_profile?.country || ''}`.trim() || "N/A"} />
+                                
+                                <h3 className="text-md font-semibold mt-4 mb-2 text-slate-700 dark:text-slate-200 border-b pb-1">Profile Details</h3>
+                                <ProfileFieldDisplay icon={FiCalendar} label="Date of Birth" value={selectedContact.customer_profile?.date_of_birth} type="date" />
+                                <ProfileFieldDisplay icon={FiUsers} label="Gender" value={selectedContact.customer_profile?.gender} />
+                                <ProfileFieldDisplay icon={FiBriefcase} label="Occupation" value={selectedContact.customer_profile?.occupation} />
+                                <ProfileFieldDisplay icon={FiBriefcase} label="Industry" value={selectedContact.customer_profile?.industry} />
+                                <ProfileFieldDisplay icon={FiBriefcase} label="Company" value={selectedContact.customer_profile?.company_name} />
+                                {/* Update to use acquisition_source */}
+                                <ProfileFieldDisplay icon={FiInfo} label="Lead Source" value={selectedContact.customer_profile?.acquisition_source} />
+                                <ProfileFieldDisplay icon={FiTrendingUp} label="Lead Status" value={selectedContact.customer_profile?.lead_status} />
+                                <ProfileFieldDisplay icon={FiStar} label="Interest Level" value={selectedContact.customer_profile?.interest_level} />
+                                
+
+                                <h3 className="text-md font-semibold mt-4 mb-2 text-slate-700 dark:text-slate-200 border-b pb-1">Status & Notes</h3>
+                                <ProfileFieldDisplay icon={FiToggleLeft} label="Blocked" value={selectedContact.is_blocked} type="boolean" />
+                                <ProfileFieldDisplay icon={FiAlertCircle} label="Needs Human Intervention" value={selectedContact.needs_human_intervention} type="boolean" />
+                                <ProfileFieldDisplay icon={FiEdit} label="Notes" value={selectedContact.customer_profile?.notes} />
+                                
+                                <div className="mt-3">
+                                    <dt className="flex items-center text-sm text-slate-500 dark:text-slate-400 mb-1">
+                                        <FiTag className="mr-2 h-4 w-4" /> Tags
+                                    </dt>
+                                    <dd className="flex flex-wrap gap-2">
+                                        {(selectedContact.customer_profile?.tags && selectedContact.customer_profile.tags.length > 0) ? (
+                                            selectedContact.customer_profile.tags.map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)
+                                        ) : <span className="text-sm text-slate-400">No tags</span>}
+                                    </dd>
+                                </div>
+                            </div>
+                        )}
+                        {!isFetchingDetail && !selectedContact && (
+                            <div className="text-center py-10 text-slate-500 dark:text-slate-400">
+                                <FiUserPlus className="mx-auto h-16 w-16 text-slate-300 dark:text-slate-600 mb-4" />
+                                <p>Select a contact to view details.</p>
+                            </div>
+                        )}
+                    </CardContent>
+                </ScrollArea>
+            </Card>
+
+            {/* Edit Contact Modal */}
+            {isModalOpen && editingContact && (
+                <Dialog open={isModalOpen} onOpenChange={(isOpen) => { if(!isOpen) {setIsModalOpen(false); setEditingContact(null); reset(); setCurrentContactTags([]);} else {setIsModalOpen(true);}}}>
+                    <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col">
+                        <DialogHeader>
+                            <DialogTitle>{editingContact.id ? 'Edit Contact' : 'Add New Contact'}</DialogTitle>
+                            <DialogDescription>
+                                {editingContact.id ? `Updating information for ${editingContact.name || editingContact.whatsapp_id}.` : 'Create a new contact.'}
+                            </DialogDescription>
+                        </DialogHeader>
+                        <ScrollArea className="flex-grow pr-2">
+                        <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 md:grid-cols-2 gap-4 p-1">
+                            {/* Contact Info Section */}
+                            <div className="md:col-span-2 font-semibold text-lg mb-2 border-b pb-1">Contact Info</div>
+                            <div>
+                                <Label htmlFor="name">Name <span className="text-red-500">*</span></Label>
+                                <Input id="name" {...register("name")} className={errors.name ? 'border-red-500' : ''} />
+                                {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name.message}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="whatsapp_id">WhatsApp ID <span className="text-red-500">*</span></Label>
+                                <Input id="whatsapp_id" {...register("whatsapp_id")} readOnly={!!editingContact.id} className={errors.whatsapp_id ? 'border-red-500' : ''}/>
+                                {errors.whatsapp_id && <p className="text-xs text-red-500 mt-1">{errors.whatsapp_id.message}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="email">Email</Label>
+                                <Input id="email" type="email" {...register("email")} className={errors.email ? 'border-red-500' : ''}/>
+                                {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="phone_number">Other Phone</Label>
+                                <Input id="phone_number" {...register("phone_number")} className={errors.phone_number ? 'border-red-500' : ''}/>
+                                {errors.phone_number && <p className="text-xs text-red-500 mt-1">{errors.phone_number.message}</p>}
+                            </div>
+                             <div className="md:col-span-2">
+                                <Label htmlFor="address">Address</Label>
+                                <Input id="address" {...register("address")} className={errors.address ? 'border-red-500' : ''}/>
+                                {errors.address && <p className="text-xs text-red-500 mt-1">{errors.address.message}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="city">City</Label>
+                                <Input id="city" {...register("city")} className={errors.city ? 'border-red-500' : ''}/>
+                                {errors.city && <p className="text-xs text-red-500 mt-1">{errors.city.message}</p>}
+                            </div>
+                            <div>
+                                <Label htmlFor="country">Country</Label>
+                                <Input id="country" {...register("country")} className={errors.country ? 'border-red-500' : ''}/>
+                                {errors.country && <p className="text-xs text-red-500 mt-1">{errors.country.message}</p>}
+                            </div>
+
+                             {/* Profile Details Section */}
+                            <div className="md:col-span-2 font-semibold text-lg mb-2 mt-4 border-b pb-1">Profile Details</div>
+                            <div>
+                                <Label htmlFor="date_of_birth">Date of Birth</Label>
+                                <Input id="date_of_birth" type="date" {...register("date_of_birth")} className={errors.date_of_birth ? 'border-red-500' : ''}/>
+                                {errors.date_of_birth && <p className="text-xs text-red-500 mt-1">{errors.date_of_birth.message}</p>}
+                            </div>
+                             <div>
+                                <Label htmlFor="gender">Gender</Label>
+                                <Select onValueChange={(value) => setValue('gender', value)} defaultValue={editingContact?.customer_profile?.gender || ''}>
+                                    <SelectTrigger id="gender" className={errors.gender ? 'border-red-500' : ''}> <SelectValue placeholder="Select gender" /> </SelectTrigger>
+                                    <SelectContent> <SelectItem value="male">Male</SelectItem> <SelectItem value="female">Female</SelectItem> <SelectItem value="other">Other</SelectItem> <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem> </SelectContent>
+                                </Select>
+                                {errors.gender && <p className="text-xs text-red-500 mt-1">{errors.gender.message}</p>}
+                            </div>
+                            {/* ... other profile fields like occupation, industry, company ... */}
+                            <div>
+                                <Label htmlFor="occupation">Occupation</Label>
+                                <Input id="occupation" {...register("occupation")} />
+                            </div>
+                             <div>
+                                <Label htmlFor="industry">Industry</Label>
+                                <Input id="industry" {...register("industry")} />
+                            </div>
+                             <div className="md:col-span-2">
+                                <Label htmlFor="company_name">Company Name</Label>
+                                <Input id="company_name" {...register("company_name")} />
+                            </div>
+                             <div>
+                                <Label htmlFor="company_size">Company Size</Label>
+                                <Input id="company_size" {...register("company_size")} />
+                            </div>
+                             <div className="md:col-span-2">
+                                <Label htmlFor="company_website">Company Website</Label>
+                                <Input id="company_website" type="url" {...register("company_website")} />
+                                {errors.company_website && <p className="text-xs text-red-500 mt-1">{errors.company_website.message}</p>}
+                            </div>
+
+
+                            {/* Lead & Preferences Section */}
+                            <div className="md:col-span-2 font-semibold text-lg mb-2 mt-4 border-b pb-1">Lead & Preferences</div>
+                            <div>
+                                <Label htmlFor="lead_status">Lead Status</Label>
+                                <Input id="lead_status" {...register("lead_status")} />
+                            </div>
+                            <div>
+                                <Label htmlFor="acquisition_source">Acquisition Source</Label> {/* Updated from lead_source */}
+                                <Input id="acquisition_source" {...register("acquisition_source")} />
+                            </div>
+                            <div>
+                                <Label htmlFor="interest_level">Interest Level</Label>
+                                <Input id="interest_level" {...register("interest_level")} />
+                            </div>
+                            <div>
+                                <Label htmlFor="preferred_contact_method">Preferred Contact Method</Label>
+                                <Input id="preferred_contact_method" {...register("preferred_contact_method")} />
+                            </div>
+                             <div className="md:col-span-2">
+                                <Label htmlFor="communication_frequency">Communication Frequency</Label>
+                                <Input id="communication_frequency" {...register("communication_frequency")} />
+                            </div>
+
+                            {/* Status & Notes Section */}
+                            <div className="md:col-span-2 font-semibold text-lg mb-2 mt-4 border-b pb-1">Status & Notes</div>
+                            <div className="flex items-center space-x-2 md:col-span-1">
+                                <Checkbox id="is_blocked" {...register("is_blocked")} checked={watchedIsBlocked} onCheckedChange={(checked) => setValue('is_blocked', checked)} />
+                                <Label htmlFor="is_blocked" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    Contact Blocked
+                                </Label>
+                            </div>
+                             <div className="flex items-center space-x-2 md:col-span-1">
+                                <Checkbox id="needs_human_intervention" {...register("needs_human_intervention")} checked={watchedNeedsIntervention} onCheckedChange={(checked) => setValue('needs_human_intervention', checked)} />
+                                <Label htmlFor="needs_human_intervention" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    Needs Human Intervention
+                                </Label>
+                            </div>
+                             <div className="md:col-span-2">
+                                <Label htmlFor="notes">Notes</Label>
+                                <textarea id="notes" {...register("notes")} rows={3} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-slate-50" />
+                            </div>
+
+                            {/* Tags Section */}
+                            <div className="md:col-span-2">
+                                <Label htmlFor="tags">Tags</Label>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <Input
+                                        id="newTag"
+                                        type="text"
+                                        value={newTag}
+                                        onChange={(e) => setNewTag(e.target.value)}
+                                        placeholder="Add a tag"
+                                        className="flex-grow"
+                                    />
+                                    <Button type="button" variant="outline" onClick={handleAddTag} size="sm">Add Tag</Button>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {currentContactTags.map(tag => (
+                                        <Badge key={tag} variant="secondary" className="flex items-center">
+                                            {tag}
+                                            <button type="button" onClick={() => handleRemoveTag(tag)} className="ml-2 text-red-500 hover:text-red-700">×</button>
+                                        </Badge>
+                                    ))}
+                                </div>
+                            </div>
+                        </form>
+                        </ScrollArea>
+                        <DialogFooter className="mt-auto pt-4 border-t">
+                            <DialogClose asChild>
+                                <Button type="button" variant="outline" onClick={() => {setIsModalOpen(false); setEditingContact(null); reset(); setCurrentContactTags([]);}}>Cancel</Button>
+                            </DialogClose>
+                            <Button type="submit" onClick={handleSubmit(onSubmit)} disabled={isSubmitting}>
+                                {isSubmitting ? <FiLoader className="animate-spin mr-2" /> : <FiSave className="mr-2" />}
+                                Save Changes
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+        </div>
+    );
 }

@@ -109,7 +109,7 @@ class CustomerProfile(models.Model):
         blank=True,
         help_text=_("Arbitrary custom attributes collected for this customer.")
     )
-    
+    ecocash_number = models.CharField(max_length=50)
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, help_text=_("Last time this profile record was updated."))
