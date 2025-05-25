@@ -2,8 +2,10 @@
 import { authService } from './auth'; // Import your auth service
 import { toast } from 'sonner'; // Assuming toast is configured globally
 
+console.log("VITE_API_BASE_URL from env:", import.meta.env.VITE_API_BASE_URL);
+console.log("Full import.meta.env object:", import.meta.env);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'; // Keep this as the absolute base for your backend
-
+console.log("API_BASE_URL being used:", API_BASE_URL);
 // To handle concurrent requests during token refresh
 let isRefreshingToken = false;
 let failedQueue = [];
