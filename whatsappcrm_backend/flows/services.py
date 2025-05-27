@@ -456,17 +456,18 @@ def _resolve_template_components(components_config: list, flow_context: dict, co
 
 
 def _clear_contact_flow_state(contact: Contact, error: bool = False, reason: str = ""):
-    # Ensure contact object has an ID before attempting to filter
     if not contact or not contact.pk:
         logger.warning(f"Attempted to clear flow state for a contact without a PK or a None contact object. Reason: {reason}")
         return
 
+    # MODIFICATION: Removed company filter if not multitenant, assuming ContactFlowState doesn't strictly need it for delete.
+    # If ContactFlowState has a mandatory company field, this might need adjustment or assume a global/default.
     deleted_count, _ = ContactFlowState.objects.filter(contact=contact).delete()
     log_message = f"Cleared flow state for contact {contact.whatsapp_id} (ID: {contact.id})."
     if reason:
         log_message += f" Reason: {reason}."
     if error:
-        log_message += " Due to an error."
+        log_message += " Due to an error." 
     if deleted_count > 0:
         logger.info(log_message)
     else:
@@ -495,7 +496,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             payload_field_value = getattr(send_message_config, actual_message_type, None)
 
             if payload_field_value is None: 
-                logger.error(f"Step '{step.name}': Payload field '{actual_message_type}' is None after Pydantic validation. This is unexpected. Raw Config: {raw_step_config}")
+                logger.error(f"Step '{step.name}': Payload field '{actual_message_type}' is None after Pydantic validation. Raw Config: {raw_step_config}")
             
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
@@ -509,8 +510,12 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 valid_source_found = False
                 if MEDIA_ASSET_ENABLED and media_conf.asset_pk:
                     try:
-                        # MODIFICATION: Removed company filter for MediaAsset if not multitenant
                         asset_qs = MediaAsset.objects
+                        # MODIFICATION: Remove company filter if not multitenant or handle if contact.company is None
+                        # contact_company = getattr(contact, 'company', None)
+                        # if contact_company: asset_qs = asset_qs.filter(company=contact_company)
+                        # else: logger.debug(f"Step '{step.name}': No company on contact, fetching global MediaAsset.")
+                        
                         asset = asset_qs.get(pk=media_conf.asset_pk)
                         if asset.status == 'synced' and asset.whatsapp_media_id and not asset.is_whatsapp_id_potentially_expired():
                             media_data_to_send['id'] = asset.whatsapp_media_id
@@ -745,7 +750,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
 
     question_expectation = flow_context.get('_question_awaiting_reply_for')
     is_processing_reply_for_current_question = False 
-    reply_was_valid_for_question = False # Track if reply was valid for the current question
+    reply_was_valid_for_question = False 
 
     if current_step.step_type == 'question' and \
        isinstance(question_expectation, dict) and \
@@ -856,9 +861,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     return actions_to_perform 
                 else: 
                     logger.info(f"Max retries for Q '{current_step.name}'. Action_after_max_retries is '{action_after_max_retries}' (not direct handover/end). Proceeding to general transitions.")
-                    # Allow general transitions to be evaluated
     
-    # If it was a question and the reply was valid, or if it wasn't a question step focused on reply processing
     if not (is_processing_reply_for_current_question and not reply_was_valid_for_question):
         transitions = FlowTransition.objects.filter(current_step=current_step).select_related('next_step').order_by('priority')
         next_step_to_transition_to = None
@@ -875,8 +878,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 contact_flow_state, next_step_to_transition_to, flow_context, contact, message_data
             )
             actions_to_perform.extend(actions_from_next_step)
-        # Fallback only if NO transition taken AND it wasn't a question that just re-prompted or terminally failed
-        elif not (is_processing_reply_for_current_question and not reply_was_valid_for_question and actions_to_perform): # Avoid double fallback if question already acted
+        elif not (current_step.step_type == 'question' and is_processing_reply_for_current_question and not reply_was_valid_for_question and actions_to_perform):
             logger.info(f"No general transition conditions met from step '{current_step.name}' for contact {contact.whatsapp_id}. Applying general fallback if any.")
             fallback_config = current_step.config.get('fallback_config', {}) if isinstance(current_step.config, dict) else {}
             
@@ -902,7 +904,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 contact.needs_human_intervention = True; contact.intervention_requested_at = timezone.now()
                 contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
             else:
-                if not actions_to_perform: # Only if no other fallback or action happened
+                if not actions_to_perform: 
                     logger.info(f"Step '{current_step.name}': No specific general fallback action. Sending default 'did not understand' message.")
                     actions_to_perform.append({
                         'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
@@ -910,11 +912,468 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     })
     return actions_to_perform
 
-# --- process_message_for_flow and other functions from your file... ---
-# Ensure _evaluate_transition_condition, _process_automatic_transitions, _transition_to_step, 
-# _update_contact_data, _update_customer_profile_data are present as you provided them,
-# with logging enhancements.
-# The main process_message_for_flow function needs the wamid fix.
+def _evaluate_transition_condition(
+    transition: FlowTransition, 
+    contact: Contact, 
+    message_data: dict, 
+    flow_context: dict, 
+    incoming_message_obj: Optional[Message] 
+) -> bool:
+    config = transition.condition_config
+    if not isinstance(config, dict):
+        logger.warning(f"Transition ID {transition.id} (step '{transition.current_step.name}') has invalid condition_config (not a dict): {config}")
+        return False
+    
+    condition_type = config.get('type')
+    is_automatic_check = not message_data 
+
+    log_message_info = f"MsgType: {message_data.get('type', 'N/A')}" if not is_automatic_check else "Automatic Check"
+    logger.debug(
+        f"Evaluating condition type '{condition_type}' for T_ID {transition.id} "
+        f"(Step '{transition.current_step.name}' -> '{transition.next_step.name if transition.next_step else 'END'}'). "
+        f"{log_message_info}. Context (snippet): {str(flow_context)[:100]}..."
+    )
+
+    if not condition_type:
+        logger.warning(f"Transition ID {transition.id} has no 'type' in condition_config.")
+        return False
+    if condition_type == 'always_true':
+        logger.debug(f"Transition ID {transition.id}: 'always_true' condition met.")
+        return True
+
+    user_dependent_conditions = [
+        'user_reply_matches_keyword', 'user_reply_contains_keyword', 
+        'interactive_reply_id_equals', 'message_type_is', 
+        'user_reply_matches_regex', 'nfm_response_field_equals',
+        'user_requests_human', 'user_reply_received' 
+    ]
+    if is_automatic_check and condition_type in user_dependent_conditions and condition_type != 'question_reply_is_valid':
+        logger.debug(f"Transition ID {transition.id}: Condition '{condition_type}' requires user message; not met for automatic check.")
+        return False
+
+    user_text = ""
+    if message_data and message_data.get('type') == 'text' and isinstance(message_data.get('text'), dict):
+        user_text = message_data.get('text', {}).get('body', '').strip()
+
+    interactive_reply_id = None
+    nfm_response_data = None 
+    if message_data and message_data.get('type') == 'interactive' and isinstance(message_data.get('interactive'), dict):
+        interactive_payload = message_data.get('interactive', {})
+        interactive_type_from_payload = interactive_payload.get('type')
+        if interactive_type_from_payload == 'button_reply' and isinstance(interactive_payload.get('button_reply'), dict):
+            interactive_reply_id = interactive_payload.get('button_reply', {}).get('id')
+        elif interactive_type_from_payload == 'list_reply' and isinstance(interactive_payload.get('list_reply'), dict):
+            interactive_reply_id = interactive_payload.get('list_reply', {}).get('id')
+        elif interactive_type_from_payload == 'nfm_reply' and isinstance(interactive_payload.get('nfm_reply'), dict):
+            nfm_payload = interactive_payload.get('nfm_reply', {}) 
+            response_json_str = nfm_payload.get('response_json')
+            if response_json_str:
+                try: 
+                    nfm_response_data = json.loads(response_json_str)
+                except json.JSONDecodeError: 
+                    logger.warning(f"Could not parse nfm_reply response_json for transition {transition.id}: {response_json_str[:100]}")
+
+    value_for_condition_comparison = config.get('value') 
+
+    if condition_type == 'user_reply_matches_keyword':
+        if not user_text: return False
+        keyword = str(config.get('keyword', '')).strip()
+        if not keyword: logger.warning(f"T_ID {transition.id}: 'user_reply_matches_keyword' missing keyword."); return False
+        is_match = (keyword == user_text) if config.get('case_sensitive', False) else (keyword.lower() == user_text.lower())
+        logger.debug(f"T_ID {transition.id} ('user_reply_matches_keyword'): Text '{user_text}' vs Keyword '{keyword}'. Match: {is_match}")
+        return is_match
+    
+    elif condition_type == 'user_reply_contains_keyword':
+        if not user_text: return False
+        keyword = str(config.get('keyword', '')).strip()
+        if not keyword: logger.warning(f"T_ID {transition.id}: 'user_reply_contains_keyword' missing keyword."); return False
+        is_match = (keyword in user_text) if config.get('case_sensitive', False) else (keyword.lower() in user_text.lower())
+        logger.debug(f"T_ID {transition.id} ('user_reply_contains_keyword'): Text '{user_text}' vs Keyword '{keyword}'. Contains: {is_match}")
+        return is_match
+
+    elif condition_type == 'interactive_reply_id_equals':
+        if interactive_reply_id is None: return False
+        expected_id = str(value_for_condition_comparison)
+        is_match = interactive_reply_id == expected_id
+        logger.debug(f"T_ID {transition.id} ('interactive_reply_id_equals'): Received ID '{interactive_reply_id}' vs Expected ID '{expected_id}'. Match: {is_match}")
+        return is_match
+
+    elif condition_type == 'message_type_is':
+        if not message_data or not message_data.get('type'): return False
+        is_match = message_data.get('type') == str(value_for_condition_comparison)
+        logger.debug(f"T_ID {transition.id} ('message_type_is'): Received Type '{message_data.get('type')}' vs Expected Type '{value_for_condition_comparison}'. Match: {is_match}")
+        return is_match
+
+    elif condition_type == 'user_reply_matches_regex':
+        if not user_text: return False
+        regex = config.get('regex')
+        if not regex: logger.warning(f"T_ID {transition.id}: 'user_reply_matches_regex' missing regex pattern."); return False
+        try:
+            is_match = bool(re.match(regex, user_text))
+            logger.debug(f"T_ID {transition.id} ('user_reply_matches_regex'): Text '{user_text}' vs Regex '{regex}'. Match: {is_match}")
+            return is_match
+        except re.error as e:
+            logger.error(f"Invalid regex in transition {transition.id}: '{regex}'. Error: {e}")
+            return False
+    
+    elif condition_type == 'variable_equals':
+        variable_name = config.get('variable_name')
+        if variable_name is None: logger.warning(f"T_ID {transition.id}: 'variable_equals' missing variable_name."); return False
+        actual_value = _get_value_from_context_or_contact(variable_name, flow_context, contact)
+        expected_value_str = str(value_for_condition_comparison)
+        actual_value_str = str(actual_value)
+        is_match = actual_value_str == expected_value_str
+        logger.debug(f"T_ID {transition.id} ('variable_equals'): Var '{variable_name}' (Actual: '{actual_value_str}') vs Expected: '{expected_value_str}'. Match: {is_match}")
+        return is_match
+
+    elif condition_type == 'variable_exists':
+        variable_name = config.get('variable_name')
+        if variable_name is None: logger.warning(f"T_ID {transition.id}: 'variable_exists' missing variable_name."); return False
+        exists = _get_value_from_context_or_contact(variable_name, flow_context, contact) is not None
+        logger.debug(f"T_ID {transition.id} ('variable_exists'): Var '{variable_name}'. Exists: {exists}")
+        return exists
+
+    elif condition_type == 'variable_contains':
+        variable_name = config.get('variable_name')
+        if variable_name is None: logger.warning(f"T_ID {transition.id}: 'variable_contains' missing variable_name."); return False
+        actual_value = _get_value_from_context_or_contact(variable_name, flow_context, contact)
+        expected_item_to_contain = value_for_condition_comparison
+        contains = False
+        if isinstance(actual_value, str) and isinstance(expected_item_to_contain, str):
+            contains = expected_item_to_contain in actual_value
+        elif isinstance(actual_value, list) and expected_item_to_contain is not None:
+            contains = expected_item_to_contain in actual_value
+        logger.debug(f"T_ID {transition.id} ('variable_contains'): Var '{variable_name}' (Value: '{str(actual_value)[:50]}') vs Expected Item: '{str(expected_item_to_contain)[:50]}'. Contains: {contains}")
+        return contains
+
+    elif condition_type == 'nfm_response_field_equals':
+        if not nfm_response_data: return False 
+        field_path = config.get('field_path')
+        if not field_path: logger.warning(f"T_ID {transition.id}: 'nfm_response_field_equals' missing field_path."); return False
+        
+        actual_val_from_nfm = nfm_response_data
+        try:
+            for part in field_path.split('.'):
+                if isinstance(actual_val_from_nfm, dict):
+                    actual_val_from_nfm = actual_val_from_nfm.get(part)
+                elif isinstance(actual_val_from_nfm, list) and part.isdigit(): 
+                    idx = int(part)
+                    if 0 <= idx < len(actual_val_from_nfm): actual_val_from_nfm = actual_val_from_nfm[idx]
+                    else: actual_val_from_nfm = None; break
+                else: actual_val_from_nfm = None; break
+        except Exception: actual_val_from_nfm = None
+
+        is_match = actual_val_from_nfm == value_for_condition_comparison
+        logger.debug(f"T_ID {transition.id} ('nfm_response_field_equals'): Path '{field_path}' (Actual NFM val: '{actual_val_from_nfm}') vs Expected: '{value_for_condition_comparison}'. Match: {is_match}")
+        return is_match
+
+    elif condition_type == 'question_reply_is_valid':
+        question_expectation = flow_context.get('_question_awaiting_reply_for')
+        expected_bool_value = bool(value_for_condition_comparison is True) 
+
+        if question_expectation and isinstance(question_expectation, dict):
+            var_name_for_reply = question_expectation.get('variable_name')
+            is_var_set_and_not_none = var_name_for_reply in flow_context and flow_context.get(var_name_for_reply) is not None
+            
+            logger.debug(f"T_ID {transition.id} ('question_reply_is_valid'): Expected valid = {expected_bool_value}. Actual reply was valid (var '{var_name_for_reply}' set): {is_var_set_and_not_none}.")
+            return is_var_set_and_not_none if expected_bool_value else not is_var_set_and_not_none
+        else: 
+            logger.debug(f"T_ID {transition.id} ('question_reply_is_valid'): No active question expectation. Expected valid = {expected_bool_value}. Returning False for positive check, True for negative check.")
+            return not expected_bool_value 
+
+    elif condition_type == 'user_requests_human':
+        if not user_text: return False
+        human_request_keywords = config.get('keywords', ['help', 'support', 'agent', 'human', 'operator', 'talk to someone'])
+        if isinstance(human_request_keywords, list):
+            user_text_lower = user_text.lower()
+            for keyword in human_request_keywords:
+                if isinstance(keyword, str) and keyword.strip():
+                    processed_keyword = keyword.strip().lower()
+                    if processed_keyword in user_text_lower:
+                        logger.info(f"T_ID {transition.id}: User requested human agent with keyword: '{processed_keyword}' in text '{user_text_lower}'.")
+                        return True
+        return False
+        
+    elif condition_type == 'user_reply_received': 
+        if not is_automatic_check and message_data and message_data.get('type'):
+            logger.debug(f"T_ID {transition.id}: Condition 'user_reply_received' met because a message of type '{message_data.get('type')}' was part of current processing cycle.")
+            return True
+        logger.debug(f"T_ID {transition.id}: Condition 'user_reply_received' not met (is_automatic_check: {is_automatic_check} or no message type in message_data).")
+        return False
+
+    logger.warning(f"Unknown or unhandled condition type: '{condition_type}' for transition ID {transition.id} (Step '{transition.current_step.name}').")
+    return False
+
+
+def _process_automatic_transitions(contact_flow_state: ContactFlowState, contact: Contact) -> List[Dict[str, Any]]:
+    accumulated_actions = []
+    max_auto_transitions = 10 
+    transitions_count = 0
+
+    logger.debug(f"Attempting automatic transitions for contact {contact.whatsapp_id} (ID: {contact.id}), starting from step '{contact_flow_state.current_step.name}'.")
+
+    while transitions_count < max_auto_transitions:
+        current_step = contact_flow_state.current_step 
+        flow_context = contact_flow_state.flow_context_data if isinstance(contact_flow_state.flow_context_data, dict) else {}
+
+        logger.debug(f"Auto-transition loop iter {transitions_count + 1}. Contact {contact.whatsapp_id}, Step '{current_step.name}' (ID: {current_step.id}).")
+
+        if current_step.step_type == 'question':
+            question_expectation = flow_context.get('_question_awaiting_reply_for')
+            if isinstance(question_expectation, dict) and question_expectation.get('original_question_step_id') == current_step.id:
+                logger.info(f"Step '{current_step.name}' is a question actively awaiting reply. Halting automatic transitions for contact {contact.whatsapp_id}.")
+                break
+        
+        transitions = FlowTransition.objects.filter(current_step=current_step).select_related('next_step').order_by('priority')
+        if not transitions.exists():
+            logger.debug(f"No outgoing transitions defined for step '{current_step.name}'. Stopping automatic transitions.")
+            break
+            
+        next_step_to_transition_to = None
+        chosen_transition_info = "None"
+
+        for transition in transitions:
+            if _evaluate_transition_condition(transition, contact, message_data={}, flow_context=flow_context.copy(), incoming_message_obj=None):
+                next_step_to_transition_to = transition.next_step
+                chosen_transition_info = f"ID {transition.id} (Priority {transition.priority})"
+                logger.info(f"Automatic transition condition met: {chosen_transition_info}. From '{current_step.name}' to '{next_step_to_transition_to.name}'.")
+                break
+        
+        if next_step_to_transition_to:
+            actions_from_transitioned_step, updated_context_after_new_step = _transition_to_step(
+                contact_flow_state,          
+                next_step_to_transition_to,
+                flow_context,                 
+                contact,
+                message_data={}               
+            )
+            accumulated_actions.extend(actions_from_transitioned_step)
+            logger.debug(f"Accumulated {len(actions_from_transitioned_step)} actions after auto-transition to '{next_step_to_transition_to.name}'. Total: {len(accumulated_actions)}.")
+
+            if any(a.get('type') == '_internal_command_clear_flow_state' for a in actions_from_transitioned_step) or \
+               any(a.get('type') == '_internal_command_switch_flow' for a in actions_from_transitioned_step):
+                logger.info(f"Flow state cleared or switch command issued during auto-transition from '{next_step_to_transition_to.name}'. Stopping further auto-transitions.")
+                break 
+            
+            refreshed_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
+            if not refreshed_state:
+                logger.info(f"ContactFlowState (pk={contact_flow_state.pk}) was cleared from DB during auto-transition. Stopping.")
+                break
+            contact_flow_state = refreshed_state 
+
+            transitions_count += 1
+        else:
+            logger.debug(f"No automatic transition condition met from step '{current_step.name}'. Stopping automatic transitions.")
+            break 
+    
+    if transitions_count >= max_auto_transitions:
+        logger.warning(f"Reached max_auto_transitions ({max_auto_transitions}) for contact {contact.whatsapp_id}. Last step attempted: '{contact_flow_state.current_step.name}'.")
+
+    logger.info(f"Finished automatic transition processing for contact {contact.whatsapp_id}. Total {transitions_count} auto-transitions made. {len(accumulated_actions)} actions generated.")
+    return accumulated_actions
+
+def _transition_to_step(
+    contact_flow_state: ContactFlowState, 
+    next_step: FlowStep, 
+    context_of_leaving_step: dict, 
+    contact: Contact, 
+    message_data: dict 
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]: 
+
+    previous_step = contact_flow_state.current_step 
+    logger.info(
+        f"Transitioning contact {contact.whatsapp_id} (ID: {contact.id}) from '{previous_step.name}' (ID: {previous_step.id}) "
+        f"to '{next_step.name}' (ID: {next_step.id}) in flow '{contact_flow_state.current_flow.name}'."
+    )
+
+    context_for_next_step = context_of_leaving_step.copy()
+
+    if previous_step.step_type == 'question':
+        removed_q_key = context_for_next_step.pop('_question_awaiting_reply_for', None)
+        removed_f_key = context_for_next_step.pop('_fallback_count', None)
+        if removed_q_key or removed_f_key:
+             logger.debug(f"Cleared question expectation/fallback count from context after leaving question step '{previous_step.name}'.")
+    
+    actions_from_new_step, context_after_new_step_execution = _execute_step_actions(
+        next_step, contact, context_for_next_step 
+    )
+    
+    current_db_state_for_contact = ContactFlowState.objects.filter(contact=contact).first()
+
+    if current_db_state_for_contact:
+        if current_db_state_for_contact.pk == contact_flow_state.pk:
+            logger.debug(f"Updating original ContactFlowState (pk={contact_flow_state.pk}) for contact {contact.whatsapp_id}.")
+            contact_flow_state.current_step = next_step
+            contact_flow_state.flow_context_data = context_after_new_step_execution
+            contact_flow_state.last_updated_at = timezone.now()
+            contact_flow_state.save(update_fields=['current_step', 'flow_context_data', 'last_updated_at'])
+            logger.info(f"Contact {contact.whatsapp_id} successfully transitioned to step '{next_step.name}'. Context updated.")
+        else:
+            logger.info(f"Contact {contact.whatsapp_id} switched to a new flow. Current state is now pk={current_db_state_for_contact.pk}, step '{current_db_state_for_contact.current_step.name}'. The old state (pk={contact_flow_state.pk}) is no longer primary.")
+            # Update the caller's reference to the new state object by modifying it in place
+            contact_flow_state.id = current_db_state_for_contact.id 
+            contact_flow_state.pk = current_db_state_for_contact.pk # Django ORM relies on pk
+            contact_flow_state.current_flow = current_db_state_for_contact.current_flow
+            contact_flow_state.current_step = current_db_state_for_contact.current_step
+            contact_flow_state.flow_context_data = current_db_state_for_contact.flow_context_data
+            contact_flow_state.started_at = current_db_state_for_contact.started_at
+            contact_flow_state.last_updated_at = current_db_state_for_contact.last_updated_at
+            # If company was part of ContactFlowState, copy that too
+            if hasattr(current_db_state_for_contact, 'company'):
+                 contact_flow_state.company = current_db_state_for_contact.company
+
+
+    else: 
+        logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during or after execution of step '{next_step.name}'. No state to update.")
+
+    return actions_from_new_step, context_after_new_step_execution
+
+
+def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
+    if not field_path:
+        logger.warning(f"_update_contact_data: Empty field_path for contact {contact.whatsapp_id} (ID: {contact.id}).")
+        return
+    
+    logger.debug(f"Attempting to update Contact {contact.whatsapp_id} (ID: {contact.id}) field/path '{field_path}' to value '{str(value_to_set)[:100]}'.")
+    parts = field_path.split('.')
+    
+    if len(parts) == 1:
+        field_name = parts[0]
+        # Prevent updating protected fields
+        # Added 'company' and 'customer_profile' to protected as they are relations
+        protected_fields = ['id', 'pk', 'whatsapp_id', 'company', 'company_id', 'created_at', 'updated_at', 'customer_profile', 'messages']
+        if field_name.lower() in protected_fields:
+            logger.warning(f"Attempt to update protected or relational Contact field '{field_name}' denied for contact {contact.whatsapp_id}.")
+            return
+        if hasattr(contact, field_name):
+            try:
+                setattr(contact, field_name, value_to_set)
+                contact.save(update_fields=[field_name])
+                logger.info(f"Updated Contact {contact.whatsapp_id} field '{field_name}' to '{str(value_to_set)[:100]}'.")
+            except Exception as e:
+                logger.error(f"Error setting Contact field '{field_name}' for {contact.whatsapp_id}: {e}", exc_info=True)
+        else:
+            logger.warning(f"Contact field '{field_name}' not found on Contact model for contact {contact.whatsapp_id}.")
+    elif parts[0] == 'custom_fields':
+        if not hasattr(contact, 'custom_fields') or contact.custom_fields is None: 
+            contact.custom_fields = {}
+        elif not isinstance(contact.custom_fields, dict):
+            logger.error(f"Contact {contact.whatsapp_id} custom_fields is not a dict ({type(contact.custom_fields)}). Cannot update path '{field_path}'. Re-initializing.")
+            contact.custom_fields = {} 
+
+        current_level = contact.custom_fields
+        for i, key in enumerate(parts[1:-1]):
+            if not isinstance(current_level, dict): 
+                 logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: '{key}' is not traversable (parent not a dict) for path '{field_path}'. Current part of path: {parts[1:i+1]}")
+                 return
+            current_level = current_level.setdefault(key, {}) 
+            if not isinstance(current_level, dict): 
+                 logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: Could not ensure dict at '{key}' for path '{field_path}'.")
+                 return
+        
+        final_key = parts[-1]
+        if len(parts) > 1 : 
+            if isinstance(current_level, dict): 
+                current_level[final_key] = value_to_set
+                contact.save(update_fields=['custom_fields'])
+                logger.info(f"Updated Contact {contact.whatsapp_id} custom_fields path '{'.'.join(parts[1:])}' to '{str(value_to_set)[:100]}'.")
+            else: 
+                logger.error(f"Error updating Contact {contact.whatsapp_id} custom_fields: Parent for final key '{final_key}' is not a dict for path '{field_path}'.")
+        else: 
+            logger.warning(f"Ambiguous path '{field_path}' for updating Contact.custom_fields. Expecting 'custom_fields.some_key...'.")
+            if isinstance(value_to_set, dict):
+                 contact.custom_fields = value_to_set
+                 contact.save(update_fields=['custom_fields'])
+                 logger.info(f"Replaced entire Contact {contact.whatsapp_id} custom_fields with: {str(value_to_set)[:200]}")
+            else:
+                 logger.warning(f"Cannot replace Contact.custom_fields for {contact.whatsapp_id} with a non-dictionary value for path '{field_path}'. Value type: {type(value_to_set)}")
+    else:
+        logger.warning(f"Unsupported field path structure '{field_path}' for updating Contact model for contact {contact.whatsapp_id}.")
+
+
+def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dict[str, Any], flow_context: dict):
+    if not fields_to_update_config or not isinstance(fields_to_update_config, dict):
+        logger.warning(f"_update_customer_profile_data called for contact {contact.whatsapp_id} (ID: {contact.id}) with invalid fields_to_update_config: {fields_to_update_config}")
+        return
+
+    logger.debug(f"Attempting to update CustomerProfile for contact {contact.whatsapp_id} (ID: {contact.id}) with fields: {fields_to_update_config}")
+    
+    # MODIFICATION: Removed company filter for get_or_create if not multitenant
+    # profile_company = getattr(contact, 'company', None) # Get company from contact if it exists
+    # if not profile_company:
+    #     logger.warning(f"Cannot update CustomerProfile for contact {contact.id} as contact has no company attribute. Or, define a default company for single-tenant mode.")
+    #     # Decide how to handle this: error out, or use a global default company if CustomerProfile needs one.
+    #     # For now, let's assume CustomerProfile might not need a company if the app is single-tenant.
+    #     profile, created = CustomerProfile.objects.get_or_create(contact=contact)
+    # else:
+    #     profile, created = CustomerProfile.objects.get_or_create(contact=contact, company=profile_company)
+    profile, created = CustomerProfile.objects.get_or_create(contact=contact)
+
+
+    if created:
+        logger.info(f"Created CustomerProfile (ID: {profile.id}) for contact {contact.whatsapp_id} (ID: {contact.id}).")
+    
+    changed_fields = []
+    for field_path, value_template in fields_to_update_config.items():
+        resolved_value = _resolve_value(value_template, flow_context, contact)
+        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, attempting to set path '{field_path}' to resolved value '{str(resolved_value)[:100]}'.")
+        parts = field_path.split('.')
+        try:
+            if len(parts) == 1:
+                field_name = parts[0]
+                protected_fields = ['id', 'pk', 'contact', 'contact_id', 'company', 'company_id', 'created_at', 'updated_at', 'last_updated_from_conversation']
+                if hasattr(profile, field_name) and field_name.lower() not in protected_fields:
+                    setattr(profile, field_name, resolved_value)
+                    if field_name not in changed_fields:
+                        changed_fields.append(field_name)
+                else:
+                    logger.warning(f"CustomerProfile field '{field_name}' not found on model or is protected for contact {contact.whatsapp_id}.")
+            elif parts[0] in ['preferences', 'custom_attributes'] and len(parts) > 1:
+                json_field_name = parts[0]
+                json_data = getattr(profile, json_field_name)
+                if json_data is None: 
+                    json_data = {}
+                elif not isinstance(json_data, dict):
+                    logger.error(f"CustomerProfile.{json_field_name} for contact {contact.id} is not a dict ({type(json_data)}). Cannot update path '{field_path}'. Re-initializing.")
+                    json_data = {} 
+                
+                current_level = json_data
+                for i, key in enumerate(parts[1:-1]): 
+                    if not isinstance(current_level, dict): 
+                        logger.error(f"Path error in CustomerProfile.{json_field_name} for contact {contact.id} at '{key}'. Expected dict, found {type(current_level)}. Full path: {field_path}")
+                        current_level = None; break 
+                    current_level = current_level.setdefault(key, {})
+                    if not isinstance(current_level, dict): 
+                         logger.error(f"Path error in CustomerProfile.{json_field_name} for contact {contact.id}: could not ensure dict at '{key}' for path '{field_path}'.")
+                         current_level = None; break
+
+                if current_level is not None: 
+                    final_key = parts[-1]
+                    current_level[final_key] = resolved_value
+                    setattr(profile, json_field_name, json_data) 
+                    if json_field_name not in changed_fields:
+                        changed_fields.append(json_field_name)
+            else:
+                logger.warning(f"Unsupported field path structure for CustomerProfile: '{field_path}' for contact {contact.whatsapp_id}.")
+        except Exception as e:
+            logger.error(f"Error updating CustomerProfile field '{field_path}' for contact {contact.id}: {e}", exc_info=True)
+            
+    if changed_fields:
+        profile.last_updated_from_conversation = timezone.now()
+        if 'last_updated_from_conversation' not in changed_fields:
+            changed_fields.append('last_updated_from_conversation')
+        
+        try:
+            profile.save(update_fields=changed_fields)
+            logger.info(f"CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}) updated. Changed fields: {changed_fields}.")
+        except Exception as e_save:
+            logger.error(f"Error saving CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}): {e_save}", exc_info=True)
+    elif created: 
+        profile.last_updated_from_conversation = timezone.now()
+        profile.save(update_fields=['last_updated_from_conversation'])
+        logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial timestamp.")
+
+
 @transaction.atomic 
 def process_message_for_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     actions_to_perform = []
@@ -928,9 +1387,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         contact_flow_state_qs = ContactFlowState.objects.select_for_update().select_related(
             'current_flow', 'current_step' 
         )
-        # MODIFICATION: Removed direct company filter on ContactFlowState query
-        # If ContactFlowState has a company field, it should be populated correctly on creation.
-        # For a non-multitenant app, all states would implicitly belong to the single "instance".
+        # REMOVED: company=contact.company filter for non-multitenant app
         contact_flow_state = contact_flow_state_qs.get(contact=contact) 
         
         flow_name = contact_flow_state.current_flow.name if contact_flow_state.current_flow else "N/A"
@@ -946,6 +1403,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             contact_flow_state, contact, message_data, incoming_message_obj
         )
     except ContactFlowState.DoesNotExist:
+        # This is normal for a new message from a contact not in a flow.
         logger.info(f"No active flow state for contact {contact.whatsapp_id} (ID: {contact.id}). Attempting to trigger a new flow.")
         actions_to_perform = _trigger_new_flow(contact, message_data, incoming_message_obj)
     except Exception as e:
@@ -962,25 +1420,25 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         }]
         return actions_to_perform 
         
-    # MODIFICATION: Removed company filter for ContactFlowState query
+    # REMOVED: company filter for ContactFlowState query
     current_contact_flow_state_after_initial_handling = ContactFlowState.objects.filter(contact=contact).first()
     
     if current_contact_flow_state_after_initial_handling:
         is_waiting_for_reply_from_current_step = False
         current_step = current_contact_flow_state_after_initial_handling.current_step
-        # Ensure current_context is a dict, even if flow_context_data is None initially
         current_context = current_contact_flow_state_after_initial_handling.flow_context_data if isinstance(current_contact_flow_state_after_initial_handling.flow_context_data, dict) else {}
 
-
-        if current_step and current_step.step_type == 'question': # Check if current_step is not None
+        if current_step and current_step.step_type == 'question': 
             question_expectation = current_context.get('_question_awaiting_reply_for')
             if isinstance(question_expectation, dict) and question_expectation.get('original_question_step_id') == current_step.id:
                 is_waiting_for_reply_from_current_step = True
                 logger.debug(f"Contact {contact.whatsapp_id}: Current step '{current_step.name}' is a question still awaiting reply. No auto-transitions will be processed now.")
         elif not current_step:
-             logger.warning(f"Contact {contact.whatsapp_id}: ContactFlowState (pk={current_contact_flow_state_after_initial_handling.pk}) has no current_step. Cannot process auto-transitions.")
-             # This state is problematic, might need clearing or investigation
-             return final_actions_for_meta_view # actions_to_perform might be empty or have error message
+             logger.warning(f"Contact {contact.whatsapp_id}: ContactFlowState (pk={current_contact_flow_state_after_initial_handling.pk}) has no current_step after initial handling. Cannot process auto-transitions.")
+             # Return actions generated so far (might be empty or an error message from above)
+             # This state is problematic and indicates an issue in prior logic if state exists but step is None
+             # For safety, just process what we have.
+             # The final_actions_for_meta_view processing below will handle this.
 
         if not is_waiting_for_reply_from_current_step and \
            current_step is not None and \
@@ -992,10 +1450,10 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             if additional_auto_actions:
                 logger.info(f"Contact {contact.whatsapp_id}: Appending {len(additional_auto_actions)} actions from automatic transitions.")
                 actions_to_perform.extend(additional_auto_actions)
-        elif current_step is not None: # current_step is not None, but conditions for auto-transition not met
+        elif current_step is not None: 
             logger.debug(f"Contact {contact.whatsapp_id}: Skipping automatic transitions from step '{current_step.name}'. Waiting for reply: {is_waiting_for_reply_from_current_step}, Flow Clear/Switch commanded: {any(a.get('type') in ['_internal_command_clear_flow_state', '_internal_command_switch_flow'] for a in actions_to_perform)}")
 
-    else: # No active flow state after initial handling
+    else: 
         logger.info(f"Contact {contact.whatsapp_id}: No active flow state after initial processing/trigger. No automatic transitions to run.")
             
     final_actions_for_meta_view = []
@@ -1003,7 +1461,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
     
     temp_actions_to_process = list(actions_to_perform) 
 
-    for action_idx, action in enumerate(temp_actions_to_process): # Use enumerate for better logging
+    for action_idx, action in enumerate(temp_actions_to_process): 
         if processed_switch_command: 
             logger.debug(f"Skipping action (index {action_idx}, type {action.get('type')}) after flow switch already processed for contact {contact.whatsapp_id}.")
             continue
@@ -1012,19 +1470,16 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         logger.debug(f"Final processing action {action_idx + 1}/{len(temp_actions_to_process)}: Type '{action_type}' for contact {contact.whatsapp_id}. Action detail: {str(action)[:150]}")
 
         if action_type == '_internal_command_clear_flow_state':
-            # Actual clearing is done by _clear_contact_flow_state where this command is generated.
-            # This log confirms it reached final processing.
             logger.info(f"Internal command: Flow state clearance for contact {contact.whatsapp_id} noted. Reason: {action.get('reason', 'N/A')}")
         
         elif action_type == '_internal_command_switch_flow':
-            if processed_switch_command: # Should not happen if break is effective
+            if processed_switch_command: 
                 logger.warning(f"Contact {contact.whatsapp_id}: Multiple switch flow commands. Redundant one (index {action_idx}) skipped.")
                 continue
 
             target_flow_name = action.get('target_flow_name')
             logger.info(f"Processing internal command to switch flow for contact {contact.whatsapp_id} to '{target_flow_name}'.")
             
-            # Clear state before triggering new flow. _trigger_new_flow also calls clear, but this is explicit.
             _clear_contact_flow_state(contact, reason=f"Switching to flow {target_flow_name}")
 
             initial_context_for_new_flow = action.get('initial_context', {}) 
@@ -1046,18 +1501,20 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                 newly_created_state_after_switch.save(update_fields=['flow_context_data', 'last_updated_at'])
                 logger.info(f"Applied initial context to new flow '{target_flow_name}' state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
             
-            final_actions_for_meta_view = switched_flow_actions # These are the actions to perform now
+            final_actions_for_meta_view = switched_flow_actions 
             processed_switch_command = True 
-            logger.info(f"Flow switch for {contact.whatsapp_id} to '{target_flow_name}' completed. New actions from switched flow: {len(final_actions_for_meta_view)}")
-            break # Stop processing the old list of actions; the new flow's actions take precedence.
+            logger.info(f"Flow switch for {contact.whatsapp_id} to '{target_flow_name}' completed. Actions from new flow: {len(final_actions_for_meta_view)}")
+            break 
 
         elif action_type == 'send_whatsapp_message':
-            # This action is intended for the meta_view to send.
-            final_actions_for_meta_view.append(action)
+            if not processed_switch_command: 
+                final_actions_for_meta_view.append(action)
+            else: # If switch happened, these actions are from the new flow's entry point.
+                 final_actions_for_meta_view.append(action) # This was already handled by final_actions = switched_flow_actions
         else:
             logger.warning(f"Unhandled action type '{action_type}' encountered during final action processing for contact {contact.whatsapp_id}. Action: {action}")
             
     logger.info(f"Finished processing message for contact {contact.whatsapp_id} (ID: {contact.id}). Total {len(final_actions_for_meta_view)} actions to be sent to meta_integration.")
-    if final_actions_for_meta_view: # Log only if there are actions
+    if final_actions_for_meta_view: 
         logger.debug(f"Final actions for {contact.whatsapp_id} (ID: {contact.id}): {json.dumps(final_actions_for_meta_view, indent=2)}")
     return final_actions_for_meta_view
