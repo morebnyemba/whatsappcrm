@@ -59,9 +59,7 @@ class MetaWebhookAPIView(View):
             return False
         if not app_secret_key:
             logger.error("App Secret not configured for signature verification. Verification skipped (INSECURE).")
-            # In a production environment, you might want to make this `return False`
-            # if an app_secret is strictly required. For now, it bypasses if not configured.
-            return True # Bypassing for now if not configured, but log indicates insecurity
+            return True
 
         if not x_hub_signature_256.startswith('sha256='):
             logger.warning("Webhook signature format is invalid (must start with 'sha256=').")
@@ -81,6 +79,7 @@ class MetaWebhookAPIView(View):
         return True
 
     def get(self, request, *args, **kwargs):
+        # ... (GET method remains the same)
         logger.debug(f"Webhook GET request received. Query params: {request.GET}")
         active_config = get_active_meta_config()
         if not active_config:
@@ -105,29 +104,24 @@ class MetaWebhookAPIView(View):
             logger.error("Missing 'hub.mode' or 'hub.verify_token' in GET request.")
             return HttpResponse("Bad request: Missing required verification parameters.", status=400)
 
+
     def post(self, request, *args, **kwargs):
         active_config = get_active_meta_config()
-        # Get the App Secret from Django settings (loaded from .env)
-        # You MUST set WHATSAPP_APP_SECRET in your .env and load it in settings.py
         app_secret = getattr(settings, 'WHATSAPP_APP_SECRET', None)
 
         if not active_config:
             logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig. Event ignored.")
-            # Still return 200 to Meta to prevent webhook disabling for config errors on our side.
             return HttpResponse("EVENT_RECEIVED_BUT_UNCONFIGURED", status=200)
 
-        # --- Webhook Signature Verification ---
         if not app_secret:
              logger.critical(
                 f"CRITICAL: WHATSAPP_APP_SECRET is not configured in Django settings for MetaAppConfig "
                 f"('{active_config.name}'). Webhook signature verification will be skipped. "
                 f"THIS IS A SECURITY RISK."
             )
-             # In production, strict mode should return 403 if app_secret is missing
-             # For now, if app_secret is not set, we'll log and proceed (less secure)
         else:
             signature = request.headers.get('X-Hub-Signature-256')
-            if not self._verify_signature(request.body, signature, app_secret): # request.body is raw bytes
+            if not self._verify_signature(request.body, signature, app_secret):
                 logger.error("Webhook signature verification FAILED. Discarding request.")
                 WebhookEventLog.objects.create(
                     app_config=active_config, event_type='security',
@@ -135,7 +129,6 @@ class MetaWebhookAPIView(View):
                     processing_status='rejected', processing_notes='Invalid X-Hub-Signature-256'
                 )
                 return HttpResponse("Invalid signature", status=403)
-        # --- End Signature Verification ---
 
         raw_payload_str = request.body.decode('utf-8', errors='ignore')
         logger.info(f"Webhook POST request received (Signature OK if secret configured). Body size: {len(raw_payload_str)}. Config: {active_config.name}")
@@ -173,11 +166,11 @@ class MetaWebhookAPIView(View):
                             if "messages" in value:
                                 for msg_data in value["messages"]:
                                     wamid = msg_data.get("id")
-                                    log_entry, _ = WebhookEventLog.objects.update_or_create( # Avoid duplicate logs for retries
+                                    log_entry, _ = WebhookEventLog.objects.update_or_create(
                                         event_identifier=wamid, event_type='message',
                                         defaults={**log_defaults_for_change, 'payload': msg_data}
                                     )
-                                    if log_entry.processing_status not in ['processed', 'ignored', 'error_final']: # Avoid reprocessing if already done
+                                    if log_entry.processing_status not in ['processed', 'ignored', 'error_final']:
                                         self.handle_message(msg_data, metadata, value, active_config, log_entry)
                                     else:
                                         logger.info(f"Skipping reprocessing for already handled message WAMID: {wamid}, Status: {log_entry.processing_status}")
@@ -190,9 +183,8 @@ class MetaWebhookAPIView(View):
                                     )
                                     if log_entry.processing_status not in ['processed', 'ignored']:
                                         self.handle_status_update(status_data, metadata, active_config, log_entry)
-                            # ... (similar update_or_create and status check for 'errors', 'template_status', etc.) ...
                             elif "errors" in value:
-                                for error_data in value["errors"]: # Errors might not have a unique wamid
+                                for error_data in value["errors"]:
                                     log_entry = WebhookEventLog.objects.create(**log_defaults_for_change, payload=error_data, event_identifier=f"error_{error_data.get('code')}_{timezone.now().timestamp()}", event_type='error')
                                     self.handle_error_notification(error_data, metadata, active_config, log_entry)
                             else:
@@ -201,11 +193,9 @@ class MetaWebhookAPIView(View):
                         elif field == "message_template_status_update":
                             log_entry = WebhookEventLog.objects.create(**log_defaults_for_change, payload=value, event_type='template_status', event_identifier=value.get("message_template_id") or f"template_{value.get('message_template_name')}_{value.get('event')}")
                             self.handle_template_status_update(value, active_config, log_entry)
-                        # ... (other field handlers like account_update)
                         else: 
                             logger.warning(f"Unhandled change field '{field}'. Value: {value}")
                             WebhookEventLog.objects.create(**log_defaults_for_change, payload=value, event_type='unknown', processing_status='ignored', processing_notes=f"Unhandled field: {field}")
-            # ... (other object type handlers like graph_security_alerts) ...
             else: 
                 logger.warning(f"Unknown webhook object type: {payload.get('object')}")
                 WebhookEventLog.objects.create(**base_log_defaults, payload=payload, event_type='unknown', processing_status='ignored', processing_notes=f"Unknown object: {payload.get('object')}")
@@ -232,15 +222,13 @@ class MetaWebhookAPIView(View):
 
     @transaction.atomic 
     def handle_message(self, message_data, metadata, value_obj, app_config, log_entry: WebhookEventLog):
-        # --- IMPORT MOVED INSIDE THE METHOD to break circular dependency ---
-        from flows.services import process_message_for_flow
-        # ------------------------------------------------------------------
+        from flows.services import process_message_for_flow #
 
         whatsapp_message_id = message_data.get("id"); from_phone = message_data.get("from")
         message_type = message_data.get("type", "unknown"); ts_str = message_data.get("timestamp")
         msg_ts = timezone.make_aware(datetime.fromtimestamp(int(ts_str))) if ts_str and ts_str.isdigit() else timezone.now()
         
-        logger.info(f"Handling message WAMID: {whatsapp_message_id}, From: {from_phone}, Type: {message_type}")
+        logger.info(f"Handling message WAMID: {whatsapp_message_id}, From: {from_phone}, Type: {message_type}") #
         notes_list = [f"Msg from {from_phone}, type {message_type}."]
         
         contact_profile_name = "Unknown"; contact_wa_id_from_payload = from_phone
@@ -262,54 +250,74 @@ class MetaWebhookAPIView(View):
                 defaults={
                     'contact':contact, 'direction':'in', 'message_type':message_type,
                     'content_payload':message_data, 'timestamp':msg_ts, 
-                    'status':'delivered', 'status_timestamp':msg_ts # delivered to us
+                    'status':'delivered', 'status_timestamp':msg_ts
                 }
             )
-            if not msg_created: # If message WAMID already exists
+            if not msg_created:
                 logger.warning(f"Incoming message WAMID {whatsapp_message_id} already exists. Updating timestamp if newer, but not reprocessing flow to avoid duplicates unless specific logic demands it.")
-                if msg_ts > incoming_msg_obj.timestamp: # Update if newer
+                if msg_ts > incoming_msg_obj.timestamp:
                     incoming_msg_obj.timestamp = msg_ts
-                    incoming_msg_obj.content_payload = message_data # Re-save payload in case of retry
+                    incoming_msg_obj.content_payload = message_data 
                     incoming_msg_obj.save()
                 self._save_log(log_entry, 'ignored', f"Duplicate WAMID {whatsapp_message_id} received. Not reprocessing flow.")
-                return # Important: Do not reprocess flow for duplicate WAMID unless intended
+                return
 
             notes_list.append(f"Msg WAMID {whatsapp_message_id} saved (DB ID: {incoming_msg_obj.id}).")
 
-            flow_actions = process_message_for_flow(contact, message_data, incoming_msg_obj)
+            # --- START DEBUGGING CHANGE ---
+            logger.info(f"DEBUG: Attempting to send a direct test message to {contact.whatsapp_id}")
+            try:
+                debug_message_content = {"body": "Hello from the server! This is a direct test."}
+                debug_outgoing_msg = Message.objects.create(
+                    contact=contact,
+                    direction='out',
+                    message_type='text', # Basic text message
+                    content_payload=debug_message_content, # Simple dict for text
+                    status='pending_dispatch',
+                    timestamp=timezone.now(),
+                    triggered_by_flow_step_id=None # Or some debug identifier
+                )
+                send_whatsapp_message_task.delay(debug_outgoing_msg.id, app_config.id) #
+                notes_list.append(f"Dispatched DEBUG msg 'text' to {contact.whatsapp_id} (DB ID: {debug_outgoing_msg.id}).")
+                logger.info(f"DEBUG: Dispatched direct test message task for msg ID {debug_outgoing_msg.id} to Celery.")
+            except Exception as e_debug_send:
+                logger.error(f"DEBUG: Error creating or dispatching direct test message: {e_debug_send}", exc_info=True)
+                notes_list.append(f"DEBUG: Failed to dispatch test message: {e_debug_send}")
+            # --- END DEBUGGING CHANGE ---
+
+
+            flow_actions = process_message_for_flow(contact, message_data, incoming_msg_obj) #
             notes_list.append(f"Flow returned {len(flow_actions)} actions.")
             
             if app_config and flow_actions:
                 for action in flow_actions:
                     if action.get('type') == 'send_whatsapp_message':
                         recipient = action.get('recipient_wa_id', contact.whatsapp_id)
-                        # ... (create outgoing Message DB record & dispatch Celery task - logic from msg #65)
                         outgoing_msg = Message.objects.create(
-                            contact=Contact.objects.filter(whatsapp_id=recipient).first() or contact, # Ensure recipient Contact exists or default
+                            contact=Contact.objects.filter(whatsapp_id=recipient).first() or contact,
                             direction='out', message_type=action.get('message_type'),
                             content_payload=action.get('data'), status='pending_dispatch', 
                             timestamp=timezone.now(),
-                            triggered_by_flow_step_id=getattr(getattr(contact,'flow_state', None),'current_step_id',None) # Save which step triggered this
+                            triggered_by_flow_step_id=getattr(getattr(contact,'flow_state', None),'current_step_id',None)
                         )
-                        send_whatsapp_message_task.delay(outgoing_msg.id, app_config.id)
+                        send_whatsapp_message_task.delay(outgoing_msg.id, app_config.id) #
                         notes_list.append(f"Dispatched msg '{action.get('message_type')}' to {recipient}.")
             
-            self._save_log(log_entry, 'processed', " ".join(notes_list))
+            self._save_log(log_entry, 'processed', " ".join(notes_list)) #
         except Exception as e:
             logger.error(f"Error in handle_message for WAMID {whatsapp_message_id}: {e}", exc_info=True)
             self._save_log(log_entry, 'error', f"Handle msg error: {str(e)[:200]}")
 
-        # Call other handlers if data is present
+        # Call other handlers if data is present (These might also send messages)
+        # Consider if you want to disable these temporarily if they also use the same task.
         if message_data.get("referral"): self.handle_referral(message_data.get("referral"), contact_wa_id_from_payload, app_config, log_entry)
         if message_data.get("system"): self.handle_system_message(message_data.get("system"), contact_wa_id_from_payload, app_config, log_entry)
         if message_type == "interactive" and message_data.get("interactive", {}).get("type") == "nfm_reply":
              self.handle_flow_response(message_data.get("interactive",{}).get("nfm_reply",{}), contact_wa_id_from_payload, app_config, log_entry)
 
 
-    # --- Other handlers: handle_status_update, handle_error_notification, etc. ---
-    # (These remain largely the same as in message #65, ensure they use self._save_log)
-    # Example for handle_status_update:
     def handle_status_update(self, status_data, metadata, app_config, log_entry: WebhookEventLog):
+        # ... (handle_status_update method remains the same)
         wamid = status_data.get("id"); status_value = status_data.get("status"); ts_str = status_data.get("timestamp")
         status_ts = timezone.make_aware(datetime.fromtimestamp(int(ts_str))) if ts_str and ts_str.isdigit() else timezone.now()
         if not log_entry.event_identifier: log_entry.event_identifier = wamid
@@ -319,28 +327,21 @@ class MetaWebhookAPIView(View):
             msg_to_update = Message.objects.filter(wamid=wamid, direction='out').first()
             if msg_to_update:
                 msg_to_update.status = status_value; msg_to_update.status_timestamp = status_ts
-                # Extract and store conversation and pricing if present (as discussed)
                 if 'conversation' in status_data and isinstance(status_data['conversation'], dict):
                     msg_to_update.conversation_id_from_meta = status_data['conversation'].get('id')
-                    # TODO: You might want to link this to a local Conversation model
                 if 'pricing' in status_data and isinstance(status_data['pricing'], dict):
                     msg_to_update.pricing_model_from_meta = status_data['pricing'].get('pricing_model')
-                    # TODO: Store other pricing details if needed
                 msg_to_update.save()
                 notes.append("DB record updated.")
                 self._save_log(log_entry, 'processed', " ".join(notes))
             else: self._save_log(log_entry, 'ignored', f"No matching outgoing msg for WAMID {wamid}.")
         except Exception as e: logger.error(f"Error updating status for WAMID {wamid}: {e}", exc_info=True); self._save_log(log_entry, 'error', str(e))
 
-    # (Implement handle_error_notification, handle_template_status_update, 
-    #  handle_account_update, handle_referral, handle_system_message, handle_flow_response, handle_security_alert
-    #  similarly, ensuring they call self._save_log appropriately)
+    # (Implement other handlers: handle_error_notification, handle_template_status_update, etc.)
 
-
-# --- DRF ViewSets for MetaAppConfig and WebhookEventLog ---
-# (MetaAppConfigViewSet and WebhookEventLogViewSet remain the same as in message #65)
-# For brevity, I will not repeat them here. Ensure they are below the MetaWebhookAPIView.
-class IsAdminOrReadOnly(permissions.BasePermission): # Keep this if used by ViewSets
+# --- DRF ViewSets ---
+# ... (ViewSets remain the same)
+class IsAdminOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
         if request.method in permissions.SAFE_METHODS: return True
         return request.user and request.user.is_staff
@@ -348,7 +349,7 @@ class IsAdminOrReadOnly(permissions.BasePermission): # Keep this if used by View
 class MetaAppConfigViewSet(viewsets.ModelViewSet):
     queryset = MetaAppConfig.objects.all().order_by('-is_active', 'name')
     serializer_class = MetaAppConfigSerializer
-    permission_classes = [permissions.IsAdminUser] # Changed to IsAdminUser for more security
+    permission_classes = [permissions.IsAdminUser]
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -359,13 +360,13 @@ class MetaAppConfigViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def perform_update(self, serializer):
         instance = serializer.instance
-        if serializer.validated_data.get('is_active') and not instance.is_active: # Activating this one
+        if serializer.validated_data.get('is_active') and not instance.is_active:
             MetaAppConfig.objects.filter(is_active=True).exclude(pk=instance.pk).update(is_active=False)
         serializer.save()
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
     def set_active(self, request, pk=None):
-        config_to_activate = self.get_object() # Will raise 404 if not found
+        config_to_activate = self.get_object()
         if config_to_activate.is_active:
             return Response({"message": "Configuration is already active."}, status=status.HTTP_200_OK)
         with transaction.atomic():
@@ -377,11 +378,8 @@ class MetaAppConfigViewSet(viewsets.ModelViewSet):
 class WebhookEventLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = WebhookEventLog.objects.all().select_related('app_config').order_by('-received_at')
     permission_classes = [permissions.IsAdminUser]
-    # Add django-filter for these: pip install django-filter, add 'django_filters' to INSTALLED_APPS
-    # filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter] # Example
     filterset_fields = ['event_type', 'processing_status', 'event_identifier', 'phone_number_id_received', 'waba_id_received']
     search_fields = ['payload', 'processing_notes', 'event_identifier']
-    # ordering_fields = ['received_at', 'processed_at', 'event_type']
 
     def get_serializer_class(self):
         return WebhookEventLogListSerializer if self.action == 'list' else WebhookEventLogSerializer
@@ -404,8 +402,6 @@ class WebhookEventLogViewSet(viewsets.ReadOnlyModelViewSet):
         if log_entry.event_type != 'message':
              return Response({"error": "Only 'message' events can be marked for reprocessing via this action currently."}, status=status.HTTP_400_BAD_REQUEST)
         
-        # TODO: Implement actual reprocessing logic, possibly via a Celery task.
-        # For now, just marking it.
         log_entry.processing_status = 'pending_reprocessing'
         log_entry.processing_notes = (log_entry.processing_notes or "") + \
                                      f"\nManually marked for reprocessing by {request.user} on {timezone.now().isoformat()}."
