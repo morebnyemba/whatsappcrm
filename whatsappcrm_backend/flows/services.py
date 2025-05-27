@@ -9,13 +9,11 @@ from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 
-# Assuming direct import from conversations.models is how your project is structured
 from conversations.models import Contact, Message 
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
 
 try:
-    # Assuming direct import from media_manager.models
     from media_manager.models import MediaAsset 
     MEDIA_ASSET_ENABLED = True
 except ImportError:
@@ -65,10 +63,6 @@ class InteractiveButtonAction(BasePydanticConfig):
 class InteractiveHeader(BasePydanticConfig):
     type: Literal["text", "video", "image", "document"]
     text: Optional[str] = Field(default=None, max_length=60)
-    # If using media in header, add fields like:
-    # image: Optional[Dict[str, str]] = None # e.g. {"link": "URL"} or {"id": "MEDIA_ID"}
-    # document: Optional[Dict[str, str]] = None
-    # video: Optional[Dict[str, str]] = None
 
 class InteractiveBody(BasePydanticConfig):
     text: str = Field(..., min_length=1, max_length=1024)
@@ -278,6 +272,8 @@ class StepConfigEndFlow(BasePydanticConfig):
 
 InteractiveMessagePayload.model_rebuild() 
 
+# --- Helper Functions (Defined before use) ---
+
 def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, contact: Contact) -> Any:
     logger.debug(f"Resolving variable path: '{variable_path}' for contact {contact.whatsapp_id} (ID: {contact.id})")
     if not variable_path:
@@ -460,8 +456,6 @@ def _clear_contact_flow_state(contact: Contact, error: bool = False, reason: str
         logger.warning(f"Attempted to clear flow state for a contact without a PK or a None contact object. Reason: {reason}")
         return
 
-    # MODIFICATION: Removed company filter if not multitenant, assuming ContactFlowState doesn't strictly need it for delete.
-    # If ContactFlowState has a mandatory company field, this might need adjustment or assume a global/default.
     deleted_count, _ = ContactFlowState.objects.filter(contact=contact).delete()
     log_message = f"Cleared flow state for contact {contact.whatsapp_id} (ID: {contact.id})."
     if reason:
@@ -511,11 +505,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 if MEDIA_ASSET_ENABLED and media_conf.asset_pk:
                     try:
                         asset_qs = MediaAsset.objects
-                        # MODIFICATION: Remove company filter if not multitenant or handle if contact.company is None
-                        # contact_company = getattr(contact, 'company', None)
-                        # if contact_company: asset_qs = asset_qs.filter(company=contact_company)
-                        # else: logger.debug(f"Step '{step.name}': No company on contact, fetching global MediaAsset.")
-                        
+                        # MODIFICATION: Removed company filter for MediaAsset
                         asset = asset_qs.get(pk=media_conf.asset_pk)
                         if asset.status == 'synced' and asset.whatsapp_media_id and not asset.is_whatsapp_id_potentially_expired():
                             media_data_to_send['id'] = asset.whatsapp_media_id
@@ -736,6 +726,51 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
     logger.debug(f"Finished executing actions for step '{step.name}' (ID: {step.id}). Generated {len(actions_to_perform)} actions. Resulting context (snippet): {str(current_step_context)[:200]}...")
     return actions_to_perform, current_step_context
 
+def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
+    actions_to_perform = []
+    initial_flow_context = {}
+    message_text_body = None
+    if message_data.get('type') == 'text':
+        message_text_body = message_data.get('text', {}).get('body', '').lower().strip()
+    triggered_flow = None
+    active_flows = Flow.objects.filter(is_active=True).order_by('name')
+    if message_text_body:
+        for flow_candidate in active_flows:
+            if isinstance(flow_candidate.trigger_keywords, list):
+                for keyword in flow_candidate.trigger_keywords:
+                    if isinstance(keyword, str) and keyword.strip() and keyword.strip().lower() in message_text_body:
+                        triggered_flow = flow_candidate
+                        logger.info(f"Keyword '{keyword}' triggered flow '{flow_candidate.name}' for contact {contact.whatsapp_id}.")
+                        break
+            if triggered_flow:
+                break
+    if triggered_flow:
+        entry_point_step = FlowStep.objects.filter(flow=triggered_flow, is_entry_point=True).first()
+        if entry_point_step:
+            logger.info(f"Starting flow '{triggered_flow.name}' for contact {contact.whatsapp_id} at entry step '{entry_point_step.name}'.")
+            _clear_contact_flow_state(contact) # Clear any previous state before starting anew
+            contact_flow_state = ContactFlowState.objects.create(
+                contact=contact,
+                current_flow=triggered_flow,
+                current_step=entry_point_step,
+                flow_context_data=initial_flow_context,
+                started_at=timezone.now()
+            )
+            step_actions, updated_flow_context = _execute_step_actions(entry_point_step, contact, initial_flow_context.copy())
+            actions_to_perform.extend(step_actions)
+            
+            current_db_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
+            if current_db_state: # Check if state was not cleared by entry step itself
+                if current_db_state.flow_context_data != updated_flow_context: # Save context if changed
+                    current_db_state.flow_context_data = updated_flow_context
+                    current_db_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+            else:
+                logger.info(f"Flow state for contact {contact.whatsapp_id} was cleared by entry step '{entry_point_step.name}'. Context not saved.")
+        else:
+            logger.error(f"Flow '{triggered_flow.name}' is active but has no entry point step defined.")
+    else:
+        logger.info(f"No active flow triggered for contact {contact.whatsapp_id} with message: {message_text_body[:100] if message_text_body else message_data.get('type')}")
+    return actions_to_perform
 
 def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     current_step = contact_flow_state.current_step
@@ -911,6 +946,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                         'message_type': 'text', 'data': {'body': "Sorry, I could not process that. Please try 'menu' or rephrase your request."}
                     })
     return actions_to_perform
+
 
 def _evaluate_transition_condition(
     transition: FlowTransition, 
@@ -1210,19 +1246,15 @@ def _transition_to_step(
             logger.info(f"Contact {contact.whatsapp_id} successfully transitioned to step '{next_step.name}'. Context updated.")
         else:
             logger.info(f"Contact {contact.whatsapp_id} switched to a new flow. Current state is now pk={current_db_state_for_contact.pk}, step '{current_db_state_for_contact.current_step.name}'. The old state (pk={contact_flow_state.pk}) is no longer primary.")
-            # Update the caller's reference to the new state object by modifying it in place
             contact_flow_state.id = current_db_state_for_contact.id 
-            contact_flow_state.pk = current_db_state_for_contact.pk # Django ORM relies on pk
+            contact_flow_state.pk = current_db_state_for_contact.pk 
             contact_flow_state.current_flow = current_db_state_for_contact.current_flow
             contact_flow_state.current_step = current_db_state_for_contact.current_step
             contact_flow_state.flow_context_data = current_db_state_for_contact.flow_context_data
             contact_flow_state.started_at = current_db_state_for_contact.started_at
             contact_flow_state.last_updated_at = current_db_state_for_contact.last_updated_at
-            # If company was part of ContactFlowState, copy that too
-            if hasattr(current_db_state_for_contact, 'company'):
+            if hasattr(current_db_state_for_contact, 'company') and hasattr(contact_flow_state, 'company'): 
                  contact_flow_state.company = current_db_state_for_contact.company
-
-
     else: 
         logger.info(f"ContactFlowState for contact {contact.whatsapp_id} was cleared during or after execution of step '{next_step.name}'. No state to update.")
 
@@ -1239,8 +1271,6 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
     
     if len(parts) == 1:
         field_name = parts[0]
-        # Prevent updating protected fields
-        # Added 'company' and 'customer_profile' to protected as they are relations
         protected_fields = ['id', 'pk', 'whatsapp_id', 'company', 'company_id', 'created_at', 'updated_at', 'customer_profile', 'messages']
         if field_name.lower() in protected_fields:
             logger.warning(f"Attempt to update protected or relational Contact field '{field_name}' denied for contact {contact.whatsapp_id}.")
@@ -1299,16 +1329,7 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
     logger.debug(f"Attempting to update CustomerProfile for contact {contact.whatsapp_id} (ID: {contact.id}) with fields: {fields_to_update_config}")
     
     # MODIFICATION: Removed company filter for get_or_create if not multitenant
-    # profile_company = getattr(contact, 'company', None) # Get company from contact if it exists
-    # if not profile_company:
-    #     logger.warning(f"Cannot update CustomerProfile for contact {contact.id} as contact has no company attribute. Or, define a default company for single-tenant mode.")
-    #     # Decide how to handle this: error out, or use a global default company if CustomerProfile needs one.
-    #     # For now, let's assume CustomerProfile might not need a company if the app is single-tenant.
-    #     profile, created = CustomerProfile.objects.get_or_create(contact=contact)
-    # else:
-    #     profile, created = CustomerProfile.objects.get_or_create(contact=contact, company=profile_company)
     profile, created = CustomerProfile.objects.get_or_create(contact=contact)
-
 
     if created:
         logger.info(f"Created CustomerProfile (ID: {profile.id}) for contact {contact.whatsapp_id} (ID: {contact.id}).")
@@ -1374,6 +1395,7 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
         logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial timestamp.")
 
 
+# --- Main Flow Processing Function ---
 @transaction.atomic 
 def process_message_for_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     actions_to_perform = []
@@ -1387,7 +1409,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         contact_flow_state_qs = ContactFlowState.objects.select_for_update().select_related(
             'current_flow', 'current_step' 
         )
-        # REMOVED: company=contact.company filter for non-multitenant app
+        # MODIFICATION: Removed company filter based on non-multitenant requirement
         contact_flow_state = contact_flow_state_qs.get(contact=contact) 
         
         flow_name = contact_flow_state.current_flow.name if contact_flow_state.current_flow else "N/A"
@@ -1403,9 +1425,8 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             contact_flow_state, contact, message_data, incoming_message_obj
         )
     except ContactFlowState.DoesNotExist:
-        # This is normal for a new message from a contact not in a flow.
         logger.info(f"No active flow state for contact {contact.whatsapp_id} (ID: {contact.id}). Attempting to trigger a new flow.")
-        actions_to_perform = _trigger_new_flow(contact, message_data, incoming_message_obj)
+        actions_to_perform = _trigger_new_flow(contact, message_data, incoming_message_obj) 
     except Exception as e:
         logger.error(
             f"CRITICAL error in process_message_for_flow for contact {contact.whatsapp_id} (Message WAMID: {incoming_message_obj.wamid if incoming_message_obj and hasattr(incoming_message_obj, 'wamid') else 'N/A'}): {e}", 
@@ -1420,7 +1441,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         }]
         return actions_to_perform 
         
-    # REMOVED: company filter for ContactFlowState query
+    # MODIFICATION: Removed company filter
     current_contact_flow_state_after_initial_handling = ContactFlowState.objects.filter(contact=contact).first()
     
     if current_contact_flow_state_after_initial_handling:
@@ -1435,10 +1456,6 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                 logger.debug(f"Contact {contact.whatsapp_id}: Current step '{current_step.name}' is a question still awaiting reply. No auto-transitions will be processed now.")
         elif not current_step:
              logger.warning(f"Contact {contact.whatsapp_id}: ContactFlowState (pk={current_contact_flow_state_after_initial_handling.pk}) has no current_step after initial handling. Cannot process auto-transitions.")
-             # Return actions generated so far (might be empty or an error message from above)
-             # This state is problematic and indicates an issue in prior logic if state exists but step is None
-             # For safety, just process what we have.
-             # The final_actions_for_meta_view processing below will handle this.
 
         if not is_waiting_for_reply_from_current_step and \
            current_step is not None and \
@@ -1462,7 +1479,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
     temp_actions_to_process = list(actions_to_perform) 
 
     for action_idx, action in enumerate(temp_actions_to_process): 
-        if processed_switch_command: 
+        if processed_switch_command and action.get('type') != 'send_whatsapp_message':
             logger.debug(f"Skipping action (index {action_idx}, type {action.get('type')}) after flow switch already processed for contact {contact.whatsapp_id}.")
             continue
 
@@ -1501,16 +1518,18 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                 newly_created_state_after_switch.save(update_fields=['flow_context_data', 'last_updated_at'])
                 logger.info(f"Applied initial context to new flow '{target_flow_name}' state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
             
-            final_actions_for_meta_view = switched_flow_actions 
+            final_actions_for_meta_view = [act for act in switched_flow_actions if act.get('type') == 'send_whatsapp_message']
             processed_switch_command = True 
-            logger.info(f"Flow switch for {contact.whatsapp_id} to '{target_flow_name}' completed. Actions from new flow: {len(final_actions_for_meta_view)}")
+            logger.info(f"Flow switch for {contact.whatsapp_id} to '{target_flow_name}' completed. Actions from new flow's entry point to be sent: {len(final_actions_for_meta_view)}")
             break 
 
         elif action_type == 'send_whatsapp_message':
-            if not processed_switch_command: 
-                final_actions_for_meta_view.append(action)
-            else: # If switch happened, these actions are from the new flow's entry point.
-                 final_actions_for_meta_view.append(action) # This was already handled by final_actions = switched_flow_actions
+            if not processed_switch_command:
+                 final_actions_for_meta_view.append(action)
+            elif processed_switch_command and action in switched_flow_actions : 
+                 pass 
+            elif processed_switch_command and action not in switched_flow_actions:
+                 logger.warning(f"Action {action} was in original list but not in switched_flow_actions. Discarding post-switch.")
         else:
             logger.warning(f"Unhandled action type '{action_type}' encountered during final action processing for contact {contact.whatsapp_id}. Action: {action}")
             
