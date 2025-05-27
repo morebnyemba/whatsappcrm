@@ -97,7 +97,7 @@ ASGI_APPLICATION = 'whatsappcrm_backend.asgi.application' # For Celery with Djan
 DB_ENGINE_DEFAULT = 'django.db.backends.postgresql'
 DB_NAME_DEFAULT = 'whatsapp_crm_dev'  # The database name you created
 DB_USER_DEFAULT = 'crm_user'          # The user you created
-DB_PASSWORD_DEFAULT = ''                # It's best to set this in your .env file
+DB_PASSWORD_DEFAULT = 'kayden'            # It's best to set this in your .env file
 DB_HOST_DEFAULT = 'localhost'           # Or '127.0.0.1'
 DB_PORT_DEFAULT = '5432'                # Default PostgreSQL port
 
