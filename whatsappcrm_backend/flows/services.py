@@ -4,7 +4,7 @@ import logging
 import json
 import re
 from typing import List, Dict, Any, Optional, Union, Literal
-
+from django.db import models
 from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
@@ -1334,9 +1334,8 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
         logger.warning(f"_update_customer_profile_data called for contact {contact.whatsapp_id} (ID: {contact.id}) with invalid fields_to_update_config: {fields_to_update_config}")
         return
 
-    logger.debug(f"Attempting to update CustomerProfile for contact {contact.whatsapp_id} (ID: {contact.id}) with fields: {fields_to_update_config}")
+    logger.debug(f"Attempting to update CustomerProfile for contact {contact.whatsapp_id} (ID: {contact.id}) with fields_to_update_config: {fields_to_update_config}")
     
-    # MODIFICATION: Removed company filter for get_or_create if not multitenant
     profile, created = CustomerProfile.objects.get_or_create(contact=contact)
 
     if created:
@@ -1345,26 +1344,80 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
     changed_fields = []
     for field_path, value_template in fields_to_update_config.items():
         resolved_value = _resolve_value(value_template, flow_context, contact)
-        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, attempting to set path '{field_path}' to resolved value '{str(resolved_value)[:100]}'.")
+        
+        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, path '{field_path}', resolved value from template '{value_template}': '{str(resolved_value)[:100]}'.")
+
+        field_name = field_path # Assuming field_path is the direct model field name for non-JSON fields
+
+        # --- START: Generalized "skip" and specific field handling ---
+        if isinstance(resolved_value, str) and resolved_value.lower() == 'skip':
+            # Check if the model field corresponding to field_name allows null
+            model_field = next((f for f in CustomerProfile._meta.fields if f.name == field_name), None)
+            if model_field and model_field.null:
+                resolved_value = None
+                logger.debug(f"Field '{field_name}' was 'skip', resolved_value set to None as model field allows null.")
+            else:
+                # If field doesn't allow null, "skip" effectively means "don't update" or "set to empty string if CharField"
+                # For simplicity here, if it's not nullable and user said skip, we might log and not include in changed_fields
+                # or set to "" if it's a CharField. For now, let's assume it becomes None and setattr handles it (or Django raises error if not nullable).
+                # Best practice: Ensure skippable fields are null=True in model.
+                logger.warning(f"Field '{field_name}' was 'skip'. If model field is not nullable, this might cause issues or save the string 'skip'. Resolved value kept as 'skip' for now if not nullable.")
+                if model_field and not model_field.null and isinstance(model_field, (models.CharField, models.TextField)):
+                    resolved_value = "" # Default to empty string for non-nullable CharFields/TextFields if skipped
+                elif model_field and not model_field.null: # For other non-nullable types, skip might be an error
+                     logger.error(f"Field '{field_name}' is not nullable and was skipped. Skipping update for this field.")
+                     continue # Skip trying to set this field
+
+        if field_name == 'gender': 
+            gender_map = {
+                "gender_male": "male",
+                "gender_female": "female",
+                "gender_other": "other",
+                "gender_skip": "prefer_not_to_say" 
+            }
+            # resolved_value might be None here if "skip" was processed above and gender field allows null
+            if resolved_value is not None: # Only map if not already None due to a general "skip"
+                original_gender_reply_id = str(resolved_value).lower()
+                resolved_value = gender_map.get(original_gender_reply_id, None) # Default to None if mapping fails
+            logger.debug(f"Field 'gender' (original reply_id: '{original_gender_reply_id if 'original_gender_reply_id' in locals() else 'N/A'}') mapped to model value: '{resolved_value}'.")
+        
+        elif field_name == 'date_of_birth':
+            if isinstance(resolved_value, str) and resolved_value:
+                # Ensure YYYY-MM-DD format. Your regex for the question step should enforce this.
+                if not re.match(r"^(19[0-9]{2}|20[0-9]{2})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$", resolved_value): # Broader year range
+                    logger.warning(f"Invalid date format or range for date_of_birth '{resolved_value}' for contact {contact.id}. Setting to None.")
+                    resolved_value = None
+            elif not resolved_value: 
+                resolved_value = None
+            logger.debug(f"Field 'date_of_birth' processed value: '{resolved_value}'.")
+        # --- END: Generalized "skip" and specific field handling ---
+
         parts = field_path.split('.')
         try:
-            if len(parts) == 1:
-                field_name = parts[0]
-                protected_fields = ['id', 'pk', 'contact', 'contact_id', 'company', 'company_id', 'created_at', 'updated_at', 'last_updated_from_conversation']
+            if len(parts) == 1: # Direct attribute of CustomerProfile
+                # field_name is already set
+                protected_fields = ['id', 'pk', 'contact', 'contact_id', 'created_at', 'updated_at', 'last_updated_from_conversation']
+                
                 if hasattr(profile, field_name) and field_name.lower() not in protected_fields:
-                    setattr(profile, field_name, resolved_value)
-                    if field_name not in changed_fields:
-                        changed_fields.append(field_name)
+                    current_attr_val = getattr(profile, field_name)
+                    if current_attr_val != resolved_value:
+                        setattr(profile, field_name, resolved_value)
+                        if field_name not in changed_fields:
+                            changed_fields.append(field_name)
+                        logger.debug(f"CustomerProfile field '{field_name}' set to '{str(resolved_value)[:100]}'. Old value was '{str(current_attr_val)[:100]}'")
+                    else:
+                        logger.debug(f"CustomerProfile field '{field_name}' value '{str(resolved_value)[:100]}' is same as current. No change.")
                 else:
                     logger.warning(f"CustomerProfile field '{field_name}' not found on model or is protected for contact {contact.whatsapp_id}.")
+            
             elif parts[0] in ['preferences', 'custom_attributes'] and len(parts) > 1:
+                # ... (Your existing logic for JSON fields - this seems okay from the file you provided) ...
                 json_field_name = parts[0]
                 json_data = getattr(profile, json_field_name)
-                if json_data is None: 
-                    json_data = {}
+                if json_data is None: json_data = {}
                 elif not isinstance(json_data, dict):
-                    logger.error(f"CustomerProfile.{json_field_name} for contact {contact.id} is not a dict ({type(json_data)}). Cannot update path '{field_path}'. Re-initializing.")
-                    json_data = {} 
+                    logger.error(f"CustomerProfile.{json_field_name} for contact {contact.id} is not a dict. Re-initializing.")
+                    json_data = {}
                 
                 current_level = json_data
                 for i, key in enumerate(parts[1:-1]): 
@@ -1378,14 +1431,17 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
 
                 if current_level is not None: 
                     final_key = parts[-1]
-                    current_level[final_key] = resolved_value
+                    current_level[final_key] = resolved_value 
                     setattr(profile, json_field_name, json_data) 
                     if json_field_name not in changed_fields:
                         changed_fields.append(json_field_name)
+                    logger.debug(f"CustomerProfile JSON field path '{field_path}' set to '{str(resolved_value)[:100]}'.")
+                else:
+                    logger.warning(f"Could not update CustomerProfile JSON field path '{field_path}' due to path traversal error.")
             else:
                 logger.warning(f"Unsupported field path structure for CustomerProfile: '{field_path}' for contact {contact.whatsapp_id}.")
         except Exception as e:
-            logger.error(f"Error updating CustomerProfile field '{field_path}' for contact {contact.id}: {e}", exc_info=True)
+            logger.error(f"Error processing CustomerProfile field_path '{field_path}' for contact {contact.id}: {e}", exc_info=True)
             
     if changed_fields:
         profile.last_updated_from_conversation = timezone.now()
@@ -1400,7 +1456,9 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
     elif created: 
         profile.last_updated_from_conversation = timezone.now()
         profile.save(update_fields=['last_updated_from_conversation'])
-        logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial timestamp.")
+        logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial last_updated_from_conversation timestamp.")
+    else:
+        logger.debug(f"No fields changed in CustomerProfile for {contact.whatsapp_id}. No save needed.")
 
 
 # --- Main Flow Processing Function ---
