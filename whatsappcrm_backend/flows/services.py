@@ -852,6 +852,14 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             else:
                 logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
             flow_context.pop('_fallback_count', None) 
+                    # START OF MODIFICATION
+            # Persist the updated context immediately after a valid question reply is processed
+            contact_flow_state.flow_context_data = flow_context 
+            contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+            logger.debug(f"Saved updated flow_context for contact {contact.whatsapp_id} after processing valid reply for Q-step '{current_step.name}'.")
+            # END OF MODIFICATION
+    
+        
         else: 
             logger.info(f"Reply for question step '{current_step.name}' was not valid. Expected type: '{expected_reply_type}'.")
             fallback_config = current_step.config.get('fallback_config', {}) if isinstance(current_step.config, dict) else {}
