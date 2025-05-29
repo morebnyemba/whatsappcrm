@@ -1,14 +1,15 @@
-// Filename: src/App.jsx
+// src/App.jsx
 import React from 'react';
-import { RouterProvider, createBrowserRouter, Navigate, Link } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext'; // Your AuthProvider
-import ProtectedRoute from './components/ProtectedRoute'; // Your ProtectedRoute
+import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom";
+import { AuthProvider } from './context/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 
+// Layout and Page Imports
 import DashboardLayout from './components/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import ApiSettings from './pages/ApiSettings';
 import FlowsPage from './pages/FlowsPage';
-import FlowEditorPage from './pages/FlowEditorPage'; // <--- IMPORT FlowEditorPage
+import FlowEditorPage from './pages/FlowEditorPage';
 import MediaLibraryPage from './pages/MediaLibraryPage';
 import ContactsPage from './pages/ContactsPage';
 import SavedData from './pages/SavedData';
@@ -28,44 +29,41 @@ const NotFoundPage = () => (
   </div>
 );
 
-const router = createBrowserRouter([
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
-  {
-    path: '/',
-    element: (
-      <ProtectedRoute>
-        <DashboardLayout />
-      </ProtectedRoute>
-    ),
-    children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
-      { path: 'dashboard', element: <Dashboard /> },
-      { path: 'api-settings', element: <ApiSettings /> },
-      
-      // Flow Management
-      { path: 'flows', element: <FlowsPage /> }, // Page to list all flows
-      { path: 'flows/new', element: <FlowEditorPage /> }, // <--- ADDED: Route to create a new flow
-      { path: 'flows/edit/:flowId', element: <FlowEditorPage /> }, // <--- ADDED: Route to edit an existing flow
-      
-      // Other sections
-      { path: 'media-library', element: <MediaLibraryPage /> },
-      { path: 'contacts', element: <ContactsPage /> },
-      
-      { path: 'saved-data', element: <SavedData /> },
-      { path: 'conversation', element: <Conversation /> },
-      { path: '*', element: <NotFoundPage /> } // Catch-all for paths under DashboardLayout
-    ]
-  },
-  { path: '*', element: <Navigate to="/" replace /> } // General catch-all for any other path
-]);
-
+// This App component now mirrors the structure of your successful "other project"
 export default function App() {
   return (
-    <AuthProvider>
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <BrowserRouter> {/* Top-level BrowserRouter establishes routing context */}
+      <AuthProvider> {/* AuthProvider is a child, its hooks (useNavigate, useLocation) will work */}
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          
+          {/* Protected Routes */}
+          <Route 
+            path="/" 
+            element={
+              <ProtectedRoute>
+                <DashboardLayout /> {/* DashboardLayout contains <Outlet /> for nested routes */}
+              </ProtectedRoute>
+            }
+          >
+            {/* Children of DashboardLayout (rendered via its <Outlet />) */}
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="api-settings" element={<ApiSettings />} />
+            <Route path="flows" element={<FlowsPage />} />
+            <Route path="flows/new" element={<FlowEditorPage />} />
+            <Route path="flows/edit/:flowId" element={<FlowEditorPage />} />
+            <Route path="media-library" element={<MediaLibraryPage />} />
+            <Route path="contacts" element={<ContactsPage />} />
+            <Route path="saved-data" element={<SavedData />} />
+            <Route path="conversation" element={<Conversation />} />
+            <Route path="*" element={<NotFoundPage />} /> {/* Catches unhandled routes under "/" */}
+          </Route>
+          
+          {/* A more general catch-all for any other top-level path not defined */}
+          <Route path="*" element={<Navigate to="/" replace />} /> 
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

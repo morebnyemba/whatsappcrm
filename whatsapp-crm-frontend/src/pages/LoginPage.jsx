@@ -1,62 +1,94 @@
-// Filename: src/pages/LoginPage.jsx
-import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
+// src/pages/LoginPage.jsx
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext'; // Your AuthContext
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { FiLogIn, FiLock, FiUser } from 'react-icons/fi';
+import { FiLogIn, FiLock, FiUser } from 'react-icons/fi'; // FiUser is appropriate for username
 import { motion } from 'framer-motion';
 
+// If you want a specific loader icon (like FiLoader), uncomment the next line
+// import { FiLoader } from 'react-icons/fi'; 
+
 export default function LoginPage() {
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(''); // Changed from emailOrUsername to username
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  
-  const auth = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false); // Local loading state for form submission
+  const [inlineError, setInlineError] = useState(''); 
+
+  const auth = useAuth(); // Get auth context as an object
   const navigate = useNavigate();
   const location = useLocation();
+  
   const from = location.state?.from?.pathname || "/dashboard";
+
+  // Effect to redirect if already authenticated
+  useEffect(() => {
+    // Ensure auth object and its properties are checked before use
+    if (auth && auth.isAuthenticated && !auth.isLoadingAuth) {
+      toast.info("You are already logged in. Redirecting...");
+      navigate(from, { replace: true });
+    }
+  }, [auth, navigate, from]); // Added auth to dependency array
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setInlineError(''); 
     
-    // Validate inputs before submitting
     if (!username.trim() || !password.trim()) {
-      toast.error("Please fill in all fields");
+      toast.error("Please enter both username and password.");
+      setInlineError("Username and password are required.");
       return;
     }
     
-    setIsLoading(true);
-    setError('');
+    if (!auth || !auth.login) {
+        toast.error("Authentication service is not available. Please try again later.");
+        setInlineError("Authentication service is not available.");
+        return;
+    }
+
+    setIsSubmitting(true);
     
     try {
-      await auth.login(username, password);
-      toast.success("Login successful!", {
-        description: "You're being redirected to your dashboard",
-        duration: 2000,
-      });
-      setTimeout(() => navigate(from, { replace: true }), 1500);
+      // Call auth.login with username and password
+      // The auth.login function in AuthContext should be prepared to send
+      // { username: username, password: password } to the backend
+      // if your DJOSER LOGIN_FIELD is 'username'.
+      // If DJOSER LOGIN_FIELD is 'email', then auth.login should expect email.
+      // For this example, we assume auth.login expects the first param as the login identifier.
+    // In LoginPage.jsx, handleSubmit
+console.log("Attempting login with username:", username, " Password:", password ? "********" : "(empty)");
+const result = await auth.login(username, password);
+      
+      if (!result.success && result.error) {
+        setInlineError(result.error);
+        // Error toast is expected to be handled by authService.loginUser (called by auth.login)
+      }
+      // Successful navigation is handled by the login function in AuthContext.
     } catch (err) {
-      const errorMessage = err.response?.data?.detail || "Login failed. Please check your credentials.";
-      setError(errorMessage);
-      toast.error("Login Failed", {
-        description: errorMessage,
-        action: {
-          label: "Retry",
-          onClick: () => {
-            setUsername('');
-            setPassword('');
-          },
-        },
-      });
+      console.error("Login page submit - unexpected error:", err);
+      const unexpectedErrorMsg = err.message || "An unexpected issue occurred. Please try again.";
+      setInlineError(unexpectedErrorMsg);
+      toast.error(unexpectedErrorMsg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
+  
+  // Defensive check for auth object during render
+  if (!auth) {
+    return (
+        <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-green-500 via-teal-600 to-blue-700 dark:from-gray-800 dark:via-gray-900 dark:to-black p-4">
+            <div className="w-full max-w-md text-center">
+                <p className="text-white text-lg">Loading authentication...</p>
+                 {/* You can add your SVG loader here if desired */}
+            </div>
+        </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-green-500 via-teal-600 to-blue-700 dark:from-gray-800 dark:via-gray-900 dark:to-black p-4">
@@ -78,41 +110,42 @@ export default function LoginPage() {
             </motion.div>
             <div>
               <CardTitle className="text-3xl font-bold text-gray-800 dark:text-gray-100">
-                Welcome to Your AutoWhatsApp Instance
+                Welcome to Your AutoWhatsApp Instance {/* Retained original title */}
               </CardTitle>
               <CardDescription className="text-gray-600 dark:text-gray-300 mt-2 text-sm leading-relaxed">
                 We appreciate your business. This is the frontend of your instance. 
-                Please login with the details provided from Slyker Tech Web Services.
+                Please login with the details provided from Slyker Tech Web Services. {/* Retained original description */}
               </CardDescription>
             </div>
           </CardHeader>
           
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
-              {error && (
+              {inlineError && (
                 <motion.p 
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
-                  className="text-sm text-red-500 dark:text-red-400 bg-red-100 dark:bg-red-900/30 p-3 rounded-md text-center"
+                  className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 p-3 rounded-md text-center"
                 >
-                  {error}
+                  {inlineError}
                 </motion.p>
               )}
               
               <div className="space-y-3">
                 <Label htmlFor="username" className="text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <FiUser className="h-4 w-4" />
-                  Username
+                  <FiUser className="h-4 w-4" /> 
+                  Username {/* Changed label to Username */}
                 </Label>
                 <Input
                   id="username"
-                  type="text"
+                  type="text" // Kept as text for username
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter your username"
+                  placeholder="Enter your username" // Changed placeholder
                   required
-                  disabled={isLoading}
+                  disabled={isSubmitting || auth.isLoadingAuth}
                   className="dark:bg-gray-700/50 dark:border-gray-600 dark:text-gray-50 h-11"
+                  autoComplete="username" // Changed autocomplete
                 />
               </div>
               
@@ -128,8 +161,9 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   required
-                  disabled={isLoading}
+                  disabled={isSubmitting || auth.isLoadingAuth}
                   className="dark:bg-gray-700/50 dark:border-gray-600 dark:text-gray-50 h-11"
+                  autoComplete="current-password"
                 />
               </div>
               
@@ -137,9 +171,9 @@ export default function LoginPage() {
                 <Button 
                   type="submit" 
                   className="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 dark:from-green-600 dark:to-teal-600 dark:hover:from-green-700 dark:hover:to-teal-700 text-white h-11 font-medium shadow-lg"
-                  disabled={isLoading}
+                  disabled={isSubmitting || auth.isLoadingAuth}
                 >
-                  {isLoading ? (
+                  {isSubmitting || auth.isLoadingAuth ? (
                     <span className="flex items-center gap-2">
                       <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

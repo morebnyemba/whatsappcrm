@@ -1,107 +1,97 @@
 // src/services/api.js
-import { authService } from './auth'; // Import your auth service
-import { toast } from 'sonner'; // Assuming toast is configured globally
+import axios from 'axios';
+import { toast } from 'sonner';
 
-console.log("VITE_API_BASE_URL from env:", import.meta.env.VITE_API_BASE_URL);
-console.log("Full import.meta.env object:", import.meta.env);
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'; // Keep this as the absolute base for your backend
-console.log("API_BASE_URL being used:", API_BASE_URL);
-// To handle concurrent requests during token refresh
-let isRefreshingToken = false;
-let failedQueue = [];
+// Function to get the auth token directly from localStorage.
+// This avoids circular dependency issues if auth.js also needs to import apiClient.
+const getAuthToken = () => localStorage.getItem('accessToken');
 
-const processQueue = (error, token = null) => {
-  failedQueue.forEach(prom => {
-    if (error) {
-      prom.reject(error);
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+const apiClient = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
+
+// Request Interceptor: To add the Auth Token to every outgoing request
+apiClient.interceptors.request.use(
+    (config) => {
+        const token = getAuthToken();
+        if (token) {
+            config.headers['Authorization'] = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => {
+        // This will likely be a network error or an error before the request is sent
+        toast.error(error.message || 'Error setting up API request.');
+        return Promise.reject(error);
+    }
+);
+
+// Basic Response Interceptor for general error logging.
+// AuthContext.jsx will add a more specific response interceptor for 401/token refresh.
+// This one can handle other types of errors or act as a fallback.
+apiClient.interceptors.response.use(
+  (response) => response, // Simply return successful responses
+  (error) => {
+    // Check if AuthContext's interceptor has already handled and marked this error
+    if (error.config && error.config._isRetryAttempt) {
+        // If AuthContext's interceptor marked it as a retry, it's being handled there.
+        // Or if the refresh attempt itself failed, AuthContext would have shown a toast.
+        return Promise.reject(error);
+    }
+    
+    let errorMessage = 'An unexpected API error occurred.';
+    if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        const errorData = error.response.data;
+        const status = error.response.status;
+        
+        if (status === 401) {
+            // This case should ideally be handled by AuthContext's interceptor for token refresh.
+            // If it reaches here, it might be that the refresh mechanism isn't active or also failed.
+            errorMessage = errorData?.detail || "Authentication failed or session expired. Please try logging in again.";
+        } else if (typeof errorData === 'string') {
+            errorMessage = errorData;
+        } else if (errorData && errorData.detail) {
+            errorMessage = errorData.detail;
+        } else if (errorData && typeof errorData === 'object') {
+            const messages = Object.entries(errorData)
+              .map(([key, value]) => {
+                const prettyKey = key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+                if (Array.isArray(value)) {
+                  return `${prettyKey}: ${value.join(', ')}`;
+                }
+                return `${prettyKey}: ${String(value)}`;
+              })
+              .join('; ');
+            if (messages) errorMessage = messages;
+            else errorMessage = `API Error (${status})`;
+        } else {
+            errorMessage = error.message || `API Error (${status})`;
+        }
+    } else if (error.request) {
+        // The request was made but no response was received
+        errorMessage = 'Network error or no response from server. Please check your connection.';
     } else {
-      prom.resolve(token);
-    }
-  });
-  failedQueue = [];
-};
-
-export async function apiCall(endpoint, method = 'GET', body = null, isPaginatedFallback = false, attempt = 1) {
-  const token = authService.getAccessToken(); // Use authService
-  const headers = {
-    ...(!body || !(body instanceof FormData) && { 'Content-Type': 'application/json' }),
-    ...(token && { 'Authorization': `Bearer ${token}` }),
-  };
-
-  const config = { method, headers, ...(body && !(body instanceof FormData) && { body: JSON.stringify(body) }) };
-
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, config); // Ensure endpoint is full path from domain root
-
-    if (!response.ok) {
-      let errorData;
-      try {
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          errorData = await response.json();
-        } else {
-          errorData = { detail: await response.text() || `Request failed: ${response.status}` };
-        }
-      } catch (e) {
-        errorData = { detail: `Request failed: ${response.status}, error parsing response.` };
-      }
-      
-      // Check for 401 Unauthorized and not already retrying or refreshing
-      if (response.status === 401 && attempt === 1) { // Only attempt refresh once
-        if (!isRefreshingToken) {
-          isRefreshingToken = true;
-          try {
-            const newAccessToken = await authService.refreshTokenInternal(); // Use the internal refresh directly
-            processQueue(null, newAccessToken); // Resolve queued requests
-            // Retry the original request with the new token
-            return apiCall(endpoint, method, body, isPaginatedFallback, 2); // Mark as 2nd attempt
-          } catch (refreshError) {
-            processQueue(refreshError, null); // Reject queued requests
-            // authService.logout() should be called by refreshTokenInternal on failure
-            // which should trigger redirect via AuthContext
-            toast.error(refreshError.message || "Session expired. Please log in.", {id: "session-expired"});
-            throw refreshError; // Throw to indicate failure
-          } finally {
-            isRefreshingToken = false;
-          }
-        } else {
-          // Token is already being refreshed, queue this request
-          return new Promise((resolve, reject) => {
-            failedQueue.push({ resolve, reject });
-          }).then(newAccessToken => {
-            // Retry with new token obtained by the first refresh call
-             const newHeaders = { ...headers, Authorization: `Bearer ${newAccessToken}` };
-             const newConfig = {...config, headers: newHeaders};
-             return fetch(`${API_BASE_URL}${endpoint}`, newConfig).then(async res => {
-                 if (!res.ok) throw new Error(await res.text() || `Retry failed: ${res.status}`);
-                 if (res.status === 204 || (res.headers.get("content-length") || "0") === "0") return null;
-                 return res.json();
-             });
-          });
-        }
-      }
-      
-      // For non-401 errors or if retry already happened
-      const errorMessage = errorData.detail || 
-                           (typeof errorData === 'object' && errorData !== null && !errorData.detail ? 
-                             Object.entries(errorData).map(([k,v])=>`${k.replace(/_/g, " ")}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ') : 
-                             `API Error ${response.status}`);
-      const err = new Error(errorMessage); err.data = errorData; err.isApiError = true; throw err;
+        // Something happened in setting up the request that triggered an Error
+        errorMessage = error.message || 'Error in request setup.';
     }
 
-    // Handle successful response
-    if (response.status === 204 || (response.headers.get("content-length") || "0") === "0") {
-      return isPaginatedFallback ? { results: [], count: 0 } : null;
+    // Avoid duplicate toasts if another part of the system (like AuthContext) already toasted
+    // We use a simple check on the error message string.
+    if (!error.message || (!error.message.includes("(toasted)") && !error.message.includes("(toasted_auth)"))) {
+        toast.error(errorMessage);
+        // Augment error message to signify it has been toasted by this general interceptor
+        error.message = `${errorMessage} (toasted_api)`;
     }
-    const data = await response.json();
-    return isPaginatedFallback ? { results: data.results || (Array.isArray(data) ? data : []), count: data.count || (Array.isArray(data) ? data.length : 0) } : data;
 
-  } catch (error) {
-    // Avoid double toasting if error already marked or is auth related handled above
-    if (!error.isApiError || (!error.message.includes("(toasted)") && !error.message.includes("Session expired"))) {
-        toast.error(error.message || 'An unexpected API error occurred.');
-        error.message = (error.message || "") + " (toasted)";
-    }
-    throw error;
+    return Promise.reject(error);
   }
-}
+);
+
+export default apiClient;

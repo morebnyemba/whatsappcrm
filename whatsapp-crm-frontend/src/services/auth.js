@@ -1,205 +1,167 @@
 // src/services/auth.js
+import axios from 'axios';
 import { toast } from 'sonner';
 
-const API_AUTH_BASE_URL = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/crm-api/auth`; // Base for auth endpoints
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Define base URLs for clarity
+const CUSTOM_AUTH_TOKEN_URL_BASE = `${API_BASE_URL}/crm-api/auth/token`; // For /token/ and /token/refresh/
+const DJOSER_USERS_URL_BASE = `${API_BASE_URL}/crm-api/auth`; // For Djoser's /users/me/
+
 const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
-const USER_DATA_KEY = 'userData'; // Optional: to store basic user info
+const USER_DATA_KEY = 'user';
 
-let isRefreshing = false;
-let refreshSubscribers = []; // Callbacks to execute after token refresh
+export const getAuthToken = () => localStorage.getItem(ACCESS_TOKEN_KEY);
+export const getRefreshToken = () => localStorage.getItem(REFRESH_TOKEN_KEY);
 
-const storeTokens = (accessToken, refreshToken) => {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-};
-
-const clearTokens = () => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(USER_DATA_KEY);
+const storeTokenData = (access, refresh) => {
+    if (access) localStorage.setItem(ACCESS_TOKEN_KEY, access);
+    if (refresh) localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
 };
 
 const storeUserData = (userData) => {
-    if (userData) {
-        localStorage.setItem(USER_DATA_KEY, JSON.stringify(userData));
-    }
+    if (userData) localStorage.setItem(USER_DATA_KEY, JSON.stringify(userData));
+    else localStorage.removeItem(USER_DATA_KEY);
 };
 
-const getUserData = () => {
-    const data = localStorage.getItem(USER_DATA_KEY);
+const clearAuthStorage = () => {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    localStorage.removeItem(USER_DATA_KEY);
+};
+
+const getUserFromStorage = () => {
     try {
-        return data ? JSON.parse(data) : null;
+        const userStr = localStorage.getItem(USER_DATA_KEY);
+        return userStr ? JSON.parse(userStr) : null;
     } catch (e) {
+        console.warn("Could not parse user data from localStorage", e);
+        localStorage.removeItem(USER_DATA_KEY);
         return null;
     }
 };
 
-
-async function login(username, password) {
-  try {
-    const response = await fetch(`${API_AUTH_BASE_URL}/token/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }), // Or 'email' if your backend uses email
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || 'Login failed');
-    }
-    if (data.access && data.refresh) {
-      storeTokens(data.access, data.refresh);
-      // Optionally fetch user details here if login response doesn't include them
-      // const userData = await fetchUserDetails(data.access); // You'd need to implement this
-      // storeUserData(userData);
-      toast.success('Login successful!');
-      return { success: true, user: { username } /* or full user data */ };
-    }
-    throw new Error('Login failed: No tokens received.');
-  } catch (error) {
-    console.error("Login error:", error);
-    toast.error(error.message || 'Login failed. Please check your credentials.');
-    return { success: false, error: error.message };
-  }
-}
-
-async function logout(notifyBackend = true) {
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-  if (notifyBackend && refreshToken) {
+// Updated to accept username and password directly
+export const loginUser = async (username, password) => {
     try {
-      // Optional: Call backend to blacklist the refresh token
-      await fetch(`${API_AUTH_BASE_URL}/token/blacklist/`, { // Assuming this endpoint exists and is configured
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh: refreshToken }),
-      });
-      toast.info('Successfully logged out from server.');
+        const credentials = { username: username, password: password };
+
+        // Log the exact data being sent
+        console.log('Credentials being sent to backend:', JSON.stringify(credentials)); 
+
+        const response = await axios.post(`${CUSTOM_AUTH_TOKEN_URL_BASE}/`, credentials);
+        const { access, refresh } = response.data;
+
+        if (access && refresh) {
+            storeTokenData(access, refresh);
+
+            // Fetch user details using Djoser's /users/me/ endpoint
+            const userResponse = await axios.get(`${DJOSER_USERS_URL_BASE}/users/me/`, {
+                headers: { Authorization: `Bearer ${access}` }
+            });
+            storeUserData(userResponse.data);
+            toast.success("Login successful!");
+            return { success: true, access, refresh, user: userResponse.data };
+        } else {
+            const errorDetail = response.data?.detail || "Login failed: No access/refresh tokens received.";
+            throw new Error(errorDetail);
+        }
     } catch (error) {
-      console.warn("Failed to blacklist token on server during logout:", error);
-      // Proceed with client-side logout even if blacklist fails
+        const errorData = error.response?.data;
+        let errorMsg = "Login failed.";
+
+        if (errorData?.detail) {
+            errorMsg = errorData.detail;
+        } else if (errorData?.non_field_errors) { // Common for TokenObtainPairView errors
+            errorMsg = errorData.non_field_errors.join(' ');
+        } else if (errorData && typeof errorData === 'object') {
+            // General DRF error formatting
+            errorMsg = Object.entries(errorData)
+                .map(([key, value]) => {
+                    const prettyKey = key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+                    return `${prettyKey}: ${Array.isArray(value) ? value.join(', ') : String(value)}`;
+                })
+                .join('; ');
+            if (!errorMsg) errorMsg = "Invalid credentials or server error.";
+        } else if (error.message) {
+            errorMsg = error.message;
+        } else {
+             errorMsg = "Invalid credentials or unable to connect.";
+        }
+        
+        toast.error(errorMsg);
+        throw new Error(errorMsg);
     }
-  }
-  clearTokens();
-  // Important: Trigger UI update/redirect. This is usually handled by AuthContext or router.
-  // For example, by dispatching an event or updating context state.
-  // window.dispatchEvent(new Event('authChange'));
-  console.log("User logged out, tokens cleared.");
-}
-
-async function refreshToken() {
-  const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-  if (!currentRefreshToken) {
-    // No refresh token, user needs to log in.
-    await logout(false); // Clear any partial tokens
-    return Promise.reject(new Error("No refresh token available."));
-  }
-
-  try {
-    const response = await fetch(`${API_AUTH_BASE_URL}/token/refresh/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh: currentRefreshToken }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      // If refresh fails (e.g., refresh token expired or blacklisted)
-      await logout(false); // Logout the user
-      throw new Error(data.detail || "Session expired. Please log in again.");
-    }
-    if (data.access) {
-      localStorage.setItem(ACCESS_TOKEN_KEY, data.access);
-      // If your backend rotates refresh tokens, update it here:
-      // if (data.refresh) { localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh); }
-      toast.success("Session refreshed", { duration: 2000 });
-      return data.access; // Return new access token
-    }
-    throw new Error("Token refresh failed: No new access token received.");
-  } catch (error) {
-    console.error("Token refresh error:", error);
-    await logout(false); // Ensure logout on any refresh failure
-    throw error; // Re-throw for apiCall to handle
-  }
-}
-
-const getAccessToken = () => localStorage.getItem(ACCESS_TOKEN_KEY);
-
-const isLoggedIn = () => {
-  // Basic check, can be enhanced by decoding token to check expiry
-  return !!localStorage.getItem(ACCESS_TOKEN_KEY);
 };
 
-// Function to subscribe requests to the token refresh process
-const subscribeTokenRefresh = (cb) => {
-  refreshSubscribers.push(cb);
-};
-
-// Function to notify subscribers after token has been refreshed
-const onRefreshed = (token) => {
-  refreshSubscribers.forEach(cb => cb(token));
-  refreshSubscribers = []; // Clear subscribers
-};
-
-export const authService = {
-  login,
-  logout,
-  refreshToken: async () => { // Wrapped refreshToken to handle concurrent requests
-    if (!isRefreshing) {
-      isRefreshing = true;
-      refreshPromise = refreshTokenInternal() // Renamed original refreshToken
-        .then(newAccessToken => {
-          onRefreshed(newAccessToken);
-          return newAccessToken;
-        })
-        .catch(error => {
-          onRefreshed(null); // Notify subscribers of failure
-          throw error;
-        })
-        .finally(() => {
-          isRefreshing = false;
-          refreshPromise = null;
+export const refreshToken = async () => {
+    const currentRefreshToken = getRefreshToken();
+    if (!currentRefreshToken) {
+        throw new Error("Session ended. No refresh token available.");
+    }
+    try {
+        console.log("auth.js: Attempting token refresh...");
+        // Use the endpoint from your urls.py
+        const response = await axios.post(`${CUSTOM_AUTH_TOKEN_URL_BASE}/refresh/`, {
+            refresh: currentRefreshToken,
         });
+        const { access, refresh: newRotatedRefreshToken } = response.data;
+        
+        if (!access) {
+             throw new Error("Token refresh failed: No new access token received.");
+        }
+
+        localStorage.setItem(ACCESS_TOKEN_KEY, access);
+        if (newRotatedRefreshToken) { 
+            localStorage.setItem(REFRESH_TOKEN_KEY, newRotatedRefreshToken);
+        }
+        console.log("auth.js: Token refreshed successfully.");
+        return access; 
+    } catch (error) {
+        console.error("auth.js: Token refresh error. Logging out.", error.response?.data || error.message);
+        clearAuthStorage(); 
+        throw new Error(error.response?.data?.detail || "Your session has fully expired. Please log in again.");
     }
-    return refreshPromise;
-  },
-  getAccessToken,
-  getRefreshToken: () => localStorage.getItem(REFRESH_TOKEN_KEY), // Direct getter
-  isLoggedIn,
-  storeTokens, // Expose if needed externally, e.g., after social login
-  clearTokens,
-  storeUserData,
-  getUserData,
-  // Internal function, wrapped for public use
-  refreshTokenInternal: refreshToken 
 };
 
-// Rename original refreshToken to avoid name collision
-async function refreshTokenInternal() {
-  const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-  if (!currentRefreshToken) {
-    await authService.logout(false);
-    return Promise.reject(new Error("No refresh token available."));
-  }
-  try {
-    const response = await fetch(`${API_AUTH_BASE_URL}/token/refresh/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh: currentRefreshToken }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      await authService.logout(false);
-      throw new Error(data.detail || "Session expired. Please log in again.");
+export const logoutUser = (navigate) => {
+    clearAuthStorage();
+    toast.info("You have been successfully logged out.");
+    if (navigate) {
+        navigate('/login', { replace: true });
     }
-    if (data.access) {
-      localStorage.setItem(ACCESS_TOKEN_KEY, data.access);
-      if (data.refresh) { // Handle rotated refresh tokens
-        localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh);
-      }
-      return data.access;
+};
+
+export const fetchUserProfile = async (tokenToUse) => {
+    const token = tokenToUse || getAuthToken();
+    if (!token) {
+        console.log("fetchUserProfile: No auth token available.");
+        return null;
     }
-    throw new Error("Token refresh failed: No new access token.");
-  } catch (error) {
-    await authService.logout(false);
-    throw error;
-  }
-}
+    try {
+        // Djoser's /users/me/ endpoint
+        const response = await axios.get(`${DJOSER_USERS_URL_BASE}/users/me/`, {
+             headers: { Authorization: `Bearer ${token}` }
+        });
+        storeUserData(response.data);
+        return response.data;
+    } catch (error) {
+        console.error("Failed to fetch user profile:", error.response?.data || error.message);
+        if (error.response?.status === 401) {
+            // Let AuthContext's interceptor handle refresh or logout
+        }
+        throw error; 
+    }
+};
+
+export const checkInitialAuth = () => {
+    const accessToken = getAuthToken();
+    const refreshTokenVal = getRefreshToken();
+    const user = getUserFromStorage();
+
+    if (accessToken && user) {
+        return { isAuthenticated: true, user, token: accessToken, refreshToken: refreshTokenVal };
+    }
+    clearAuthStorage();
+    return { isAuthenticated: false, user: null, token: null, refreshToken: null };
+};

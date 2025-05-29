@@ -1,217 +1,168 @@
-// Filename: src/context/AuthContext.jsx
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import axios from 'axios'; // Or use your apiCall helper if it's set up for non-authed requests too
+// src/context/AuthContext.jsx
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-const AUTH_API_URL = `${API_BASE_URL}/crm-api/auth`;
-
-const ACCESS_TOKEN_KEY = 'accessToken';
-const REFRESH_TOKEN_KEY = 'refreshToken';
-const USER_DATA_KEY = 'user';
+import apiClient from '../services/api'; // Your centralized Axios instance
+import * as authService from '../services/auth'; // Your authentication service functions
 
 const AuthContext = createContext(null);
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
-
-// For handling concurrent token refresh requests
-let isCurrentlyRefreshingToken = false;
-let tokenRefreshSubscribers = [];
-
-const addTokenRefreshSubscriber = (callback) => {
-  tokenRefreshSubscribers.push(callback);
-};
-
-const onTokenRefreshed = (newAccessToken) => {
-  tokenRefreshSubscribers.forEach(callback => callback(newAccessToken));
-  tokenRefreshSubscribers = [];
+    const context = useContext(AuthContext);
+    if (context === null) {
+        // This error means AuthProvider is not wrapping the component calling useAuth,
+        // or AuthProvider itself is not correctly within the Router context if this error
+        // still points to useNavigate/useLocation calls within AuthProvider.
+        throw new Error("useAuth must be used within an AuthProvider, and AuthProvider must be within a Router context.");
+    }
+    return context;
 };
 
 export const AuthProvider = ({ children }) => {
-  const [authState, setAuthState] = useState(() => {
-    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    let user = null;
-    try {
-        user = JSON.parse(localStorage.getItem(USER_DATA_KEY));
-    } catch (e) {
-        console.warn("Could not parse user data from localStorage");
-    }
-    return {
-      accessToken: accessToken || null,
-      refreshToken: refreshToken || null,
-      isAuthenticated: !!accessToken,
-      user: user || null,
-      isLoading: true,
-    };
-  });
+    const initialAuthState = authService.checkInitialAuth(); // Get initial state from localStorage
 
-  // REMOVED: const navigate = useNavigate(); // This was the cause of the error
+    const [user, setUser] = useState(initialAuthState.user);
+    const [accessToken, setAccessToken] = useState(initialAuthState.token);
+    const [refreshTokenLocal, setRefreshTokenLocal] = useState(initialAuthState.refreshToken);
+    const [isLoadingAuth, setIsLoadingAuth] = useState(true); // True until initial bootstrap is done
 
-  const setAuthData = useCallback((data) => {
-    const newAccessToken = data?.access || null;
-    const newRefreshToken = data?.refresh || null;
-    // Preserve existing user data if new data doesn't explicitly provide it
-    const newUser = data?.user !== undefined ? data.user : authState.user;
+    const navigate = useNavigate(); // These hooks need AuthProvider to be inside a Router
+    const location = useLocation();
 
-    setAuthState({
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      isAuthenticated: !!newAccessToken,
-      user: newUser,
-      isLoading: false,
-    });
+    // Centralized logout logic for use within this context
+    const performLogout = useCallback((options = { navigate: true, showToast: true }) => {
+        console.log("AuthContext: Performing logout action.");
+        authService.logoutUser(); // Clears localStorage
+        setUser(null);
+        setAccessToken(null);
+        setRefreshTokenLocal(null);
+        setIsLoadingAuth(false); // No longer loading if we explicitly log out
+        if (options.showToast) {
+            toast.info("You have been successfully logged out.");
+        }
+        if (options.navigate && location.pathname !== '/login') {
+            navigate('/login', { state: { from: location }, replace: true });
+        }
+    }, [navigate, location]);
 
-    if (newAccessToken) localStorage.setItem(ACCESS_TOKEN_KEY, newAccessToken);
-    else localStorage.removeItem(ACCESS_TOKEN_KEY);
+    // Effect to set up Axios response interceptor for token refresh
+    useEffect(() => {
+        const responseInterceptor = apiClient.interceptors.response.use(
+            response => response,
+            async (error) => {
+                const originalRequest = error.config;
+                // Only attempt refresh if we have a refresh token and it's a 401 and not already a retry
+                if (error.response?.status === 401 && authService.getRefreshToken() && !originalRequest._retry) {
+                    originalRequest._retry = true;
+                    console.log("AuthContext: 401 detected, attempting token refresh.");
+                    try {
+                        const newAccessToken = await authService.refreshToken(); // This handles localStorage update for accessToken
+                        setAccessToken(newAccessToken); // Update context state
+                        
+                        // Update the header for the original retried request
+                        originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                        
+                        console.log("AuthContext: Token refreshed successfully. Retrying original request.");
+                        return apiClient(originalRequest); // Retry the original request
+                    } catch (refreshError) {
+                        console.error("AuthContext: Token refresh failed decisively. Logging out.", refreshError);
+                        // authService.refreshToken() already toasts and calls logoutUser (which clears storage)
+                        // So, here we just need to update context state and navigate.
+                        setUser(null);
+                        setAccessToken(null);
+                        setRefreshTokenLocal(null);
+                        setIsLoadingAuth(false);
+                        if (location.pathname !== '/login') {
+                             navigate('/login', { state: { from: location }, replace: true });
+                        }
+                        return Promise.reject(refreshError); // Propagate error from refresh failure
+                    }
+                }
+                // If not a 401 that we can handle with refresh, or already retried, reject.
+                // General error toasting is handled by the apiClient's own basic response interceptor.
+                return Promise.reject(error);
+            }
+        );
 
-    if (newRefreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
-    else localStorage.removeItem(REFRESH_TOKEN_KEY);
-    
-    if (newUser) localStorage.setItem(USER_DATA_KEY, JSON.stringify(newUser));
-    else localStorage.removeItem(USER_DATA_KEY);
-  }, [authState.user]); // Include authState.user to correctly use its value in closure
-
-  const logoutUser = useCallback(async (informBackend = true) => {
-    console.log("AuthProvider: logoutUser called");
-    const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    
-    setAuthData({ access: null, refresh: null, user: null }); // Clears tokens & sets isAuthenticated: false, isLoading: false
-
-    if (informBackend && currentRefreshToken) {
-      try {
-        await axios.post(`${AUTH_API_URL}/token/blacklist/`, {
-          refresh: currentRefreshToken,
-        });
-        toast.info("Session ended on server.");
-      } catch (error) {
-        console.warn("Failed to blacklist token on server:", error.response?.data || error.message);
-      }
-    }
-    // Navigation will be handled by ProtectedRoute or the calling component.
-  }, [setAuthData]);
-
-  const refreshTokenInternal = useCallback(async () => {
-    const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    if (!currentRefreshToken) {
-      console.log("AuthProvider: No refresh token, calling logoutUser.");
-      await logoutUser(false);
-      throw new Error("No refresh token available."); // Propagate error
-    }
-
-    try {
-      console.log("AuthProvider: Attempting token refresh...");
-      const response = await axios.post(`${AUTH_API_URL}/token/refresh/`, {
-        refresh: currentRefreshToken,
-      });
-      const { access, refresh: newRotatedRefreshToken } = response.data;
-
-      if (access) {
-        const newAuthData = { 
-          access, 
-          refresh: newRotatedRefreshToken || currentRefreshToken,
-          user: authState.user // Preserve current user data during refresh
+        return () => {
+            apiClient.interceptors.response.eject(responseInterceptor);
         };
-        setAuthData(newAuthData);
-        console.log("AuthProvider: Token refreshed successfully.");
-        return access;
-      }
-      throw new Error("Token refresh failed: No new access token received.");
-    } catch (error) {
-      console.error("AuthProvider: Token refresh error, logging out:", error.response?.data || error.message);
-      await logoutUser(true); // Logout on critical refresh failure
-      throw new Error(error.response?.data?.detail || "Session fully expired. Please log in again.");
-    }
-  }, [logoutUser, setAuthData, authState.user]);
+    }, [performLogout, location, navigate]); // performLogout is stable if its deps are stable
 
-  const getRefreshedAccessToken = useCallback(async () => {
-    if (!isCurrentlyRefreshingToken) {
-      isCurrentlyRefreshingToken = true;
-      try {
-        const newAccessToken = await refreshTokenInternal();
-        onTokenRefreshed(newAccessToken);
-        return newAccessToken;
-      } catch (error) {
-        onTokenRefreshed(null);
-        throw error;
-      } finally {
-        isCurrentlyRefreshingToken = false;
-      }
-    } else {
-      return new Promise((resolve, reject) => {
-        addTokenRefreshSubscriber((newAccessToken) => {
-          if (newAccessToken) resolve(newAccessToken);
-          else reject(new Error("Token refresh failed during queued request."));
-        });
-      });
-    }
-  }, [refreshTokenInternal]);
+    // Login function
+    const login = useCallback(async (identifier, password) => {
+        setIsLoadingAuth(true);
+        try {
+            const data = await authService.loginUser(identifier, password); // This calls backend & handles localStorage
+            setUser(data.user);
+            setAccessToken(data.access);
+            setRefreshTokenLocal(data.refresh);
+            // authService.loginUser already toasts success
+            
+            const from = location.state?.from?.pathname || '/dashboard';
+            navigate(from, { replace: true });
+            setIsLoadingAuth(false);
+            return { success: true, user: data.user };
+        } catch (error) {
+            // Error is already toasted by authService.loginUser
+            // Ensure state is reset if login fails catastrophically or after multiple attempts
+            // For a single credential failure, we might not want to fully logout here,
+            // but authService.loginUser doesn't clear tokens on its own.
+            setUser(null); // Clear user/token state on login fail
+            setAccessToken(null);
+            setRefreshTokenLocal(null);
+            setIsLoadingAuth(false);
+            return { success: false, error: error.message };
+        }
+    }, [navigate, location.state]);
 
-  useEffect(() => {
-    const initializeAuth = async () => {
-      console.log("AuthProvider: Initializing authentication...");
-      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-      if (token) {
-        // For more robustness, you could attempt to verify the token here:
-        // try {
-        //   await axios.post(`${AUTH_API_URL}/token/verify/`, { token });
-        //   setAuthState(prev => ({ ...prev, isAuthenticated: true, isLoading: false }));
-        //   console.log("AuthProvider: Initial token verified.");
-        // } catch (error) {
-        //   console.warn("AuthProvider: Initial token verification failed. Attempting refresh or logging out.");
-        //   try {
-        //      await getRefreshedAccessToken(); // This will update state via setAuthData
-        //      // isLoading will be set to false within setAuthData called by getRefreshedAccessToken
-        //   } catch (refreshError) {
-        //      // getRefreshedAccessToken calls logout, which calls setAuthData (isLoading: false)
-        //      console.error("AuthProvider: Initial refresh failed during init.", refreshError)
-        //   }
-        // }
-        // Simplified version: Assume token is valid if present, apiCall will handle refresh if needed.
-        setAuthState(prev => ({ ...prev, isAuthenticated: true, isLoading: false }));
-      } else {
-        setAuthState(prev => ({ ...prev, isAuthenticated: false, isLoading: false }));
-        console.log("AuthProvider: No initial token found.");
-      }
+    // Initial authentication check on component mount
+    useEffect(() => {
+        const bootstrapAuth = async () => {
+            setIsLoadingAuth(true); // Explicitly set loading true at start of bootstrap
+            const authStatus = authService.checkInitialAuth(); // Checks localStorage
+
+            if (authStatus.isAuthenticated && authStatus.token) {
+                setUser(authStatus.user); // User from storage might be stale or just basic
+                setAccessToken(authStatus.token);
+                setRefreshTokenLocal(authStatus.refreshToken);
+                // Try to fetch fresh user profile to verify token and get latest data
+                try {
+                    console.log("AuthContext Bootstrap: Token found, fetching user profile.");
+                    const fetchedUser = await authService.fetchUserProfile(authStatus.token);
+                    if (fetchedUser) {
+                        setUser(fetchedUser); // Update with fresh user data
+                    } else {
+                        // Token might be invalid if user fetch returns null without error (depends on fetchUserProfile)
+                        console.log("AuthContext Bootstrap: User profile not fetched, logging out.");
+                        performLogout({ navigate: false, showToast: false }); // Logout without navigating if already on public page
+                    }
+                } catch (error) {
+                    // fetchUserProfile will throw on 401; interceptor will try to refresh.
+                    // If refresh fails, interceptor calls performLogout.
+                    // If error is not 401, or if refresh succeeds but subsequent /me/ fails again (should not happen ideally)
+                    console.error("AuthContext Bootstrap: Error fetching user profile. Logging out.", error);
+                    performLogout({ navigate: false, showToast: false });
+                }
+            }
+            setIsLoadingAuth(false);
+        };
+        bootstrapAuth();
+    }, [performLogout]); // performLogout is stable due to its own useCallback
+
+    const contextValue = {
+        user,
+        accessToken,
+        refreshToken: refreshTokenLocal,
+        isAuthenticated: !!accessToken, // Derived state
+        isLoadingAuth, // Renamed from isLoading for clarity
+        login,
+        logout: performLogout, // Expose the memoized logout
     };
-    initializeAuth();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only once
 
-  const loginUser = async (username, password) => {
-    setAuthState(prev => ({ ...prev, isLoading: true }));
-    try {
-      const response = await axios.post(`${AUTH_API_URL}/token/`, { username, password });
-      // Assuming backend might return basic user info like { username, email, id } with tokens
-      const userData = response.data.user || { username }; // Adjust based on actual response
-      setAuthData({ ...response.data, user: userData }); // Sets isLoading: false
-      toast.success("Login successful!");
-      return { success: true, user: userData }; // Return success for LoginPage to handle navigation
-    } catch (error) {
-      console.error("Login failed:", error.response ? error.response.data : error.message);
-      setAuthData({ access: null, refresh: null, user: null }); // Sets isLoading: false
-      const errorMsg = error.response?.data?.detail || "Login failed. Please check credentials.";
-      toast.error(errorMsg);
-      return { success: false, error: errorMsg };
-    }
-    // No finally here, setAuthData in both try/catch handles isLoading:false
-  };
-
-  const value = {
-    accessToken: authState.accessToken,
-    user: authState.user,
-    isAuthenticated: authState.isAuthenticated,
-    isLoadingAuth: authState.isLoading, // Use this in ProtectedRoute
-    login: loginUser,
-    logout: logoutUser,
-    getRefreshedAccessToken, // For apiCall to use
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return (
+        <AuthContext.Provider value={contextValue}>
+            {children}
+        </AuthContext.Provider>
+    );
 };

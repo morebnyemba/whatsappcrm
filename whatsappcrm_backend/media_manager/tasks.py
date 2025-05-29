@@ -72,3 +72,22 @@ def check_and_resync_whatsapp_media():
         f"Successfully synced/re-synced: {success_count}. "
         f"Failed: {fail_count}."
     )
+    
+@shared_task(name="media_manager.tasks.trigger_individual_asset_sync") # Give it a unique name
+def trigger_media_asset_sync_task(media_asset_id: int, force_reupload: bool = False):
+    """
+    Task to sync a single MediaAsset with WhatsApp, typically called after upload or manual request.
+    """
+    logger.info(f"[Celery Task] Attempting to sync individual MediaAsset ID: {media_asset_id}, Force re-upload: {force_reupload}")
+    try:
+        asset = MediaAsset.objects.get(pk=media_asset_id)
+        if asset.sync_with_whatsapp(force_reupload=force_reupload):
+            logger.info(f"[Celery Task] Successfully synced MediaAsset {asset.pk} ('{asset.name}').")
+        else:
+            logger.error(f"[Celery Task] Failed to sync MediaAsset {asset.pk} ('{asset.name}'). Status: {asset.status}, Message: {asset.status_message}")
+    except MediaAsset.DoesNotExist:
+        logger.error(f"[Celery Task] MediaAsset ID {media_asset_id} not found for individual sync.")
+    except Exception as e:
+        logger.error(f"[Celery Task] Error during individual sync for MediaAsset ID {media_asset_id}: {e}", exc_info=True)
+        # Depending on the error, you might want to retry this task too
+        # e.g., raise self.retry(exc=e, countdown=60) if task is bound and configured for retries

@@ -17,7 +17,7 @@ urlpatterns = [
     #   - The webhook receiver for Meta (e.g., /crm-api/meta/webhook/)
     #   - DRF APIs for MetaAppConfig and WebhookEventLog (e.g., /crm-api/meta/api/configs/)
     path('crm-api/meta/', include('meta_integration.urls', namespace='meta_integration_api')), 
-    
+    path('crm-api/media/', include('media_manager.urls', namespace='media_asset_api')),
     # API endpoints for 'conversations' application
     # This includes DRF APIs for Contacts and Messages (e.g., /crm-api/conversations/contacts/)
     path('crm-api/conversations/', include('conversations.urls', namespace='conversations_api')),
@@ -40,7 +40,7 @@ path('crm-api/stats/', include('stats.urls', namespace='stats_api')),
     path('crm-api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # Optional: Your frontend can POST to 'token_verify' with a token to check its validity
     path('crm-api/auth/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
-
+path('crm-api/auth/', include('djoser.urls')),
     # DRF's built-in login/logout views for the browsable API.
     # These are helpful for testing your APIs directly in the browser during development.
     # They use SessionAuthentication.
