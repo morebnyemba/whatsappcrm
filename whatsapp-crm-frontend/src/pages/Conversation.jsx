@@ -1,20 +1,18 @@
 // src/pages/ConversationsPage.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from 'sonner';
 import {
-  FiSend, FiUser, FiUsers, FiMessageSquare, FiSearch, FiLoader, 
-  FiAlertCircle, FiPaperclip, FiSmile, FiImage, FiList, FiMic, 
+  FiSend, FiUser, FiUsers, FiMessageSquare, FiSearch, FiLoader,
+  FiAlertCircle, FiPaperclip, FiSmile, FiImage, FiList, FiMic,
   FiVideo, FiFileText, FiMapPin, FiChevronRight
 } from 'react-icons/fi';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { motion } from 'framer-motion';
 
-// API Configuration & Helper (Should be in a separate file like src/services/api.js)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 const getAuthToken = () => {
@@ -33,10 +31,10 @@ async function apiCall(endpoint, method = 'GET', body = null, isPaginatedFallbac
     ...(token && { 'Authorization': `Bearer ${token}` }),
   };
 
-  const config = { 
-    method, 
-    headers, 
-    ...(body && { body: body instanceof FormData ? body : JSON.stringify(body) }) 
+  const config = {
+    method,
+    headers,
+    ...(body && { body: body instanceof FormData ? body : JSON.stringify(body) })
   };
 
   try {
@@ -92,12 +90,10 @@ async function apiCall(endpoint, method = 'GET', body = null, isPaginatedFallbac
 const getMessageDisplayContent = (message) => {
   if (!message) return "Loading message...";
 
-  // Text messages
   if (message.message_type === 'text' && message.text_content) {
     return message.text_content;
   }
 
-  // Rich content payload
   if (message.content_payload) {
     const payload = message.content_payload;
     
@@ -116,7 +112,6 @@ const getMessageDisplayContent = (message) => {
     if (typeof payload === 'string') return payload;
   }
   
-  // Fallback to content preview
   if (message.content_preview) {
     const iconMap = {
       image: <FiImage className="mr-1"/>,
@@ -220,7 +215,6 @@ export default function ConversationsPage() {
   const fileInputRef = useRef(null);
   const scrollAreaRef = useRef(null);
 
-  // Fetch contacts with debounced search
   const fetchContacts = useCallback(async (search = '') => {
     setIsLoadingContacts(true);
     try {
@@ -238,12 +232,10 @@ export default function ConversationsPage() {
     fetchContacts(debouncedSearchTerm);
   }, [debouncedSearchTerm, fetchContacts]);
 
-  // Initial fetch
   useEffect(() => {
     fetchContacts();
   }, [fetchContacts]);
 
-  // Fetch messages for selected contact
   const fetchMessagesForContact = useCallback(async (contactId) => {
     if (!contactId) return;
     
@@ -271,15 +263,18 @@ export default function ConversationsPage() {
     }
   }, [selectedContact, fetchMessagesForContact]);
 
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
-    if (messages.length > 0 && scrollAreaRef.current) {
-      const scrollElement = scrollAreaRef.current;
-      scrollElement.scrollTo({
-        top: scrollElement.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
+    const scrollToBottom = () => {
+      if (scrollAreaRef.current) {
+        scrollAreaRef.current.scrollTo({
+          top: scrollAreaRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    };
+
+    const timer = setTimeout(scrollToBottom, 100);
+    return () => clearTimeout(timer);
   }, [messages]);
 
   const handleSelectContact = (contact) => {
@@ -290,8 +285,7 @@ export default function ConversationsPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Validate file size
-    const maxSize = 16 * 1024 * 1024; // 16MB
+    const maxSize = 16 * 1024 * 1024;
     if (file.size > maxSize && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
       toast.error(`File is too large. Max size is ${maxSize / (1024 * 1024)}MB for this file type.`);
       event.target.value = '';
@@ -309,7 +303,6 @@ export default function ConversationsPage() {
     setIsSendingMessage(true);
     const tempMessageId = `temp_${Date.now()}`;
     
-    // Create optimistic message
     let optimisticMessage;
     let apiPayload;
     let isFormData = false;
@@ -371,7 +364,6 @@ export default function ConversationsPage() {
       };
     }
 
-    // Update UI optimistically
     setMessages(prev => [...prev, optimisticMessage]);
     setNewMessage('');
     setAttachmentFile(null);
@@ -384,7 +376,6 @@ export default function ConversationsPage() {
         apiPayload
       );
 
-      // Replace optimistic message with actual response
       setMessages(prev => prev.map(msg => 
         msg.id === tempMessageId 
           ? { ...optimisticMessage, ...sentMessage, status: sentMessage.status || 'sent' } 
@@ -393,7 +384,6 @@ export default function ConversationsPage() {
 
       toast.success(`Message ${attachmentFile ? 'with attachment ' : ''}sent!`);
     } catch (error) {
-      // Mark message as failed
       setMessages(prev => prev.map(msg => 
         msg.id === tempMessageId 
           ? { 
@@ -495,7 +485,7 @@ export default function ConversationsPage() {
       <div className="flex-1 flex flex-col bg-white dark:bg-slate-900">
         {selectedContact ? (
           <>
-            <div className="p-3 border-b dark:border-slate-700 flex items-center space-x-3">
+            <div className="p-3 border-b dark:border-slate-700 flex items-center space-x-3 h-16">
               <Avatar>
                 <AvatarImage 
                   src={`https://ui-avatars.com/api/?name=${encodeURIComponent(selectedContact.name || selectedContact.whatsapp_id)}&background=random`} 
@@ -515,38 +505,43 @@ export default function ConversationsPage() {
               </div>
             </div>
 
+            {/* Scrollable Messages Area */}
             <ScrollArea 
               ref={scrollAreaRef}
-              className="flex-1 p-4 space-y-2 bg-slate-50/50 dark:bg-slate-800/30"
+              className="flex-1"
+              style={{ 
+                height: 'calc(100vh - var(--header-height, 4rem) - 2rem - 64px - 72px)',
+                maxHeight: 'none'
+              }}
             >
-              {isLoadingMessages && (
-                <div className="text-center p-4">
-                  <FiLoader className="animate-spin h-6 w-6 mx-auto my-3" />
-                  <p>Loading messages...</p>
-                </div>
-              )}
-              
-              {!isLoadingMessages && messages.length === 0 && (
-                <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-                  No messages with this contact yet. Start the conversation!
-                </p>
-              )}
-              
-              {messages.map(msg => (
-                <MessageBubble 
-                  key={msg.id} 
-                  message={msg} 
-                  contactName={selectedContact.name} 
-                />
-              ))}
-              
-              <div ref={messagesEndRef} />
+              <div className="p-4 space-y-2 bg-slate-50/50 dark:bg-slate-800/30 min-h-full">
+                {isLoadingMessages && (
+                  <div className="text-center p-4">
+                    <FiLoader className="animate-spin h-6 w-6 mx-auto my-3" />
+                    <p>Loading messages...</p>
+                  </div>
+                )}
+                
+                {!isLoadingMessages && messages.length === 0 && (
+                  <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+                    No messages with this contact yet. Start the conversation!
+                  </p>
+                )}
+                
+                {messages.map(msg => (
+                  <MessageBubble 
+                    key={msg.id} 
+                    message={msg} 
+                    contactName={selectedContact.name} 
+                  />
+                ))}
+                
+                <div ref={messagesEndRef} />
+              </div>
             </ScrollArea>
 
-            <form 
-              onSubmit={handleSendMessage} 
-              className="p-3 border-t dark:border-slate-700 flex items-center space-x-2 bg-slate-50 dark:bg-slate-800"
-            >
+            {/* Message Input Form */}
+            <form onSubmit={handleSendMessage} className="p-3 border-t dark:border-slate-700 flex items-center space-x-2 bg-slate-50 dark:bg-slate-800 h-16">
               <Button 
                 variant="ghost" 
                 size="icon" 
