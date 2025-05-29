@@ -30,3 +30,4 @@ gunicorn
 daphne
 requests
 pydantic
+djoser
