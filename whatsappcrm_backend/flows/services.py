@@ -665,26 +665,49 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
     elif step.step_type == 'end_flow':
         try:
             end_flow_config = StepConfigEndFlow.model_validate(raw_step_config)
-            logger.info(f"Executing 'end_flow' step '{step.name}' (ID: {step.id}) for contact {contact.whatsapp_id}.")
+            logger.info(f"Executing 'end_flow' step '{step.name}' (ID: {step.id}) for contact {contact.whatsapp_id} (ID: {contact.id}).")
+            
             if end_flow_config.message_config:
-                logger.debug(f"Step '{step.name}': End_flow step has a final message to send.")
+                logger.debug(f"Step '{step.name}': End_flow step has a final message to send. Config: {end_flow_config.message_config}")
                 try:
-                    dummy_end_msg_step = FlowStep(name=f"{step.name}_final_msg", step_type="send_message", config=end_flow_config.message_config)
+                    # Create a temporary dummy FlowStep to reuse _execute_step_actions for sending the message
+                    # This ensures consistent message preparation and Pydantic validation
+                    dummy_end_msg_step = FlowStep(
+                        name=f"{step.name}_final_message", 
+                        step_type="send_message", 
+                        config=end_flow_config.message_config # This config is already validated by StepConfigEndFlow
+                    )
+                    # Pass a copy of current_step_context to avoid unintended modifications
                     send_actions, _ = _execute_step_actions(dummy_end_msg_step, contact, current_step_context.copy())
                     actions_to_perform.extend(send_actions)
-                    logger.debug(f"Generated {len(send_actions)} send actions for end_flow message of step '{step.name}'.")
-                except ValidationError as ve: 
-                    logger.error(f"Pydantic validation error for 'message_config' in 'end_flow' step '{step.name}': {ve.errors()}", exc_info=False)
+                    logger.debug(f"Generated {len(send_actions)} send actions for the final message of end_flow step '{step.name}'.")
+                except ValidationError as ve_msg_conf: 
+                    # This might occur if StepConfigEndFlow's validator for message_config has an issue,
+                    # or if the structure is somehow corrupted post-initial validation.
+                    logger.error(f"Pydantic validation error for 'message_config' within 'end_flow' step '{step.name}': {ve_msg_conf.errors()}", exc_info=False)
                 except Exception as ex_end_msg:
                      logger.error(f"Error processing message_config for 'end_flow' step '{step.name}': {ex_end_msg}", exc_info=True)
+            else:
+                logger.debug(f"Step '{step.name}': No final message configured for this end_flow step.")
             
-            actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Flow ended at step {step.name} (ID: {step.id})'})
-            logger.info(f"Step '{step.name}': Flow ended for contact {contact.whatsapp_id}. Flow state will be cleared.")
-        except ValidationError as e:
-            logger.error(f"Pydantic validation for 'end_flow' step '{step.name}' (ID: {step.id}) config: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
+            # Directly clear the flow state for the contact
+            clear_reason = f'Flow ended at step {step.name} (ID: {step.id})'
+            logger.info(f"Step '{step.name}': {clear_reason}. Clearing flow state directly for contact {contact.whatsapp_id}.")
+            _clear_contact_flow_state(contact, reason=clear_reason)
+            
+            # Optional: If other parts of your system still expect an internal command for accounting or other non-state-clearing purposes,
+            # you could add it back. But for just clearing state, the direct call above is sufficient.
+            # actions_to_perform.append({'type': '_internal_command_signal_flow_ended', 'reason': clear_reason})
+
+
+        except ValidationError as e_conf: # Error validating the StepConfigEndFlow itself
+            logger.error(f"Pydantic validation error for 'end_flow' step '{step.name}' (ID: {step.id}) config: {e_conf.errors()}. Raw config: {raw_step_config}", exc_info=False)
+            # Attempt to clear state even if config validation fails, to prevent user getting stuck
+            _clear_contact_flow_state(contact, error=True, reason=f"Error validating config for end_flow step '{step.name}' (ID: {step.id})")
         except Exception as e_end_step:
             logger.error(f"Unexpected error in 'end_flow' step '{step.name}' (ID: {step.id}): {e_end_step}", exc_info=True)
-
+            # Attempt to clear state on other unexpected errors during end_flow execution
+            _clear_contact_flow_state(contact, error=True, reason=f"Error executing end_flow step '{step.name}' (ID: {step.id})")
     elif step.step_type == 'human_handover':
         try:
             handover_config = StepConfigHumanHandover.model_validate(raw_step_config)
