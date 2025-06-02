@@ -9,8 +9,7 @@ from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 
-from conversations.models import Contact, Message
-from whatsappcrm_backend.meta_integration.models import MetaAppConfig 
+from conversations.models import Contact, Message 
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
 
@@ -796,20 +795,6 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         logger.info(f"No active flow triggered for contact {contact.whatsapp_id} with message: {message_text_body[:100] if message_text_body else message_data.get('type')}")
     return actions_to_perform
 
-def get_active_meta_config_for_sending():
-    try:
-        # Adapt this if your way of fetching the active config is different
-        return MetaAppConfig.objects.get(is_active=True)
-    except MetaAppConfig.DoesNotExist:
-        logger.error("FALLBACK: No active MetaAppConfig found for sending messages.")
-        return None
-    except MetaAppConfig.MultipleObjectsReturned:
-        logger.error("FALLBACK: Multiple active MetaAppConfigs found. Cannot determine which to use for sending.")
-        return None
-    except Exception as e:
-        logger.error(f"FALLBACK: Error getting active MetaAppConfig: {e}")
-        return None
-
 def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     current_step = contact_flow_state.current_step
     flow_context = contact_flow_state.flow_context_data if isinstance(contact_flow_state.flow_context_data, dict) else {}
@@ -863,7 +848,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             try:
                 num_val = float(user_text) if '.' in user_text or (validation_regex_ctx and '.' in validation_regex_ctx) else int(user_text)
                 if validation_regex_ctx and not re.match(validation_regex_ctx, user_text): 
-                    logger.debug(f"Number string reply '{user_text}' for question '{current_step.name}' did not match regex '{validation_regex_ctx}'.")
+                     logger.debug(f"Number string reply '{user_text}' for question '{current_step.name}' did not match regex '{validation_regex_ctx}'.")
                 else: value_to_save = num_val; reply_was_valid_for_question = True
             except ValueError: logger.debug(f"Could not parse '{user_text}' as a number for question '{current_step.name}'.")
         elif expected_reply_type == 'interactive_id' and interactive_reply_id is not None:
@@ -872,16 +857,16 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 reply_was_valid_for_question = False; value_to_save = None
                 logger.debug(f"Interactive ID reply '{interactive_reply_id}' for question '{current_step.name}' did not match regex '{validation_regex_ctx}'.")
         elif expected_reply_type == 'any':
-            if user_text is not None: value_to_save = user_text
-            elif interactive_reply_id is not None: value_to_save = interactive_reply_id
-            elif message_data: 
-                if message_data.get('type') in ['image', 'video', 'audio', 'document', 'sticker']:
-                    value_to_save = message_data.get(message_data.get('type'), {}).get('id') or message_data.get(message_data.get('type'), {}).get('link') or message_data.get('type')
-                elif message_data.get('type') == 'location':
-                    value_to_save = message_data.get('location', {}) 
-                else: value_to_save = str(message_data)[:255] 
-            else: value_to_save = None 
-            reply_was_valid_for_question = value_to_save is not None 
+             if user_text is not None: value_to_save = user_text
+             elif interactive_reply_id is not None: value_to_save = interactive_reply_id
+             elif message_data: 
+                 if message_data.get('type') in ['image', 'video', 'audio', 'document', 'sticker']:
+                     value_to_save = message_data.get(message_data.get('type'), {}).get('id') or message_data.get(message_data.get('type'), {}).get('link') or message_data.get('type')
+                 elif message_data.get('type') == 'location':
+                     value_to_save = message_data.get('location', {}) 
+                 else: value_to_save = str(message_data)[:255] 
+             else: value_to_save = None 
+             reply_was_valid_for_question = value_to_save is not None 
 
         if reply_was_valid_for_question:
             if variable_to_save_name:
@@ -890,10 +875,13 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             else:
                 logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
             flow_context.pop('_fallback_count', None) 
+                    # START OF MODIFICATION
             # Persist the updated context immediately after a valid question reply is processed
             contact_flow_state.flow_context_data = flow_context 
             contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
             logger.debug(f"Saved updated flow_context for contact {contact.whatsapp_id} after processing valid reply for Q-step '{current_step.name}'.")
+            # END OF MODIFICATION
+    
         
         else: 
             logger.info(f"Reply for question step '{current_step.name}' was not valid. Expected type: '{expected_reply_type}'.")
@@ -910,7 +898,6 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_re_prompt_text}})
                 else: 
                     logger.debug(f"No custom re-prompt message for Q '{current_step.name}'. Re-sending original question message.")
-                    # Pass a copy of flow_context to avoid direct modification if _execute_step_actions changes it
                     step_actions, updated_context_from_re_execution = _execute_step_actions(current_step, contact, flow_context.copy(), is_re_execution=True)
                     actions_to_perform.extend(step_actions)
                     flow_context = updated_context_from_re_execution 
@@ -930,99 +917,66 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_handover_msg}})
                     actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Max retries for Q {current_step.name}'})
                     contact.needs_human_intervention = True; contact.intervention_requested_at = timezone.now()
-                    contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at', 'last_seen'])
+                    contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
                     return actions_to_perform 
                 elif action_after_max_retries == 'end_flow':
                     logger.info(f"Max retries for Q '{current_step.name}'. Fallback: Ending flow for {contact.whatsapp_id}.")
                     actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Max retries for Q {current_step.name}, ending flow.'})
                     if fallback_config.get('end_flow_message_text'):
-                        actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': _resolve_value(fallback_config['end_flow_message_text'], flow_context, contact)}})
+                         actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': _resolve_value(fallback_config['end_flow_message_text'], flow_context, contact)}})
                     return actions_to_perform 
                 else: 
                     logger.info(f"Max retries for Q '{current_step.name}'. Action_after_max_retries is '{action_after_max_retries}' (not direct handover/end). Proceeding to general transitions.")
     
-    # Check general transitions if:
-    # - Not currently processing a question reply that was invalid and already generated re-prompt/max_retry actions.
-    #   (actions_to_perform would be non-empty if question handling already decided the next step/actions)
-    if not (is_processing_reply_for_current_question and not reply_was_valid_for_question and actions_to_perform):
+    if not (is_processing_reply_for_current_question and not reply_was_valid_for_question):
         transitions = FlowTransition.objects.filter(current_step=current_step).select_related('next_step').order_by('priority')
         next_step_to_transition_to = None
         
         logger.debug(f"Evaluating {transitions.count()} general transitions for step '{current_step.name}'.")
         for transition in transitions:
-            # Pass a copy of flow_context to avoid modification during evaluation
             if _evaluate_transition_condition(transition, contact, message_data, flow_context.copy(), incoming_message_obj):
                 next_step_to_transition_to = transition.next_step
                 logger.info(f"Transition ID {transition.id} (Priority: {transition.priority}) condition met: From '{current_step.name}' to '{next_step_to_transition_to.name}'.")
                 break 
         
         if next_step_to_transition_to:
-            # Call _transition_to_step to update state and get actions for the new step
-            actions_from_next_step, _ = _transition_to_step( # We don't need the updated context from here directly
+            actions_from_next_step, _ = _transition_to_step(
                 contact_flow_state, next_step_to_transition_to, flow_context, contact, message_data
             )
             actions_to_perform.extend(actions_from_next_step)
-        # --- START OF NEW FALLBACK LOGIC SECTION ---
-        # This 'elif' (or 'else' if you simplify the condition above) executes if no transition was met
-        # AND it wasn't a question step that already handled the invalid reply by generating actions (like re-prompting).
         elif not (current_step.step_type == 'question' and is_processing_reply_for_current_question and not reply_was_valid_for_question and actions_to_perform):
-            logger.info(f"No general transition conditions met from step '{current_step.name}' for contact {contact.whatsapp_id}. Applying fallback logic.")
-            
+            logger.info(f"No general transition conditions met from step '{current_step.name}' for contact {contact.whatsapp_id}. Applying general fallback if any.")
             fallback_config = current_step.config.get('fallback_config', {}) if isinstance(current_step.config, dict) else {}
-            specific_fallback_action_taken = False
-
+            
             if fallback_config.get('fallback_message_text'):
                 resolved_fallback_text = _resolve_value(fallback_config['fallback_message_text'], flow_context, contact)
-                logger.debug(f"Step '{current_step.name}': Sending specific fallback message from step config: {resolved_fallback_text}")
+                logger.debug(f"Step '{current_step.name}': Sending general fallback message: {resolved_fallback_text}")
                 actions_to_perform.append({
                     'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
                     'message_type': 'text', 'data': {'body': resolved_fallback_text}
                 })
-                specific_fallback_action_taken = True
                 if fallback_config.get('handover_after_message', False):
-                    logger.info(f"Step '{current_step.name}': Specific fallback initiating human handover after message for {contact.whatsapp_id}.")
-                    actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Specific fallback handover at {current_step.name}'})
+                    logger.info(f"Step '{current_step.name}': General fallback initiating human handover after message for {contact.whatsapp_id}.")
+                    actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'General fallback handover at {current_step.name}'})
                     contact.needs_human_intervention = True; contact.intervention_requested_at = timezone.now()
-                    contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at', 'last_seen'])
+                    contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
             
-            elif fallback_config.get('action') == 'human_handover' and not specific_fallback_action_taken:
-                logger.info(f"Step '{current_step.name}': Specific fallback config initiating human handover directly for {contact.whatsapp_id}.")
+            elif fallback_config.get('action') == 'human_handover':
+                logger.info(f"Step '{current_step.name}': General fallback initiating human handover directly for {contact.whatsapp_id}.")
                 pre_handover_msg = fallback_config.get('pre_handover_message_text', "Let me connect you to an agent for further assistance.")
                 resolved_msg = _resolve_value(pre_handover_msg, flow_context, contact)
                 actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_msg}})
-                actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Specific fallback direct handover at {current_step.name}'})
+                actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'General fallback direct handover at {current_step.name}'})
                 contact.needs_human_intervention = True; contact.intervention_requested_at = timezone.now()
-                contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at', 'last_seen'])
-                specific_fallback_action_taken = True
-            
-            if not specific_fallback_action_taken and not actions_to_perform: 
-                # This means no specific fallback in step.config was triggered, and no other actions (like question re-prompts) were generated.
-                # This is where the new friendly default fallback comes in.
-                logger.info(f"Step '{current_step.name}': No specific step fallback action. Sending new friendly fallback message for contact {contact.whatsapp_id}.")
-                
-                app_config = get_active_meta_config_for_sending()
-                if app_config:
-                    friendly_fallback_text = (
-                        "The message you sent wasn't expected at this point in our automated conversation. "
-                        "If you were replying to a human agent, please ignore this. "
-                        "Otherwise, perhaps try a different response or type 'menu' to see available options."
-                    )
+                contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
+            else:
+                if not actions_to_perform: 
+                    logger.info(f"Step '{current_step.name}': No specific general fallback action. Sending default 'did not understand' message.")
                     actions_to_perform.append({
-                        'type': 'send_whatsapp_message',
-                        'recipient_wa_id': contact.whatsapp_id,
-                        'message_type': 'text',
-                        'data': {'body': friendly_fallback_text}
+                        'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
+                        'message_type': 'text', 'data': {'body': "Sorry, I could not process that. Please try 'menu' or rephrase your request."}
                     })
-                else:
-                    logger.error(f"Cannot send friendly fallback to {contact.whatsapp_id}, no active MetaAppConfig.")
-
-                # Mark for human intervention
-                if not contact.needs_human_intervention:
-                     contact.needs_human_intervention = True
-                     contact.intervention_requested_at = timezone.now()
-                     contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at', 'last_seen'])
-                     logger.info(f"Marked contact {contact.whatsapp_id} for human intervention due to unexpected message at step '{current_step.name}'.")
-        # --- END OF NEW FALLBACK LOGIC SECTION --
+    return actions_to_perform
 
 
 def _evaluate_transition_condition(
