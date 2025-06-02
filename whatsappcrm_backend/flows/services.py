@@ -9,7 +9,8 @@ from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 
-from conversations.models import Contact, Message 
+from conversations.models import Contact, Message
+from whatsappcrm_backend.meta_integration.models import MetaAppConfig 
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
 
