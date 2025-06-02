@@ -59,7 +59,7 @@ class MetaWebhookAPIView(View):
             return False
         if not app_secret_key:
             logger.error("App Secret not configured for signature verification. Verification skipped (INSECURE).")
-            return True
+            return True # Or False, depending on strictness policy
 
         if not x_hub_signature_256.startswith('sha256='):
             logger.warning("Webhook signature format is invalid (must start with 'sha256=').")
@@ -79,7 +79,6 @@ class MetaWebhookAPIView(View):
         return True
 
     def get(self, request, *args, **kwargs):
-        # ... (GET method remains the same)
         logger.debug(f"Webhook GET request received. Query params: {request.GET}")
         active_config = get_active_meta_config()
         if not active_config:
@@ -186,7 +185,7 @@ class MetaWebhookAPIView(View):
                             elif "errors" in value:
                                 for error_data in value["errors"]:
                                     log_entry = WebhookEventLog.objects.create(**log_defaults_for_change, payload=error_data, event_identifier=f"error_{error_data.get('code')}_{timezone.now().timestamp()}", event_type='error')
-                                    self.handle_error_notification(error_data, metadata, active_config, log_entry)
+                                    self.handle_error_notification(error_data, metadata, active_config, log_entry) 
                             else:
                                 logger.warning(f"Messages field '{field}' but no 'messages', 'statuses', or 'errors' key. Value: {value.keys()}")
                         
@@ -222,13 +221,13 @@ class MetaWebhookAPIView(View):
 
     @transaction.atomic 
     def handle_message(self, message_data, metadata, value_obj, app_config, log_entry: WebhookEventLog):
-        from flows.services import process_message_for_flow #
+        from flows.services import process_message_for_flow 
 
         whatsapp_message_id = message_data.get("id"); from_phone = message_data.get("from")
         message_type = message_data.get("type", "unknown"); ts_str = message_data.get("timestamp")
         msg_ts = timezone.make_aware(datetime.fromtimestamp(int(ts_str))) if ts_str and ts_str.isdigit() else timezone.now()
         
-        logger.info(f"Handling message WAMID: {whatsapp_message_id}, From: {from_phone}, Type: {message_type}") #
+        logger.info(f"Handling message WAMID: {whatsapp_message_id}, From: {from_phone}, Type: {message_type}") 
         notes_list = [f"Msg from {from_phone}, type {message_type}."]
         
         contact_profile_name = "Unknown"; contact_wa_id_from_payload = from_phone
@@ -264,52 +263,50 @@ class MetaWebhookAPIView(View):
 
             notes_list.append(f"Msg WAMID {whatsapp_message_id} saved (DB ID: {incoming_msg_obj.id}).")
 
-            # --- START DEBUGGING CHANGE ---
-            logger.info(f"DEBUG: Attempting to send a direct test message to {contact.whatsapp_id}")
-            try:
-                debug_message_content = {"body": "Hello from the server! This is a direct test."}
-                debug_outgoing_msg = Message.objects.create(
-                    contact=contact,
-                    direction='out',
-                    message_type='text', # Basic text message
-                    content_payload=debug_message_content, # Simple dict for text
-                    status='pending_dispatch',
-                    timestamp=timezone.now(),
-                    triggered_by_flow_step_id=None # Or some debug identifier
-                )
-                send_whatsapp_message_task.delay(debug_outgoing_msg.id, app_config.id) #
-                notes_list.append(f"Dispatched DEBUG msg 'text' to {contact.whatsapp_id} (DB ID: {debug_outgoing_msg.id}).")
-                logger.info(f"DEBUG: Dispatched direct test message task for msg ID {debug_outgoing_msg.id} to Celery.")
-            except Exception as e_debug_send:
-                logger.error(f"DEBUG: Error creating or dispatching direct test message: {e_debug_send}", exc_info=True)
-                notes_list.append(f"DEBUG: Failed to dispatch test message: {e_debug_send}")
-            # --- END DEBUGGING CHANGE ---
+            # --- REMOVED DEBUGGING CHANGE ---
+            # logger.info(f"DEBUG: Attempting to send a direct test message to {contact.whatsapp_id}")
+            # try:
+            #     debug_message_content = {"body": "Hello from the server! This is a direct test."}
+            #     debug_outgoing_msg = Message.objects.create(
+            #         contact=contact,
+            #         direction='out',
+            #         message_type='text', # Basic text message
+            #         content_payload=debug_message_content, # Simple dict for text
+            #         status='pending_dispatch',
+            #         timestamp=timezone.now(),
+            #         triggered_by_flow_step_id=None # Or some debug identifier
+            #     )
+            #     send_whatsapp_message_task.delay(debug_outgoing_msg.id, app_config.id) 
+            #     notes_list.append(f"Dispatched DEBUG msg 'text' to {contact.whatsapp_id} (DB ID: {debug_outgoing_msg.id}).")
+            #     logger.info(f"DEBUG: Dispatched direct test message task for msg ID {debug_outgoing_msg.id} to Celery.")
+            # except Exception as e_debug_send:
+            #     logger.error(f"DEBUG: Error creating or dispatching direct test message: {e_debug_send}", exc_info=True)
+            #     notes_list.append(f"DEBUG: Failed to dispatch test message: {e_debug_send}")
+            # --- END REMOVED DEBUGGING CHANGE ---
 
 
-            flow_actions = process_message_for_flow(contact, message_data, incoming_msg_obj) #
+            flow_actions = process_message_for_flow(contact, message_data, incoming_msg_obj) 
             notes_list.append(f"Flow returned {len(flow_actions)} actions.")
             
             if app_config and flow_actions:
-                for action in flow_actions:
-                    if action.get('type') == 'send_whatsapp_message':
-                        recipient = action.get('recipient_wa_id', contact.whatsapp_id)
+                for action_item in flow_actions: 
+                    if action_item.get('type') == 'send_whatsapp_message':
+                        recipient = action_item.get('recipient_wa_id', contact.whatsapp_id)
                         outgoing_msg = Message.objects.create(
                             contact=Contact.objects.filter(whatsapp_id=recipient).first() or contact,
-                            direction='out', message_type=action.get('message_type'),
-                            content_payload=action.get('data'), status='pending_dispatch', 
+                            direction='out', message_type=action_item.get('message_type'),
+                            content_payload=action_item.get('data'), status='pending_dispatch', 
                             timestamp=timezone.now(),
                             triggered_by_flow_step_id=getattr(getattr(contact,'flow_state', None),'current_step_id',None)
                         )
-                        send_whatsapp_message_task.delay(outgoing_msg.id, app_config.id) #
-                        notes_list.append(f"Dispatched msg '{action.get('message_type')}' to {recipient}.")
+                        send_whatsapp_message_task.delay(outgoing_msg.id, app_config.id) 
+                        notes_list.append(f"Dispatched msg '{action_item.get('message_type')}' to {recipient}.")
             
-            self._save_log(log_entry, 'processed', " ".join(notes_list)) #
+            self._save_log(log_entry, 'processed', " ".join(notes_list)) 
         except Exception as e:
             logger.error(f"Error in handle_message for WAMID {whatsapp_message_id}: {e}", exc_info=True)
             self._save_log(log_entry, 'error', f"Handle msg error: {str(e)[:200]}")
 
-        # Call other handlers if data is present (These might also send messages)
-        # Consider if you want to disable these temporarily if they also use the same task.
         if message_data.get("referral"): self.handle_referral(message_data.get("referral"), contact_wa_id_from_payload, app_config, log_entry)
         if message_data.get("system"): self.handle_system_message(message_data.get("system"), contact_wa_id_from_payload, app_config, log_entry)
         if message_type == "interactive" and message_data.get("interactive", {}).get("type") == "nfm_reply":
@@ -317,7 +314,6 @@ class MetaWebhookAPIView(View):
 
 
     def handle_status_update(self, status_data, metadata, app_config, log_entry: WebhookEventLog):
-        # ... (handle_status_update method remains the same)
         wamid = status_data.get("id"); status_value = status_data.get("status"); ts_str = status_data.get("timestamp")
         status_ts = timezone.make_aware(datetime.fromtimestamp(int(ts_str))) if ts_str and ts_str.isdigit() else timezone.now()
         if not log_entry.event_identifier: log_entry.event_identifier = wamid
@@ -337,10 +333,27 @@ class MetaWebhookAPIView(View):
             else: self._save_log(log_entry, 'ignored', f"No matching outgoing msg for WAMID {wamid}.")
         except Exception as e: logger.error(f"Error updating status for WAMID {wamid}: {e}", exc_info=True); self._save_log(log_entry, 'error', str(e))
 
-    # (Implement other handlers: handle_error_notification, handle_template_status_update, etc.)
+    def handle_error_notification(self, error_data, metadata, app_config, log_entry): 
+        logger.error(f"Received error notification from Meta: {error_data}")
+        self._save_log(log_entry, 'processed', f"Error notification logged: {error_data.get('title')}")
 
-# --- DRF ViewSets ---
-# ... (ViewSets remain the same)
+    def handle_template_status_update(self, template_data, app_config, log_entry): 
+        logger.info(f"Received template status update: {template_data}")
+        self._save_log(log_entry, 'processed', f"Template status update logged for: {template_data.get('message_template_name')}")
+
+    def handle_referral(self, referral_data, contact_wa_id, app_config, log_entry): 
+        logger.info(f"Received referral data for {contact_wa_id}: {referral_data}")
+        self._save_log(log_entry, 'processed', "Referral data logged.")
+
+    def handle_system_message(self, system_data, contact_wa_id, app_config, log_entry): 
+        logger.info(f"Received system message for {contact_wa_id}: {system_data}")
+        self._save_log(log_entry, 'processed', "System message logged.")
+
+    def handle_flow_response(self, flow_response_data, contact_wa_id, app_config, log_entry): 
+        logger.info(f"Received Flow (NFM) response for {contact_wa_id}: {flow_response_data}")
+        self._save_log(log_entry, 'processed', "Flow (NFM) response logged and passed for processing.")
+
+
 class IsAdminOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
         if request.method in permissions.SAFE_METHODS: return True
@@ -405,7 +418,7 @@ class WebhookEventLogViewSet(viewsets.ReadOnlyModelViewSet):
         log_entry.processing_status = 'pending_reprocessing'
         log_entry.processing_notes = (log_entry.processing_notes or "") + \
                                      f"\nManually marked for reprocessing by {request.user} on {timezone.now().isoformat()}."
-        log_entry.processed_at = None
+        log_entry.processed_at = None 
         log_entry.save(update_fields=['processing_status', 'processing_notes', 'processed_at'])
         logger.info(f"WebhookEventLog {log_entry.id} marked for reprocessing by user {request.user}.")
         return Response({"message": f"Event {log_entry.id} marked for reprocessing."}, status=status.HTTP_200_OK)

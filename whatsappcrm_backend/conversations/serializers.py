@@ -1,5 +1,6 @@
 # whatsappcrm_backend/conversations/serializers.py
 
+from datetime import timezone
 from rest_framework import serializers
 from .models import Contact, Message
 from customer_data.serializers import CustomerProfileSerializer # <--- IMPORT CustomerProfileSerializer
