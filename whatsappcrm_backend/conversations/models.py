@@ -42,9 +42,13 @@ class Contact(models.Model):
         null=True, blank=True,
         help_text="Timestamp of when human intervention was last requested."
     )
-    intervention_resolved_at = models.DateTimeField(  # <<< --- FIELD ADDED HERE ---
+    intervention_resolved_at = models.DateTimeField( # FIELD ADDED
         null=True, blank=True,
         help_text="Timestamp of when human intervention was resolved."
+    )
+    flow_execution_disabled = models.BooleanField( # FIELD ADDED
+        default=False,
+        help_text="If true, automated flow processing is paused for this contact (e.g., during human agent interaction)."
     )
     first_seen = models.DateTimeField(auto_now_add=True, help_text="Timestamp of when the contact was first created.")
     last_seen = models.DateTimeField(auto_now=True, help_text="Timestamp of the last interaction (message) with this contact.")

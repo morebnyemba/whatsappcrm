@@ -21,6 +21,10 @@ from meta_integration.models import MetaAppConfig
 logger = logging.getLogger(__name__) 
 
 class IsAdminOrReadOnly(permissions.BasePermission):
+    """
+    Custom permission to only allow admin users to edit objects.
+    Others can only read. Assumes IsAuthenticated is also applied.
+    """
     def has_permission(self, request, view):
         if request.method in permissions.SAFE_METHODS: 
             return True
@@ -28,6 +32,11 @@ class IsAdminOrReadOnly(permissions.BasePermission):
 
 
 class ContactViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing Contacts.
+    - Admins can CRUD.
+    - Authenticated users can list/retrieve (permissions can be refined).
+    """
     queryset = Contact.objects.all().order_by('-last_seen')
     permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
 
@@ -80,6 +89,21 @@ class ContactViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(contact)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'], url_path='toggle-flow-disable', 
+            permission_classes=[permissions.IsAuthenticated]) # Or IsAdminOrReadOnly if only staff can do this
+    def toggle_flow_disable(self, request, pk=None):
+        contact = self.get_object()
+        contact.flow_execution_disabled = not contact.flow_execution_disabled
+        contact.save(update_fields=['flow_execution_disabled', 'last_seen'])
+        
+        status_message = "enabled" if not contact.flow_execution_disabled else "disabled"
+        logger.info(f"Automated flow execution {status_message} for contact {contact.whatsapp_id} by user {request.user}.")
+        
+        return Response(
+            {"message": f"Automated flow execution has been {status_message} for this contact."},
+            status=status.HTTP_200_OK
+        )
+
 
 class MessageViewSet(
     mixins.ListModelMixin,
@@ -88,7 +112,7 @@ class MessageViewSet(
     viewsets.GenericViewSet
 ):
     queryset = Message.objects.all().select_related('contact').order_by('-timestamp')
-    permission_classes = [permissions.IsAuthenticated] 
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly] 
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -107,12 +131,22 @@ class MessageViewSet(
             f"by user {self.request.user}. Type: {message.message_type}. Status: {message.status}."
         )
 
-        contact_to_update = message.contact
-        if contact_to_update.needs_human_intervention:
-            contact_to_update.needs_human_intervention = False
-            contact_to_update.intervention_resolved_at = timezone.now()
-            contact_to_update.save(update_fields=['needs_human_intervention', 'intervention_resolved_at', 'last_seen'])
-            logger.info(f"Cleared human intervention flag for contact {contact_to_update.whatsapp_id} by user {self.request.user}.")
+        # Clear human intervention flag as a human is responding
+        try:
+            contact_to_update = message.contact
+            if contact_to_update and contact_to_update.needs_human_intervention:
+                contact_to_update.needs_human_intervention = False
+                contact_to_update.intervention_resolved_at = timezone.now()
+                contact_to_update.save(update_fields=['needs_human_intervention', 'intervention_resolved_at', 'last_seen'])
+                logger.info(f"Cleared human intervention flag for contact {contact_to_update.whatsapp_id} by user {self.request.user}.")
+        except Exception as e_contact_update:
+            contact_id_for_log = getattr(message.contact, 'id', 'Unknown') if hasattr(message, 'contact') else 'Unknown'
+            logger.error(
+                f"CRITICAL ERROR updating contact intervention status for contact ID {contact_id_for_log}: {e_contact_update}",
+                exc_info=True
+            )
+            # Depending on policy, you might want to re-raise the error or handle it differently
+            # For now, it logs the error and continues to attempt message dispatch.
 
         try:
             active_config = MetaAppConfig.objects.get_active_config()
@@ -137,7 +171,7 @@ class MessageViewSet(
             message.status = 'failed'; message.error_details = {'error': 'Multiple active MetaAppConfigs found.'}
             message.status_timestamp = timezone.now()
             message.save(update_fields=['status', 'error_details', 'status_timestamp'])
-        except Exception as e:
+        except Exception as e: 
             logger.error(f"Error dispatching Celery task for Message ID {message.id}: {e}", exc_info=True)
             message.status = 'failed'
             message.error_details = {'error': f'Failed to dispatch send task: {str(e)}'}
