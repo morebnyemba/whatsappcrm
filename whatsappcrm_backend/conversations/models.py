@@ -127,7 +127,7 @@ class Message(models.Model):
         db_index=True,
         help_text="WhatsApp Message ID (from Meta), unique for sent/received messages."
     )
-    direction = models.CharField(max_length=3, choices=DIRECTION_CHOICES, help_text="Direction of the message.")
+    direction = models.CharField(max_length=3, choices=DIRECTION_CHOICES, help_text="Direction of the message." ,default="out")
     message_type = models.CharField(
         max_length=20,
         choices=MESSAGE_TYPE_CHOICES,
