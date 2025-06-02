@@ -42,12 +42,16 @@ class Contact(models.Model):
         null=True, blank=True,
         help_text="Timestamp of when human intervention was last requested."
     )
+    intervention_resolved_at = models.DateTimeField(  # <<< --- FIELD ADDED HERE ---
+        null=True, blank=True,
+        help_text="Timestamp of when human intervention was resolved."
+    )
     first_seen = models.DateTimeField(auto_now_add=True, help_text="Timestamp of when the contact was first created.")
     last_seen = models.DateTimeField(auto_now=True, help_text="Timestamp of the last interaction (message) with this contact.")
     # You can add more fields like email, company, notes, tags, etc.
     # custom_fields = models.JSONField(default=dict, blank=True, help_text="Custom fields for this contact.")
     is_blocked = models.BooleanField(default=False, help_text="If the CRM has blocked this contact.")
-    # current_flow_state = models.JSONField(default=dict, blank=True, help_text="Stores the current state of the contact within a flow.")
+    current_flow_state = models.JSONField(default=dict, blank=True, help_text="Stores the current state of the contact within a flow.")
 
 
     def __str__(self):
@@ -177,6 +181,7 @@ class Message(models.Model):
 
         # Update contact's last_seen timestamp
         if self.contact_id: # Ensure contact is associated
+            # Using update is more efficient as it avoids calling the contact's save() method and signals
             Contact.objects.filter(pk=self.contact_id).update(last_seen=self.timestamp)
 
         super().save(*args, **kwargs)
