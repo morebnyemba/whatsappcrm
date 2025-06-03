@@ -11,7 +11,7 @@ from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 
 from conversations.models import Contact, Message
-from whatsappcrm_backend.football_data_app.models import FootballFixture 
+from football_data_app.models import FootballFixture 
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
 
