@@ -1,7 +1,7 @@
 # whatsappcrm_backend/football_data_app/tasks.py
 from celery import shared_task
 from django.utils import timezone
-from datetime import datetime, timedelta # Ensure timedelta is imported
+from datetime import datetime, timedelta
 import logging
 
 from .models import FootballFixture
@@ -14,13 +14,12 @@ def update_football_fixtures_data():
     logger.info("Starting football fixtures data update task (from football_data_app).")
 
     # --- Configuration for Testing with Previous Dates ---
-    # Set to True to run the test with past dates, False to use normal (current) date logic.
-    TEST_WITH_PAST_DATES = False # <-- SET TO True TO TEST PAST DATES, False FOR NORMAL RUN
+    # Set to False to run in normal mode for current/upcoming dates.
+    TEST_WITH_PAST_DATES = False # <-- SET TO False FOR NORMAL RUN
     
     # Define your test parameters if TEST_WITH_PAST_DATES is True
-    TEST_COMPETITION_CODE = 'PL'  # e.g., Premier League. Use a code from your available leagues
-    TEST_STATUS = 'FINISHED'      # We want to fetch games that have results.
-    # Example: A week in October 2024 (adjust if needed for active season)
+    TEST_COMPETITION_CODE = 'PL'
+    TEST_STATUS = 'FINISHED'
     TEST_DATE_FROM = '2024-10-01' 
     TEST_DATE_TO = '2024-10-07'
     # --- End of Test Configuration ---
@@ -36,7 +35,7 @@ def update_football_fixtures_data():
             status=TEST_STATUS
         )
 
-        if matches_data is None: # get_football_data_from_api should return [] on error/no data
+        if matches_data is None:
             logger.warning("Received None from get_football_data_from_api, expecting a list. Defaulting to empty list.")
             matches_data = []
 
@@ -45,16 +44,14 @@ def update_football_fixtures_data():
         logger.info(f"Processing {len(matches_data)} matches received from API for {TEST_COMPETITION_CODE} ({TEST_STATUS}).")
 
         for match_data in matches_data:
-            # Basic validation of essential keys
             if not all(k in match_data for k in ['id', 'homeTeam', 'awayTeam', 'utcDate', 'status', 'competition']):
                 logger.warning(f"Skipping match data due to missing essential keys: {match_data.get('id', 'ID_UNKNOWN')}")
                 continue
             
-            # Score data is crucial for 'FINISHED' status
             score_data = match_data.get('score', {})
             full_time_score = score_data.get('fullTime', {})
-            home_score_data = full_time_score.get('home') # Could be None if not available
-            away_score_data = full_time_score.get('away') # Could be None if not available
+            home_score_data = full_time_score.get('home')
+            away_score_data = full_time_score.get('away')
 
             if TEST_STATUS == 'FINISHED' and (home_score_data is None or away_score_data is None):
                  logger.warning(f"Skipping FINISHED match {match_data.get('id')} due to missing fullTime score data. Score object: {score_data}")
@@ -74,7 +71,7 @@ def update_football_fixtures_data():
                         'status': match_data['status'],
                         'home_score': home_score_data,
                         'away_score': away_score_data,
-                        'winner': score_data.get('winner'), # Winner might be None too
+                        'winner': score_data.get('winner'),
                         'last_api_update': timezone.now()
                     }
                 )
@@ -91,9 +88,17 @@ def update_football_fixtures_data():
     else:
         # --- Normal/Original Logic for Fetching Current/Upcoming Data ---
         logger.info("--- RUNNING IN NORMAL MODE FOR CURRENT/UPCOMING DATES ---")
-        # Define competitions to fetch normally (e.g., those your free tier covers and are relevant)
-        # Refer to your screenshot for available competition codes
-        target_competition_codes = ['PL', 'CL'] # Adjust as needed, e.g., ['BSA', 'WC']
+        
+        # UPDATED: Fetching all available leagues from your free tier
+        #
+        target_competition_codes = [
+            'WC', 'CL', 'BL1', 'DED', 'BSA', 'PD', 'FL1', 
+            'ELC', 'PPL', 'EC', 'SA', 'PL'
+        ]
+        # CRITICAL WARNING: Fetching for this many leagues (12 leagues * 2 statuses = 24 API calls)
+        # will very likely hit your free tier's API rate limit quickly.
+        # You MUST set your Celery Beat schedule for this task to be very infrequent (e.g., once a day)
+        # OR implement logic to cycle through these leagues, fetching only a few per task run.
 
         current_date = timezone.now().date()
         today_iso = current_date.isoformat()
@@ -109,7 +114,7 @@ def update_football_fixtures_data():
                 date_to=next_week_iso,
                 status='SCHEDULED'
             )
-            if scheduled_matches_data is None: scheduled_matches_data = [] # Ensure list
+            if scheduled_matches_data is None: scheduled_matches_data = []
             
             s_created, s_updated = 0, 0
             for match_data in scheduled_matches_data:
@@ -143,7 +148,7 @@ def update_football_fixtures_data():
                 date_to=today_iso,
                 status='FINISHED'
             )
-            if finished_matches_data is None: finished_matches_data = [] # Ensure list
+            if finished_matches_data is None: finished_matches_data = []
 
             f_created, f_updated = 0, 0
             for match_data in finished_matches_data:
