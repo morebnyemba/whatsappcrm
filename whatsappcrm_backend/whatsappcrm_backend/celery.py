@@ -37,6 +37,6 @@ def debug_task(self):
 app.conf.beat_schedule = {
     'update-football-fixtures-every-hour': {
         'task': 'football_data_app.update_football_fixtures', # Updated task name
-        'schedule': 3600.0, 
+        'schedule': 60.0, 
     },
 }

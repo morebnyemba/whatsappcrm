@@ -1,5 +1,5 @@
 # whatsappcrm_backend/flows/services.py
-
+from football_data_app.models import FootballFixture
 from datetime import timedelta
 import logging
 import json
@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 if not MEDIA_ASSET_ENABLED:
     logger.warning("MediaAsset model not found or could not be imported. MediaAsset functionality (e.g., 'asset_pk') will be disabled in flows.")
+try:
+    from football_data_app.flow_actions import get_formatted_football_data
+    FOOTBALL_APP_ENABLED = True
+except ImportError:
+    FOOTBALL_APP_ENABLED = False
+    logger.warning("football_data_app.flow_actions could not be imported. 'fetch_football_data' action will not work.")
 
 # --- Pydantic Models ---
 class BasePydanticConfig(BaseModel):
@@ -179,6 +185,7 @@ class StepConfigSendMessage(BasePydanticConfig):
     contacts: Optional[List[ContactObject]] = None
     location: Optional[LocationMessageContent] = None
 
+
     @root_validator(pre=False, skip_on_failure=True)
     def check_payload_exists_for_type(cls, values):
         msg_type = values.get('message_type')
@@ -225,7 +232,7 @@ class StepConfigQuestion(BasePydanticConfig):
             raise ValueError(f"message_config for question is invalid: {e.errors()}")
 
 class ActionItemConfig(BasePydanticConfig):
-    action_type: Literal["set_context_variable", "update_contact_field", "update_customer_profile", "switch_flow"]
+    action_type: Literal["set_context_variable", "update_contact_field", "update_customer_profile", "switch_flow","fetch_football_data"]
     variable_name: Optional[str] = None
     value_template: Optional[Any] = None 
     field_path: Optional[str] = None 
@@ -233,6 +240,13 @@ class ActionItemConfig(BasePydanticConfig):
     target_flow_name: Optional[str] = None
     initial_context_template: Optional[Dict[str, Any]] = Field(default_factory=dict)
     message_to_evaluate_for_new_flow: Optional[str] = None 
+    
+    data_type: Optional[Literal["scheduled_fixtures", "finished_results"]] = None
+    league_code_variable: Optional[str] = None # e.g., "flow_context.selected_league_code"
+    output_variable_name: Optional[str] = None # e.g., "flow_context.fixtures_display_text"
+    days_past_for_results: Optional[int] = Field(default=2) # For finished_results
+    days_ahead_for_fixtures: Optional[int] = Field(default=7) # For scheduled_fixtures
+
 
     @root_validator(pre=False, skip_on_failure=True)
     def check_action_fields(cls, values):
@@ -249,7 +263,12 @@ class ActionItemConfig(BasePydanticConfig):
         elif action_type == 'switch_flow':
             if not values.get('target_flow_name'):
                 raise ValueError("For switch_flow, 'target_flow_name' is required.")
+            
+        elif action_type == 'fetch_football_data': # <--- ADD VALIDATION
+            if not values.get('data_type') or not values.get('output_variable_name'):
+                raise ValueError("For fetch_football_data, 'data_type' and 'output_variable_name' are required.")
         return values
+        
 
 class StepConfigAction(BasePydanticConfig):
     actions_to_run: List[ActionItemConfig] = Field(default_factory=list, min_items=1)
@@ -657,8 +676,36 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     })
                     logger.debug(f"Step '{step.name}': Switch flow action encountered. Further actions in this step will be skipped.")
                     break 
-                else:
-                    logger.warning(f"Step '{step.name}': Unknown or misconfigured action_item_type '{action_type}'. Config: {action_item_conf.model_dump_json(indent=2)}")
+                elif action_type == 'fetch_football_data': # <--- ADD THIS BLOCK
+                    if not FOOTBALL_APP_ENABLED:
+                        logger.error(f"Step '{step.name}': fetch_football_data action called, but football_data_app.flow_actions not available.")
+                        current_step_context[action_item_conf.output_variable_name] = "Error: Football data feature is currently unavailable."
+                        continue
+
+                    data_type = action_item_conf.data_type
+                    output_var = action_item_conf.output_variable_name
+                    league_code_var_path = action_item_conf.league_code_variable
+
+                    selected_league_code = None
+                    if league_code_var_path:
+                        selected_league_code = _get_value_from_context_or_contact(league_code_var_path, current_step_context, contact)
+
+                    days_past = action_item_conf.days_past_for_results
+                    days_ahead = action_item_conf.days_ahead_for_fixtures
+
+                    logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code from context ('{league_code_var_path}'): '{selected_league_code}', Data type: '{data_type}'.")
+
+                    display_text = get_formatted_football_data(
+                        league_code=selected_league_code, 
+                        data_type=data_type,
+                        days_ahead=days_ahead,
+                        days_past=days_past
+                                )
+                    current_step_context[output_var] = display_text
+                    logger.info(f"Step '{step.name}': Context variable '{output_var}' set after fetching football data. Length: {len(display_text)}")
+
+            else:
+                logger.warning(f"Step '{step.name}': Unknown or misconfigured action_item_type '{action_type}'. Config: {action_item_conf.model_dump_json(indent=2)}")
         except ValidationError as e:
             logger.error(f"Pydantic validation for 'action' step '{step.name}' (ID: {step.id}) failed: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
         except Exception as e_act_step:
@@ -1628,55 +1675,3 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
     if final_actions_for_meta_view: 
         logger.debug(f"Final actions for {contact.whatsapp_id} (ID: {contact.id}): {json.dumps(final_actions_for_meta_view, indent=2)}")
     return final_actions_for_meta_view
-def get_and_format_local_fixtures(params):
-    """
-    Fetches fixtures from the local database (FootballFixture model from football_data_app)
-    and formats them for WhatsApp.
-    params: dict, e.g., {'competition_code': 'PL', 'status': 'SCHEDULED', 'days_ahead': 7}
-            or {'competition_code': 'PL', 'status': 'FINISHED', 'days_past': 2}
-    """
-    competition_code = params.get('competition_code', 'PL')
-    status_filter = params.get('status', 'SCHEDULED').upper() # Ensure status is uppercase for DB query
-    
-    # Use FootballFixture from the new app
-    fixtures_query = FootballFixture.objects.filter(competition_code=competition_code, status=status_filter) 
-    
-    if status_filter == 'SCHEDULED':
-        days_ahead = int(params.get('days_ahead', 7))
-        start_date = timezone.now()
-        end_date = start_date + timedelta(days=days_ahead)
-        fixtures_query = fixtures_query.filter(match_datetime_utc__gte=start_date, match_datetime_utc__lte=end_date).order_by('match_datetime_utc')
-    elif status_filter == 'FINISHED':
-        days_past = int(params.get('days_past', 2))
-        # Fetch matches that ended between 'days_past' ago and now.
-        # Ensure correct date filtering for 'FINISHED' matches.
-        # Depending on when your celery task runs, 'today' might miss very recent matches.
-        # Consider fetching from (today - days_past) up to (today + 1 day) and filter by status='FINISHED'.
-        start_date = timezone.now().date() - timedelta(days=days_past)
-        end_date = timezone.now().date() + timedelta(days=1) # include matches that finish today
-        fixtures_query = fixtures_query.filter(
-             match_datetime_utc__gte=start_date, 
-             match_datetime_utc__lt=end_date # up to, but not including, tomorrow
-         ).order_by('-match_datetime_utc')
-        
-    local_fixtures = list(fixtures_query[:10]) # Limit results
-
-    if not local_fixtures:
-        return f"No {status_filter.lower()} fixtures found for {competition_code} in the specified period."
-
-    message_lines = [f"⚽ {status_filter.capitalize()} Matches for {competition_code}:"]
-    for match in local_fixtures:
-        # Convert to local time if TIME_ZONE in settings.py is correctly set
-        match_time_local = timezone.localtime(match.match_datetime_utc)
-        line = f"\n🗓️ {match_time_local.strftime('%a, %b %d - %I:%M %p %Z')}\n" # Added %Z for timezone
-        line += f"{match.home_team_name} vs {match.away_team_name}"
-        if match.status == 'FINISHED':
-            home_score = match.home_score if match.home_score is not None else '-'
-            away_score = match.away_score if match.away_score is not None else '-'
-            line += f"\n🏁 Result: {home_score} - {away_score}"
-            if match.winner:
-                winner_name = match.home_team_name if match.winner == 'HOME_TEAM' else match.away_team_name if match.winner == 'AWAY_TEAM' else 'Draw'
-                line += f" ({winner_name} won)" if match.winner != 'DRAW' else " (Draw)"
-        message_lines.append(line)
-    
-    return "\n\n".join(message_lines) # Use double newline for better separation on WhatsApp
