@@ -15,7 +15,7 @@ def update_football_fixtures_data():
 
     # --- Configuration for Testing with Previous Dates ---
     # Set to True to run the test with past dates, False to use normal (current) date logic.
-    TEST_WITH_PAST_DATES = True # <-- SET TO True TO TEST PAST DATES, False FOR NORMAL RUN
+    TEST_WITH_PAST_DATES = False # <-- SET TO True TO TEST PAST DATES, False FOR NORMAL RUN
     
     # Define your test parameters if TEST_WITH_PAST_DATES is True
     TEST_COMPETITION_CODE = 'PL'  # e.g., Premier League. Use a code from your available leagues
