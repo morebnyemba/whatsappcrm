@@ -1,5 +1,6 @@
 # whatsappcrm_backend/flows/services.py
 
+from datetime import timedelta
 import logging
 import json
 import re
@@ -9,7 +10,8 @@ from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 
-from conversations.models import Contact, Message 
+from conversations.models import Contact, Message
+from whatsappcrm_backend.football_data_app.models import FootballFixture 
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
 
@@ -1626,3 +1628,55 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
     if final_actions_for_meta_view: 
         logger.debug(f"Final actions for {contact.whatsapp_id} (ID: {contact.id}): {json.dumps(final_actions_for_meta_view, indent=2)}")
     return final_actions_for_meta_view
+def get_and_format_local_fixtures(params):
+    """
+    Fetches fixtures from the local database (FootballFixture model from football_data_app)
+    and formats them for WhatsApp.
+    params: dict, e.g., {'competition_code': 'PL', 'status': 'SCHEDULED', 'days_ahead': 7}
+            or {'competition_code': 'PL', 'status': 'FINISHED', 'days_past': 2}
+    """
+    competition_code = params.get('competition_code', 'PL')
+    status_filter = params.get('status', 'SCHEDULED').upper() # Ensure status is uppercase for DB query
+    
+    # Use FootballFixture from the new app
+    fixtures_query = FootballFixture.objects.filter(competition_code=competition_code, status=status_filter) 
+    
+    if status_filter == 'SCHEDULED':
+        days_ahead = int(params.get('days_ahead', 7))
+        start_date = timezone.now()
+        end_date = start_date + timedelta(days=days_ahead)
+        fixtures_query = fixtures_query.filter(match_datetime_utc__gte=start_date, match_datetime_utc__lte=end_date).order_by('match_datetime_utc')
+    elif status_filter == 'FINISHED':
+        days_past = int(params.get('days_past', 2))
+        # Fetch matches that ended between 'days_past' ago and now.
+        # Ensure correct date filtering for 'FINISHED' matches.
+        # Depending on when your celery task runs, 'today' might miss very recent matches.
+        # Consider fetching from (today - days_past) up to (today + 1 day) and filter by status='FINISHED'.
+        start_date = timezone.now().date() - timedelta(days=days_past)
+        end_date = timezone.now().date() + timedelta(days=1) # include matches that finish today
+        fixtures_query = fixtures_query.filter(
+             match_datetime_utc__gte=start_date, 
+             match_datetime_utc__lt=end_date # up to, but not including, tomorrow
+         ).order_by('-match_datetime_utc')
+        
+    local_fixtures = list(fixtures_query[:10]) # Limit results
+
+    if not local_fixtures:
+        return f"No {status_filter.lower()} fixtures found for {competition_code} in the specified period."
+
+    message_lines = [f"⚽ {status_filter.capitalize()} Matches for {competition_code}:"]
+    for match in local_fixtures:
+        # Convert to local time if TIME_ZONE in settings.py is correctly set
+        match_time_local = timezone.localtime(match.match_datetime_utc)
+        line = f"\n🗓️ {match_time_local.strftime('%a, %b %d - %I:%M %p %Z')}\n" # Added %Z for timezone
+        line += f"{match.home_team_name} vs {match.away_team_name}"
+        if match.status == 'FINISHED':
+            home_score = match.home_score if match.home_score is not None else '-'
+            away_score = match.away_score if match.away_score is not None else '-'
+            line += f"\n🏁 Result: {home_score} - {away_score}"
+            if match.winner:
+                winner_name = match.home_team_name if match.winner == 'HOME_TEAM' else match.away_team_name if match.winner == 'AWAY_TEAM' else 'Draw'
+                line += f" ({winner_name} won)" if match.winner != 'DRAW' else " (Draw)"
+        message_lines.append(line)
+    
+    return "\n\n".join(message_lines) # Use double newline for better separation on WhatsApp

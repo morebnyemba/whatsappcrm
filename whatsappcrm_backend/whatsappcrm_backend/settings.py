@@ -42,7 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
+'football_data_app.apps.FootballDataAppConfig',
     # Third-party apps
     'rest_framework',
     'rest_framework_simplejwt',
@@ -243,6 +243,8 @@ JAZZMIN_SETTINGS = {
     "hide_apps": [],
     "hide_models": [],
     "icons": {
+        "football_data_app": "fas fa-football", # Example icon
+         "football_data_app.FootballFixture": "fas fa-calendar-alt",
         "auth": "fas fa-users-cog", "auth.user": "fas fa-user", "auth.Group": "fas fa-users",
         "meta_integration": "fab fa-whatsapp-square",
         "meta_integration.MetaAppConfig": "fas fa-cogs", "meta_integration.WebhookEventLog": "fas fa-history",

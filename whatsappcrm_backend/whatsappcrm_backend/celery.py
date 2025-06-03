@@ -32,3 +32,11 @@ def debug_task(self):
         'status': 'success',
         'message': 'Celery is working with django-celery-results!'
     }
+    
+# whatsappcrm_backend/celery.py
+app.conf.beat_schedule = {
+    'update-football-fixtures-every-hour': {
+        'task': 'football_data_app.update_football_fixtures', # Updated task name
+        'schedule': 3600.0, 
+    },
+}
