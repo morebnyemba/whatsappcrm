@@ -1,5 +1,4 @@
-
-
+# Based on your uploaded docker-compose.yml
 services:
   db:
     image: postgres:15-alpine
@@ -11,7 +10,7 @@ services:
       POSTGRES_USER: ${DB_USER:-crm_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Please set DB_PASSWORD in .env file}
     ports:
-      - "5432:5432"
+      - "5432:5432" # Consider restricting to "127.0.0.1:5432:5432" if not needed externally
     restart: unless-stopped
 
   redis:
@@ -20,8 +19,9 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # <-- MODIFIED: Restricted to localhost access
     restart: unless-stopped
+    command: redis-server --requirepass youcanthackme # <-- ADDED: Starts Redis with a password
 
   backend:
     build: ./whatsappcrm_backend
@@ -74,15 +74,14 @@ services:
     image: nginx:1.25-alpine
     container_name: whatsappcrm_nginx_proxy
     ports:
-      - "80:80"    # For HTTP and Let's Encrypt challenge
-      - "443:443"  # For HTTPS later
+      - "80:80"
+      - "443:443"
     volumes:
       - ./nginx_proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - staticfiles_volume:/srv/www/static/:ro
       - media_volume:/srv/www/media/:ro
-      # Mounts for Let's Encrypt:
-      - /var/www/letsencrypt:/var/www/letsencrypt:ro  # For serving ACME challenges (Nginx only needs to read)
-      - /etc/letsencrypt:/etc/nginx/ssl:ro           # For SSL certificates and related files (Nginx only needs to read)
+      - /var/www/letsencrypt:/var/www/letsencrypt:ro
+      - /etc/letsencrypt:/etc/nginx/ssl:ro
     depends_on:
       - backend
       - frontend
