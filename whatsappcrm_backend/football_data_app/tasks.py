@@ -41,7 +41,7 @@ def update_football_fixtures_data():
     next_week_iso = (timezone.now().date() + timedelta(days=20)).isoformat()
     # For finished matches, using dates from your logs that yielded BSA data
     # Adjust these if you want to test other specific past periods or current "last 2 days"
-    finished_date_from = (timezone.now().date() - timedelta(days=20)).isoformat() # "2025-06-01" in your logs
+    finished_date_from = (timezone.now().date() - timedelta(days=10)).isoformat() # "2025-06-01" in your logs
     finished_date_to = today_iso # "2025-06-03" in your logs
 
     # --- Fetch SCHEDULED Matches for the selected league ---
