@@ -34,7 +34,7 @@ class FootballFixture(models.Model):
     
     match_date = models.DateTimeField(db_index=True) # UTC
     status_short = models.CharField(max_length=10, db_index=True) # e.g., NS, FT, HT, PST (from api-football.com fixture.status.short)
-    status_long = models.CharField(max_length=100) # e.g., "Not Started", "Match Finished" (from api-football.com fixture.status.long)
+    status_long = models.CharField(max_length=100, null=True) # e.g., "Not Started", "Match Finished" (from api-football.com fixture.status.long)
     
     venue_name = models.CharField(max_length=255, null=True, blank=True)
     referee = models.CharField(max_length=255, null=True, blank=True)
