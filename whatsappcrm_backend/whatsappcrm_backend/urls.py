@@ -1,5 +1,7 @@
 # whatsappcrm_backend/whatsappcrm_backend/urls.py
+from django.conf.urls.static import static
 
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import (
@@ -51,3 +53,4 @@ path('crm-api/auth/', include('djoser.urls')),
 # The 'namespace' argument in include() is useful for URL reversing 
 # (e.g., using reverse('meta_integration_api:meta_webhook_receiver') in Python code).
 # It helps avoid URL name collisions between apps.
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
