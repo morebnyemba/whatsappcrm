@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:15-alpine # Using a specific version of PostgreSQL
-    container_name: whatsapp_crm_db
+    image: postgres:15-alpine
+    container_name: whatsapp_crm_db_container # Explicit container name
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -11,18 +11,19 @@ services:
       - POSTGRES_USER=${DB_USER:-crm_user}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-your_strong_password} # Set this in .env
     ports:
-      - "${DB_PORT_LOCAL:-5433}:5432" # Expose DB on host port 5433 (configurable)
+      - "${DB_PORT_LOCAL:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-crm_user} -d ${DB_NAME:-whatsapp_crm_dev}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
-    image: redis:7-alpine # Using a specific version of Redis
-    container_name: whatsapp_crm_redis
+    image: redis:7-alpine
+    container_name: whatsapp_crm_redis_container # Explicit container name
     ports:
-      - "${REDIS_PORT_LOCAL:-6379}:6379" # Expose Redis on host port 6379 (configurable)
+      - "${REDIS_PORT_LOCAL:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -30,37 +31,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  backend_web: # Renamed from 'backend' to be specific
-    build:
-      context: ./whatsappcrm_backend # Path to the directory containing the Dockerfile
-      dockerfile: Dockerfile
-    container_name: whatsapp_crm_backend_web
-    command: ["web"] # This will be passed to entrypoint.sh
-    volumes:
-      - ./whatsappcrm_backend:/app # Mount local code for development (reflects changes without rebuild)
-      - static_volume:/app/staticfiles # Persisted static files collected by Django
-      - media_volume:/app/whatsapp_media_assets # Persisted user-uploaded media files
-    ports:
-      - "${DJANGO_PORT_LOCAL:-8000}:8000" # Expose Django on host port 8000 (configurable)
-    env_file:
-      - ./whatsappcrm_backend/.env # Load environment variables from .env file
-    depends_on:
-      db:
-        condition: service_healthy # Wait for DB to be healthy
-      redis:
-        condition: service_healthy # Wait for Redis to be healthy
     restart: unless-stopped
 
-  celery_worker:
+  whatsappcrm_backend_app: # Renamed from backend_web
     build:
       context: ./whatsappcrm_backend
       dockerfile: Dockerfile
-    container_name: whatsapp_crm_celery_worker
-    command: ["celeryworker"] # Command for entrypoint.sh
+    container_name: whatsappcrm_backend_app_container
+    command: ["web"]
     volumes:
-      - ./whatsappcrm_backend:/app # Mount local code for development consistency
-      # No need for static/media volumes for worker usually, unless tasks directly manipulate them
+      - ./whatsappcrm_backend:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/whatsapp_media_assets
+    # Exposing port 8000 internally for Nginx to connect to.
+    # The external port will be managed by whatsappcrm_nginx_proxy.
+    # expose: # Not strictly necessary if Nginx is on the same Docker network
+    #   - "8000"
     env_file:
       - ./whatsappcrm_backend/.env
     depends_on:
@@ -68,22 +54,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      backend_web: # Optional: ensure web (which runs migrations) starts or is attempted first
-        condition: service_started
     restart: unless-stopped
-    # Add resource limits if needed
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '1.0'
-    #       memory: '1G'
 
-  celery_beat:
+  whatsappcrm_celery_worker: # Renamed
     build:
       context: ./whatsappcrm_backend
       dockerfile: Dockerfile
-    container_name: whatsapp_crm_celery_beat
-    command: ["celerybeat"] # Command for entrypoint.sh
+    container_name: whatsappcrm_celery_worker_container
+    command: ["celeryworker"]
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
@@ -93,13 +71,75 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      backend_web: # Beat needs migrations (django_celery_beat tables)
+      whatsappcrm_backend_app: # Depends on the backend app service
         condition: service_started
     restart: unless-stopped
+
+  whatsappcrm_celery_beat: # Renamed
+    build:
+      context: ./whatsappcrm_backend
+      dockerfile: Dockerfile
+    container_name: whatsappcrm_celery_beat_container
+    command: ["celerybeat"]
+    volumes:
+      - ./whatsappcrm_backend:/app
+    env_file:
+      - ./whatsappcrm_backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      whatsappcrm_backend_app:
+        condition: service_started
+    restart: unless-stopped
+
+  whatsappcrm_frontend_app: # Placeholder for your React frontend
+    build:
+      context: ./whatsapp-crm-frontend # Assuming your frontend code is here
+      dockerfile: Dockerfile # You'll need a Dockerfile for your frontend
+    container_name: whatsappcrm_frontend_app_container
+    # Example: if your frontend dev server runs on 5173
+    # expose:
+    #   - "5173"
+    volumes:
+      - ./whatsapp-crm-frontend:/app # Mount local code for development
+      - /app/node_modules # Anonymous volume to persist node_modules
+    # Add environment variables if needed, e.g., for API URL
+    # environment:
+    #   - VITE_API_BASE_URL=http://localhost/api # Or whatever your Nginx exposes
+    restart: unless-stopped
+    # depends_on: # No direct dependency needed if Nginx handles routing
+    #   - whatsappcrm_backend_app
+
+  whatsappcrm_nginx_proxy: # Nginx reverse proxy
+    image: nginx:1.25-alpine # Using a specific version of Nginx
+    container_name: whatsappcrm_nginx_proxy_container
+    ports:
+      - "${NGINX_PORT_HTTP:-80}:80"      # Expose HTTP on port 80 (configurable)
+      # - "${NGINX_PORT_HTTPS:-443}:443" # Uncomment if you set up HTTPS
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro # Mount your Nginx configuration
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro # For site-specific configs
+      # - ./nginx/certs:/etc/nginx/certs:ro      # Uncomment for SSL certificates
+      # Static and media files can be served by Nginx directly for better performance
+      # If Django serves them, Nginx just proxies. If Nginx serves them:
+      - static_volume:/srv/static # Nginx needs access to collected static files
+      - media_volume:/srv/media   # Nginx needs access to media files
+    depends_on:
+      whatsappcrm_backend_app:
+        condition: service_started
+      whatsappcrm_frontend_app:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider --proxy=off http://localhost/ || exit 1"] # Basic check if Nginx is responding
+      interval: 30s
+      timeout: 3s
+      retries: 3
 
 volumes:
   postgres_data:
   redis_data:
-  static_volume:
-  media_volume:
-
+  static_volume: # For Django's collectstatic output
+  media_volume:  # For user-uploaded media files
