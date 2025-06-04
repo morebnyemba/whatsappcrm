@@ -31,3 +31,4 @@ daphne
 requests
 pydantic
 djoser
+gevent
