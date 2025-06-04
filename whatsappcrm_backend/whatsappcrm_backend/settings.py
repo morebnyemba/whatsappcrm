@@ -287,3 +287,4 @@ JAZZMIN_UI_TWEAKS = {
     "sidebar_nav_legacy_style": False, "sidebar_nav_accordion": True,
     "actions_sticky_top": True
 }
+API_FOOTBALL_KEY = os.getenv('API_FOOTBALL_KEY', None)
