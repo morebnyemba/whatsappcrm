@@ -1,189 +1,238 @@
+# football_data_app/admin.py
 from django.contrib import admin
 from .models import (
-    League, Team, FootballFixture, Bookmaker,
-    MarketCategory, Market, MarketOutcome,
-    UserWallet, Transaction, Bet, BetSelection
+    League,
+    Team,
+    FootballFixture,
+    Bookmaker,
+    MarketCategory,
+    Market,
+    MarketOutcome
 )
 
-# Inline Admin classes for related models
-
-class TeamAdmin(admin.ModelAdmin):
-    list_display = ('name', 'api_team_id', 'country', 'code')
-    search_fields = ('name', 'api_team_id', 'code')
-    list_filter = ('country',)
-admin.site.register(Team, TeamAdmin)
-
+@admin.register(League)
 class LeagueAdmin(admin.ModelAdmin):
-    list_display = ('name', 'api_league_id', 'country')
-    search_fields = ('name', 'api_league_id')
-    list_filter = ('country',)
-admin.site.register(League, LeagueAdmin)
+    """
+    LeagueAdmin is a custom admin configuration for the League model in the Django admin interface.
 
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the admin list view.
+            - 'name': The name of the league.
+            - 'sport_key': The key identifying the sport associated with the league.
+            - 'sport_title': The title of the sport associated with the league.
+            - 'active': Indicates whether the league is active.
+            - 'last_fetched_events': Timestamp of the last fetched events for the league.
+            - 'updated_at': Timestamp of the last update to the league.
 
-class MarketOutcomeInline(admin.TabularInline): # Or admin.StackedInline
+        list_filter (tuple): Specifies the fields to filter by in the admin list view.
+            - 'active': Filter leagues by their active status.
+            - 'sport_key': Filter leagues by their sport key.
+
+        search_fields (tuple): Specifies the fields to search by in the admin list view.
+            - 'name': Search leagues by their name.
+            - 'sport_key': Search leagues by their sport key.
+            - 'sport_title': Search leagues by their sport title.
+
+        readonly_fields (tuple): Specifies the fields that are read-only in the admin form view.
+            - 'created_at': Timestamp of when the league was created.
+            - 'updated_at': Timestamp of the last update to the league.
+            - 'last_fetched_events': Timestamp of the last fetched events for the league.
+    """
+    list_display = ('name', 'sport_key', 'sport_title', 'active', 'last_fetched_events', 'updated_at')
+    list_filter = ('active', 'sport_key')
+    search_fields = ('name', 'sport_key', 'sport_title')
+    readonly_fields = ('created_at', 'updated_at', 'last_fetched_events')
+
+@admin.register(Team)
+class TeamAdmin(admin.ModelAdmin):
+    """
+    TeamAdmin is a custom ModelAdmin class for managing Team model objects in the Django admin interface.
+
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the admin list view. 
+            Includes 'name', 'created_at', and 'updated_at'.
+        search_fields (tuple): Defines the fields that can be searched in the admin interface. 
+            Includes 'name'.
+        readonly_fields (tuple): Specifies the fields that are read-only in the admin interface. 
+            Includes 'created_at' and 'updated_at'.
+    """
+    list_display = ('name', 'created_at', 'updated_at')
+    search_fields = ('name',)
+    readonly_fields = ('created_at', 'updated_at')
+
+class MarketOutcomeInline(admin.TabularInline): # Or admin.StackedInline for a different layout
+    """
+    MarketOutcomeInline is a Django admin inline class used to manage MarketOutcome objects 
+    within the admin interface. It provides a tabular layout for displaying and editing 
+    related MarketOutcome instances.
+
+    Attributes:
+        model (MarketOutcome): Specifies the model associated with this inline.
+        extra (int): Determines the number of empty forms to display for adding new instances. 
+                     Set to 0 to disable empty forms.
+        fields (tuple): Defines the fields to display in the inline form. Includes 'outcome_name', 
+                        'odds', 'point_value', 'result_status', and 'updated_at'.
+        readonly_fields (tuple): Specifies fields that are read-only in the inline form. 
+                                 Includes 'updated_at'.
+        ordering (tuple): Specifies the default ordering of the inline instances. 
+                          Ordered by 'outcome_name'.
+    """
     model = MarketOutcome
-    extra = 1 # Number of empty forms to display
-    readonly_fields = ('result_status',) # Result status is usually set programmatically
-    fields = ('outcome_name', 'odds', 'is_suspended', 'result_status')
+    extra = 0 # Number of empty forms to display
+    fields = ('outcome_name', 'odds', 'point_value', 'result_status', 'updated_at')
+    readonly_fields = ('updated_at',)
+    ordering = ('outcome_name',)
 
+@admin.register(Market)
 class MarketAdmin(admin.ModelAdmin):
-    list_display = ('fixture_display', 'bookmaker', 'category', 'market_parameter', 'is_active', 'last_updated_odds_api')
-    search_fields = ('fixture__match_api_id', 'fixture__home_team__name', 'fixture__away_team__name', 'bookmaker__name', 'category__name')
-    list_filter = ('category', 'bookmaker', 'is_active', 'fixture__league')
+    """
+    MarketAdmin is a custom admin configuration for the Market model in the Django admin interface.
+
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the admin list view. Includes fixture details, bookmaker, category, API market key, and timestamps.
+        list_filter (tuple): Defines the fields to filter the list view by. Includes bookmaker, category, API market key, and league associated with the fixture.
+        search_fields (tuple): Specifies the fields to enable search functionality in the admin interface. Includes fixture event ID, home team name, away team name, bookmaker name, and API market key.
+        readonly_fields (tuple): Lists fields that are read-only in the admin interface. Includes created_at, updated_at, and last_updated_odds_api.
+        inlines (list): Specifies inline models to be displayed within the admin interface. Includes MarketOutcomeInline.
+        autocomplete_fields (list): Enables autocomplete functionality for specified fields. Includes fixture_display, bookmaker, and category.
+    """
+    list_display = ('fixture_display', 'bookmaker', 'category', 'api_market_key', 'last_updated_odds_api', 'updated_at')
+    list_filter = ('bookmaker', 'category', 'api_market_key', 'fixture_display__league')
+    search_fields = ('fixture_display__event_api_id', 'fixture_display__home_team_name', 'fixture_display__away_team_name', 'bookmaker__name', 'api_market_key')
+    readonly_fields = ('created_at', 'updated_at', 'last_updated_odds_api')
     inlines = [MarketOutcomeInline]
-    autocomplete_fields = ['fixture', 'bookmaker', 'category'] # For easier selection
+    autocomplete_fields = ['fixture_display', 'bookmaker', 'category']
 
-    def fixture_display(self, obj):
-        return str(obj.fixture)
-    fixture_display.short_description = "Fixture"
+class MarketInline(admin.TabularInline): # Or admin.StackedInline
+    """
+    MarketInline is a Django admin inline class used to manage the Market model within a parent model's admin interface.
+    It provides a tabular or stacked layout for editing related Market instances.
 
-admin.site.register(Market, MarketAdmin)
-
-class MarketOutcomeAdmin(admin.ModelAdmin):
-    list_display = ('market_info', 'outcome_name', 'odds', 'result_status', 'is_suspended')
-    search_fields = ('market__fixture__match_api_id', 'outcome_name', 'market__category__name')
-    list_filter = ('result_status', 'is_suspended', 'market__category', 'market__bookmaker')
-    list_editable = ('odds', 'is_suspended') # Allow direct editing of odds and suspension status
-    readonly_fields = ('market',) # Usually set via Market inline
-
-    def market_info(self, obj):
-        return f"{obj.market.category.name} ({obj.market.market_parameter if obj.market.market_parameter else ''}) - FixID: {obj.market.fixture.match_api_id}"
-    market_info.short_description = "Market"
-
-admin.site.register(MarketOutcome, MarketOutcomeAdmin)
-
-
-class MarketInlineForFixture(admin.TabularInline):
+    Attributes:
+        model (Market): Specifies the model to be managed in the inline.
+        extra (int): Number of empty forms to display for adding new Market instances. Default is 0.
+        fields (tuple): Specifies the fields to display in the inline form.
+        readonly_fields (tuple): Specifies the fields that are read-only in the inline form.
+        autocomplete_fields (list): Enables autocomplete functionality for specified foreign key fields.
+        show_change_link (bool): Allows navigation to the Market change page directly from the inline form.
+    """
     model = Market
     extra = 0
-    fields = ('bookmaker', 'category', 'market_parameter', 'is_active', 'last_updated_odds_api')
-    readonly_fields = ('last_updated_odds_api',)
-    show_change_link = True
-    verbose_name_plural = "Odds Markets for this Fixture"
+    fields = ('bookmaker', 'category', 'api_market_key', 'last_updated_odds_api', 'updated_at')
+    readonly_fields = ('last_updated_odds_api', 'updated_at')
+    autocomplete_fields = ['bookmaker', 'category']
+    show_change_link = True # Allows navigating to the Market change page from the inline
 
+@admin.register(FootballFixture)
 class FootballFixtureAdmin(admin.ModelAdmin):
-    list_display = ('match_api_id', 'league', 'home_team', 'away_team', 'match_date', 'status_short', 'home_team_score', 'away_team_score', 'is_result_confirmed')
-    search_fields = ('match_api_id', 'home_team__name', 'away_team__name', 'league__name')
-    list_filter = ('league', 'status_short', 'is_result_confirmed', 'match_date')
-    date_hierarchy = 'match_date'
-    ordering = ('-match_date',)
-    list_editable = ('status_short', 'home_team_score', 'away_team_score', 'is_result_confirmed')
-    readonly_fields = ('api_fixture_timestamp', 'last_updated_from_api')
+    """
+    FootballFixtureAdmin is a custom Django admin class for managing FootballFixture models.
+
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the admin list view.
+        list_filter (tuple): Defines filters for narrowing down the list view.
+        search_fields (tuple): Specifies fields to search within the admin interface.
+        readonly_fields (tuple): Fields that are read-only in the admin interface.
+        date_hierarchy (str): Enables hierarchical navigation by date for the specified field.
+        inlines (list): Specifies inline models to display related data directly on the fixture page.
+        autocomplete_fields (list): Enables autocomplete functionality for specified foreign key fields.
+        fieldsets (tuple): Organizes fields into logical sections in the admin form.
+
+    Fieldsets:
+        - Default: Contains general fields like event_api_id, league, sport_key, commence_time, and completed.
+        - Teams: Groups fields related to home and away teams.
+        - Scores & Updates: Includes fields for scores and last update timestamps.
+        - Timestamps: Collapsible section for created_at and updated_at fields.
+    """
+    list_display = (
+        'event_api_id',
+        'league',
+        'home_team_name',
+        'away_team_name',
+        'commence_time',
+        'home_team_score',
+        'away_team_score',
+        'completed',
+        'last_odds_update',
+        'last_score_update'
+    )
+    list_filter = ('completed', 'league', 'commence_time', 'sport_key')
+    search_fields = ('event_api_id', 'home_team_name', 'away_team_name', 'league__name', 'sport_key')
+    readonly_fields = ('created_at', 'updated_at', 'last_odds_update', 'last_score_update')
+    date_hierarchy = 'commence_time'
+    inlines = [MarketInline] # Display markets directly on the fixture page
     autocomplete_fields = ['league', 'home_team', 'away_team']
-    inlines = [MarketInlineForFixture]
     fieldsets = (
         (None, {
-            'fields': ('match_api_id', 'league', 'round', 'match_date', 'api_fixture_timestamp')
+            'fields': ('event_api_id', 'league', 'sport_key', 'commence_time', 'completed')
         }),
-        ('Teams & Venue', {
-            'fields': ('home_team', 'away_team', 'venue_name', 'referee')
+        ('Teams', {
+            'fields': (('home_team_name', 'home_team'), ('away_team_name', 'away_team'))
         }),
-        ('Status & Score', {
-            'fields': ('status_short', 'status_long', 'home_team_score', 'away_team_score',
-                       'halftime_home_score', 'halftime_away_score',
-                       'extratime_home_score', 'extratime_away_score',
-                       'penalty_home_score', 'penalty_away_score',
-                       'is_result_confirmed', 'last_updated_from_api')
+        ('Scores & Updates', {
+            'fields': (('home_team_score', 'away_team_score'), 'last_odds_update', 'last_score_update')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',) # Collapsible section
         }),
     )
-admin.site.register(FootballFixture, FootballFixtureAdmin)
 
+
+@admin.register(Bookmaker)
 class BookmakerAdmin(admin.ModelAdmin):
-    list_display = ('name', 'api_bookmaker_id')
-    search_fields = ('name', 'api_bookmaker_id')
-admin.site.register(Bookmaker, BookmakerAdmin)
+    list_display = ('name', 'api_bookmaker_key', 'updated_at')
+    search_fields = ('name', 'api_bookmaker_key')
+    readonly_fields = ('created_at', 'updated_at')
 
+@admin.register(MarketCategory)
 class MarketCategoryAdmin(admin.ModelAdmin):
+    """
+    MarketCategoryAdmin is a Django ModelAdmin class that customizes the admin interface
+    for the MarketCategory model. It provides the following configurations:
+
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the admin list view.
+            - 'name': The name of the market category.
+            - 'description': A brief description of the market category.
+
+        search_fields (tuple): Specifies the fields to include in the search functionality.
+            - 'name': Allows searching by the name of the market category.
+    """
     list_display = ('name', 'description')
     search_fields = ('name',)
-admin.site.register(MarketCategory, MarketCategoryAdmin)
 
+@admin.register(MarketOutcome)
+class MarketOutcomeAdmin(admin.ModelAdmin):
+    """
+    MarketOutcomeAdmin is a custom admin configuration for the MarketOutcome model in the Django admin interface.
 
-# Betting System Models
-class TransactionInline(admin.TabularInline):
-    model = Transaction
-    extra = 0
-    fields = ('transaction_type', 'amount', 'timestamp', 'description', 'related_bet_id', 'balance_before', 'balance_after')
-    readonly_fields = ('timestamp', 'balance_before', 'balance_after')
-    can_delete = False
-    show_change_link = True
-
-class UserWalletAdmin(admin.ModelAdmin):
-    list_display = ('user', 'balance', 'bonus_balance', 'last_updated')
-    search_fields = ('user__username', 'user__email')
-    readonly_fields = ('last_updated',)
-    inlines = [TransactionInline]
-admin.site.register(UserWallet, UserWalletAdmin)
-
-class TransactionAdmin(admin.ModelAdmin):
-    list_display = ('wallet_user', 'transaction_type', 'amount', 'timestamp', 'related_bet_id')
-    search_fields = ('wallet__user__username', 'related_bet_id', 'description')
-    list_filter = ('transaction_type', 'timestamp')
-    date_hierarchy = 'timestamp'
-    readonly_fields = ('wallet', 'timestamp', 'balance_before', 'balance_after') # Wallet usually shouldn't be changed here
-
-    def wallet_user(self, obj):
-        return obj.wallet.user.username
-    wallet_user.short_description = 'User'
-    wallet_user.admin_order_field = 'wallet__user'
-
-
-admin.site.register(Transaction, TransactionAdmin)
-
-class BetSelectionInline(admin.TabularInline):
-    model = BetSelection
-    extra = 0
-    fields = ('market_outcome_info', 'odds_at_placement', 'result_status', 'fixture_description', 'market_description', 'outcome_description')
-    readonly_fields = ('market_outcome_info', 'fixture_description', 'market_description', 'outcome_description') # These are for display
-    autocomplete_fields = ['market_outcome'] # If you want to select them directly, but usually created with Bet
-    show_change_link = True
-
-    def market_outcome_info(self, obj):
-        if obj.market_outcome:
-            return f"{obj.market_outcome.market.category.name}: {obj.market_outcome.outcome_name} @ {obj.market_outcome.odds}"
-        return "N/A"
-    market_outcome_info.short_description = "Market Outcome"
-
-
-class BetAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'stake', 'total_odds', 'potential_winnings', 'actual_winnings', 'bet_type', 'status', 'placed_at', 'settled_at')
-    search_fields = ('id__iexact', 'user__username', 'user__email')
-    list_filter = ('status', 'bet_type', 'placed_at', 'settled_at', 'user')
-    date_hierarchy = 'placed_at'
-    readonly_fields = ('id', 'user', 'placed_at', 'settled_at', 'potential_winnings', 'actual_winnings') # Some fields should be immutable after creation or set by system
-    inlines = [BetSelectionInline]
-    fieldsets = (
-        (None, {'fields': ('id', 'user', 'status', 'bet_type')}),
-        ('Financials', {'fields': ('stake', 'total_odds', 'potential_winnings', 'actual_winnings')}),
-        ('Timestamps', {'fields': ('placed_at', 'settled_at')}),
+    Attributes:
+        list_display (tuple): Specifies the fields to display in the list view of the admin interface.
+            Includes 'market', 'outcome_name', 'odds', 'point_value', 'result_status', and 'updated_at'.
+        list_filter (tuple): Defines filters for narrowing down the list view results.
+            Includes 'result_status', 'market__category', 'market__bookmaker', and 'market__fixture_display__league'.
+        search_fields (tuple): Specifies fields to enable search functionality in the admin interface.
+            Includes 'outcome_name', 'market__fixture_display__event_api_id', 
+            'market__fixture_display__home_team_name', 'market__fixture_display__away_team_name', 
+            and 'market__bookmaker__name'.
+        readonly_fields (tuple): Defines fields that are read-only in the admin interface.
+            Includes 'created_at' and 'updated_at'.
+        autocomplete_fields (list): Specifies fields that use autocomplete functionality for easier selection.
+            Includes 'market'.
+        list_editable (tuple): Specifies fields that can be edited directly in the list view.
+            Includes 'result_status'.
+    """
+    list_display = ('market', 'outcome_name', 'odds', 'point_value', 'result_status', 'updated_at')
+    list_filter = ('result_status', 'market__category', 'market__bookmaker', 'market__fixture_display__league')
+    search_fields = (
+        'outcome_name',
+        'market__fixture_display__event_api_id',
+        'market__fixture_display__home_team_name',
+        'market__fixture_display__away_team_name',
+        'market__bookmaker__name'
     )
-admin.site.register(Bet, BetAdmin)
-
-class BetSelectionAdmin(admin.ModelAdmin):
-    list_display = ('bet_id_display', 'market_outcome_display', 'odds_at_placement', 'result_status')
-    search_fields = ('bet__id__iexact', 'bet__user__username', 'market_outcome__outcome_name')
-    list_filter = ('result_status', 'market_outcome__market__category', 'market_outcome__market__bookmaker')
-    readonly_fields = ('bet', 'market_outcome') # Usually not changed directly here
-    list_editable = ('result_status',) # Allow admin to manually override selection result if needed
-
-    def bet_id_display(self, obj):
-        return obj.bet.id
-    bet_id_display.short_description = "Bet ID"
-
-    def market_outcome_display(self, obj):
-        if obj.market_outcome:
-            mo = obj.market_outcome
-            fix = mo.market.fixture
-            return f"{fix.home_team.name if fix.home_team else 'N/A'} vs {fix.away_team.name if fix.away_team else 'N/A'} - {mo.market.category.name}: {mo.outcome_name}"
-        return "N/A"
-    market_outcome_display.short_description = "Selection"
-
-admin.site.register(BetSelection, BetSelectionAdmin)
-
-# If you had an FixtureEvent model and wanted to register it:
-# class FixtureEventAdmin(admin.ModelAdmin):
-#     list_display = ('fixture', 'event_type', 'event_detail', 'team', 'player_name', 'event_minute')
-#     search_fields = ('fixture__match_api_id', 'player_name', 'team__name')
-#     list_filter = ('event_type', 'fixture__league')
-# admin.site.register(FixtureEvent, FixtureEventAdmin)
+    readonly_fields = ('created_at', 'updated_at')
+    autocomplete_fields = ['market']
+    list_editable = ('result_status',) # Allow editing result_status directly in the list view
 
