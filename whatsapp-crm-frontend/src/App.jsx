@@ -22,6 +22,7 @@ import Matches from './pages/betting/Matches';
 import Tickets from './pages/betting/Tickets';
 import Wallet from './pages/betting/Wallet';
 import Profile from './pages/betting/Profile';
+import BettingDashboard from './pages/betting/BettingDashboard';
 
 const NotFoundPage = () => (
   <div className="p-10 text-center">
@@ -57,6 +58,8 @@ export default function App() {
             {/* Children of DashboardLayout (rendered via its <Outlet />) */}
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="crm-dashboard" element={<Dashboard />} />
+            <Route path="betting-dashboard" element={<BettingDashboard />} />
             <Route path="api-settings" element={<ApiSettings />} />
             <Route path="flows" element={<FlowsPage />} />
             <Route path="flows/new" element={<FlowEditorPage />} />

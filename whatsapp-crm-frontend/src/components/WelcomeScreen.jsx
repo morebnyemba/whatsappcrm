@@ -67,11 +67,6 @@ const WelcomeScreen = () => {
                 Get Started
               </Link>
             </Button>
-            <Button asChild variant="outline" size="lg" className="rounded-full">
-              <Link to="/dashboard">
-                View Dashboard
-              </Link>
-            </Button>
           </div>
         </div>
 
