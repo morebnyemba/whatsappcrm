@@ -44,7 +44,7 @@ class FootballFixture(models.Model):
     home_team_score = models.IntegerField(null=True, blank=True)
     away_team_score = models.IntegerField(null=True, blank=True)
     
-    completed = models.BooleanField(default=False)
+    #completed = models.BooleanField(default=False)
     status = models.CharField(
         max_length=20,
         choices=[
