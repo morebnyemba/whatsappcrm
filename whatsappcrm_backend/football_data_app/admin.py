@@ -139,7 +139,7 @@ class FootballFixtureAdmin(admin.ModelAdmin):
         fieldsets (tuple): Organizes fields into logical sections in the admin form.
 
     Fieldsets:
-        - Default: Contains general fields like event_api_id, league, sport_key, commence_time, and completed.
+        - Default: Contains general fields like event_api_id, league, sport_key, commence_time, and status.
         - Teams: Groups fields related to home and away teams.
         - Scores & Updates: Includes fields for scores and last update timestamps.
         - Timestamps: Collapsible section for created_at and updated_at fields.
@@ -164,7 +164,7 @@ class FootballFixtureAdmin(admin.ModelAdmin):
     autocomplete_fields = ['league', 'home_team', 'away_team']
     fieldsets = (
         (None, {
-            'fields': ('event_api_id', 'league', 'sport_key', 'commence_time', 'completed')
+            'fields': ('event_api_id', 'league', 'sport_key', 'commence_time', 'status')
         }),
         ('Teams', {
             'fields': (('home_team_name', 'home_team'), ('away_team_name', 'away_team'))
