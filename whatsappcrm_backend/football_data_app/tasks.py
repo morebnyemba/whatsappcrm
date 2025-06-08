@@ -218,6 +218,13 @@ def fetch_scores_for_league_events_task(self, league_id):
                     fixture.home_team_score = int(home_s) if home_s and home_s.isdigit() else None
                     fixture.away_team_score = int(away_s) if away_s and away_s.isdigit() else None
                     fixture.completed = score_item.get('completed', fixture.completed)
+                    # Set status field based on completion and time
+                    if fixture.completed:
+                        fixture.status = 'COMPLETED'
+                    elif fixture.commence_time <= timezone.now():
+                        fixture.status = 'STARTED'
+                    else:
+                        fixture.status = 'PENDING'
                     fixture.last_score_update = timezone.now(); fixture.save()
                     updated_count += 1; logger.info(f"Updated scores for {event_id}: {fixture.home_team_score}-{fixture.away_team_score}, Comp:{fixture.completed}")
                     if fixture.completed and fixture.home_team_score is not None and MarketOutcome.objects.filter(market__fixture_display=fixture, result_status='PENDING').exists():
