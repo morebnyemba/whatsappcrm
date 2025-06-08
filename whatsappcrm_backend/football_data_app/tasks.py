@@ -92,23 +92,52 @@ def settle_bets_for_fixture_task(self, fixture_id):
 
 # --- Core Data Fetching Tasks ---
 @shared_task(bind=True, max_retries=3, default_retry_delay=5 * 60)
-def fetch_and_update_sports_leagues_task(self):
-    client = TheOddsAPIClient(); logger.info("Starting league update task.")
+def fetch_football_leagues_task(self):
+    """
+    Task to fetch only football/soccer leagues efficiently.
+    This task will:
+    1. Clear existing leagues
+    2. Fetch only football leagues
+    3. Create them in the database
+    """
+    client = TheOddsAPIClient()
+    logger.info("Starting football leagues fetch task.")
+    
     try:
+        # Clear existing leagues
+        League.objects.all().delete()
+        
+        # Fetch only football leagues
         sports_data = client.get_sports(all_sports=True)
-        if not sports_data: return "No sports data from API."
-        created_count, updated_count = 0, 0
+        if not sports_data:
+            return "No sports data from API."
+            
+        created_count = 0
         for item in sports_data:
             key, title = item.get('key'), item.get('title')
-            if not key or not title: continue
-            _, created = League.objects.update_or_create(sport_key=key, defaults={'name': title, 'sport_title': title})
-            if created: created_count += 1
-            else: updated_count += 1
-        logger.info(f"League update finished. C:{created_count}, U:{updated_count}.")
+            # Only process football/soccer leagues
+            if not key or not title or not key.startswith('soccer_'):
+                continue
+                
+            # Create the league
+            League.objects.create(
+                sport_key=key,
+                name=title,
+                sport_title=title,
+                active=True
+            )
+            created_count += 1
+            
+        logger.info(f"Football leagues fetch finished. Created {created_count} leagues.")
+        return f"Successfully created {created_count} football leagues."
+        
     except TheOddsAPIException as e:
-        logger.error(f"API Error fetching leagues: {e}");
-        if e.status_code in [429, 500, 502, 503, 504] or e.status_code is None: raise self.retry(exc=e)
-    except Exception as e: logger.exception("Unexpected error fetching leagues."); raise self.retry(exc=e)
+        logger.error(f"API Error fetching football leagues: {e}")
+        if e.status_code in [429, 500, 502, 503, 504] or e.status_code is None:
+            raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception("Unexpected error fetching football leagues.")
+        raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=10 * 60)
 def fetch_events_for_league_task(self, league_id):
@@ -245,7 +274,7 @@ def fetch_scores_for_league_events_task(self, league_id):
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
 def run_the_odds_api_full_update_task():
     logger.info("Orchestrator: run_the_odds_api_full_update_task started.")
-    fetch_and_update_sports_leagues_task.apply_async()
+    fetch_football_leagues_task.apply_async()
 
     active_leagues = League.objects.filter(active=True)
     if not active_leagues.exists():
