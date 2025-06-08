@@ -152,11 +152,11 @@ class FootballFixtureAdmin(admin.ModelAdmin):
         'commence_time',
         'home_team_score',
         'away_team_score',
-        'completed',
+        'status',
         'last_odds_update',
         'last_score_update'
     )
-    list_filter = ('completed', 'league', 'commence_time', 'sport_key')
+    list_filter = ('status', 'league', 'commence_time', 'sport_key')
     search_fields = ('event_api_id', 'home_team_name', 'away_team_name', 'league__name', 'sport_key')
     readonly_fields = ('created_at', 'updated_at', 'last_odds_update', 'last_score_update')
     date_hierarchy = 'commence_time'
