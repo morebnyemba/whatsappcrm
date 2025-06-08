@@ -12,16 +12,31 @@ from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 logger = logging.getLogger(__name__)
 
-# --- Settings or Defaults (Budget-Aware Configuration) ---
-ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 1)
-DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk")
-DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h")
-ODDS_IMMINENT_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_IMMINENT_STALENESS_MINUTES', 30)
-ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 240)
-EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 24)
+# --- Settings or Defaults (Broad & Frequent Configuration) ---
+# These values are now more aggressive to ensure data is fresh and comprehensive.
+# This will use more API credits.
+
+# --- SCOPE EXPANSION SETTINGS ---
+# Look for games 7 days in advance.
+ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
+# Request data from multiple regions by default.
+DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us")
+# Request all primary markets by default.
+DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads")
+
+# --- FREQUENCY INCREASE SETTINGS ---
+# For games starting soon (e.g., in <2 hours), update odds every 15 minutes.
+ODDS_IMMINENT_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_IMMINENT_STALENESS_MINUTES', 15)
+# For games further out, update odds every hour (60 mins).
+ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
+# Re-scan a league for new events every 6 hours to catch newly scheduled games.
+EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
+
+# --- OTHER OPERATIONAL SETTINGS ---
 ODDS_POST_COMMENCEMENT_GRACE_HOURS = getattr(settings, 'THE_ODDS_API_POST_COMMENCEMENT_GRACE_HOURS', 1)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
 DAYS_FROM_FOR_SCORES = getattr(settings, 'THE_ODDS_API_DAYS_FROM_SCORES', 3)
+
 
 # --- Helper Function for Parsing Outcome Details ---
 def parse_outcome_details(outcome_name_api, market_key_api):
@@ -32,6 +47,7 @@ def parse_outcome_details(outcome_name_api, market_key_api):
             if len(parts) > 0 and parts[-1].replace('.', '', 1).lstrip('+-').isdigit():
                 point_part = float(parts[-1])
                 if len(parts) > 1: name_part = " ".join(parts[:-1])
+                else: name_part = outcome_name_api
         except (ValueError, IndexError):
             logger.warning(f"Could not parse point from outcome: {outcome_name_api} for market {market_key_api}")
     return name_part, point_part
@@ -121,7 +137,7 @@ def fetch_events_for_league_task(self, league_id):
 @shared_task(bind=True, max_retries=2, default_retry_delay=5 * 60)
 def fetch_odds_for_events_task(self, sport_key, event_ids_list, regions=None, markets=None):
     if not event_ids_list:
-        logger.warning(f"fetch_odds_for_events_task called for {sport_key} with no event IDs. Skipping.")
+        logger.warning(f"fetch_odds_for_events_task called for {sport_key} with no event IDs. Task skipped.")
         return "No event IDs provided. Task skipped."
         
     current_regions = regions or DEFAULT_ODDS_API_REGIONS
@@ -235,10 +251,13 @@ def run_the_odds_api_full_update_task():
 
     for league in active_leagues:
         logger.info(f"Orchestrator: Processing league: {league.sport_key}")
+        
+        # Step 1: Discover events if the league's event list is stale.
         if league.last_fetched_events is None or league.last_fetched_events < event_discovery_staleness:
             logger.info(f"Orchestrator: Dispatching event discovery for {league.sport_key}.")
             fetch_events_for_league_task.apply_async(args=[league.id])
         
+        # Step 2: Find fixtures that need their odds updated.
         imminent_max = now + timedelta(hours=2)
         imminent_stale = now - timedelta(minutes=ODDS_IMMINENT_STALENESS_MINUTES)
         upcoming_max = now + timedelta(days=ODDS_LEAD_TIME_DAYS)
@@ -257,8 +276,10 @@ def run_the_odds_api_full_update_task():
             for i in range(0, len(event_ids), batch_size):
                 fetch_odds_for_events_task.apply_async(args=[league.sport_key, event_ids[i:i + batch_size]])
         else:
-            logger.info(f"Orchestrator: No existing events match odds update criteria for {league.sport_key}. No odds fetch dispatched.")
+            # We no longer do a proactive fetch here to avoid 422 errors.
+            logger.info(f"Orchestrator: No existing events match odds criteria for {league.sport_key}. No odds fetch dispatched.")
 
+        # Step 3: Check for scores for this league
         fetch_scores_for_league_events_task.apply_async(args=[league.id])
 
     logger.info("Orchestrator: Finished dispatching sub-tasks.")
