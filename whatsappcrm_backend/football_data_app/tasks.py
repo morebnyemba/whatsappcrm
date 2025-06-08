@@ -300,7 +300,7 @@ def run_the_odds_api_full_update_task():
         upcoming_stale = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
         grace_min_time = now - timedelta(hours=ODDS_POST_COMMENCEMENT_GRACE_HOURS)
 
-        fixtures_needing_q = models.Q(league=league, completed=False) & \
+        fixtures_needing_q = models.Q(league=league) & ~models.Q(status='COMPLETED') & \
             ((models.Q(commence_time__gte=now, commence_time__lte=imminent_max) & (models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lte=imminent_stale))) |
              (models.Q(commence_time__gt=imminent_max, commence_time__lte=upcoming_max) & (models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lte=upcoming_stale))) |
              (models.Q(commence_time__gte=grace_min_time, commence_time__lt=now) & (models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lte=imminent_stale))))
