@@ -7,7 +7,8 @@ from django.utils import timezone
 from dateutil import parser
 from datetime import timedelta
 
-from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team, Bet, BetTicket
+from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
+from customer_data.models import Bet, BetTicket
 from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 logger = logging.getLogger(__name__)

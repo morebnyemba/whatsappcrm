@@ -126,3 +126,20 @@ class MarketOutcome(models.Model):
         verbose_name = _("Market Outcome")
         verbose_name_plural = _("Market Outcomes")
         ordering = ['market', 'name']
+
+class Bookmaker(models.Model):
+    """
+    Bookmaker model to store information about betting companies.
+    """
+    name = models.CharField(max_length=100)
+    api_bookmaker_key = models.CharField(max_length=50, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = _("Bookmaker")
+        verbose_name_plural = _("Bookmakers")
+        ordering = ['name']
