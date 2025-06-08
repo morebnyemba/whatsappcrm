@@ -103,7 +103,7 @@ class BetTicket(models.Model):
         ('SYSTEM', 'System Bet'),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bet_tickets')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bet_tickets',null=True,blank=True	)
     total_stake = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=TICKET_STATUS, default='PENDING')
