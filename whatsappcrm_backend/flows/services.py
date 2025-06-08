@@ -547,7 +547,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
         elif action.action_type == "set_context_variable":
             # ... existing set_context_variable code ...
         elif action.action_type == "update_contact_field":
-            # ... existing update_contact_field code ...
+            if action.field_path and action.value_template is not None:
+                value_to_set = _resolve_value(action.value_template, flow_context, contact)
+                _update_contact_data(contact, action.field_path, value_to_set)
+                logger.info(f"Updated contact field '{action.field_path}' for contact {contact.whatsapp_id} with value: {value_to_set}")
         elif action.action_type == "update_customer_profile":
             # ... existing update_customer_profile code ...
         elif action.action_type == "switch_flow":
