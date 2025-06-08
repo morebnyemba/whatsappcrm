@@ -11,7 +11,7 @@ class CustomerProfile(models.Model):
     """
     Extended user profile for betting customers
     """
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_profile')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_profile',null=True,blank=True)
     contact = models.OneToOneField('conversations.Contact', on_delete=models.SET_NULL, null=True, blank=True, related_name='customer_profile')
     phone_number = models.CharField(max_length=20, unique=True)
     date_of_birth = models.DateField(null=True, blank=True)
