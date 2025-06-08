@@ -320,3 +320,94 @@ def run_the_odds_api_full_update_task():
 
     logger.info("Orchestrator: Finished dispatching sub-tasks.")
     return "Full data update process initiated for active leagues."
+
+@shared_task(name="football_data_app.update_live_scores")
+def update_live_scores_task():
+    """
+    Task to update scores for live and recently completed games.
+    This runs more frequently than the main orchestrator to ensure
+    live game scores are updated promptly.
+    """
+    logger.info("Starting live scores update task")
+    now = timezone.now()
+    
+    # Get all active leagues
+    active_leagues = League.objects.filter(active=True)
+    
+    for league in active_leagues:
+        try:
+            # Get fixtures that are:
+            # 1. Currently live (started but not completed)
+            # 2. Completed in the last hour
+            # 3. Haven't been updated in the last 15 minutes
+            fixtures_q = models.Q(league=league) & (
+                (models.Q(status='STARTED')) |  # Live games
+                (models.Q(status='COMPLETED', updated_at__gte=now - timedelta(hours=1)))  # Recently completed
+            ) & (
+                models.Q(last_score_update__isnull=True) | 
+                models.Q(last_score_update__lte=now - timedelta(minutes=15))
+            )
+            
+            fixture_ids = list(FootballFixture.objects.filter(fixtures_q)
+                             .values_list('event_api_id', flat=True)
+                             .distinct()[:ODDS_FETCH_EVENT_BATCH_SIZE])
+            
+            if not fixture_ids:
+                continue
+                
+            # Fetch scores for these fixtures
+            client = TheOddsAPIClient()
+            scores_data = client.get_scores(sport_key=league.sport_key, event_ids=fixture_ids)
+            
+            if not scores_data:
+                continue
+                
+            updated_count = 0
+            for score_item in scores_data:
+                event_id = score_item.get('id')
+                if not event_id:
+                    continue
+                    
+                try:
+                    with transaction.atomic():
+                        fixture = FootballFixture.objects.get(event_api_id=event_id)
+                        home_s, away_s = None, None
+                        
+                        if score_item.get('scores'):
+                            for score in score_item['scores']:
+                                if score.get('name') == score_item.get('home_team'):
+                                    home_s = score.get('score')
+                                elif score.get('name') == score_item.get('away_team'):
+                                    away_s = score.get('score')
+                                    
+                        fixture.home_team_score = int(home_s) if home_s and home_s.isdigit() else None
+                        fixture.away_team_score = int(away_s) if away_s and away_s.isdigit() else None
+                        
+                        # Update status based on completion
+                        if score_item.get('completed'):
+                            fixture.status = 'COMPLETED'
+                        elif fixture.commence_time <= now:
+                            fixture.status = 'STARTED'
+                            
+                        fixture.last_score_update = now
+                        fixture.save()
+                        updated_count += 1
+                        
+                        # Trigger bet settlement if needed
+                        if (fixture.status == 'COMPLETED' and 
+                            fixture.home_team_score is not None and 
+                            MarketOutcome.objects.filter(market__fixture_display=fixture, 
+                                                       result_status='PENDING').exists()):
+                            settle_bets_for_fixture_task.delay(fixture.id)
+                            
+                except FootballFixture.DoesNotExist:
+                    continue
+                except Exception as e:
+                    logger.exception(f"Error updating scores for {event_id}: {e}")
+                    
+            logger.info(f"Updated {updated_count} scores for {league.sport_key}")
+            
+        except Exception as e:
+            logger.exception(f"Error processing league {league.sport_key}: {e}")
+            
+    return "Live scores update completed"
