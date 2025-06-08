@@ -7,7 +7,7 @@ from django.utils import timezone
 from dateutil import parser
 from datetime import timedelta
 
-from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
+from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team, Bet, BetTicket
 from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 logger = logging.getLogger(__name__)
@@ -411,3 +411,139 @@ def update_live_scores_task():
             logger.exception(f"Error processing league {league.sport_key}: {e}")
             
     return "Live scores update completed"
+
+@shared_task
+def check_and_settle_fixtures():
+    """
+    Task to check and settle completed fixtures
+    """
+    try:
+        # Get completed fixtures that haven't been settled
+        completed_fixtures = FootballFixture.objects.filter(
+            status='COMPLETED',
+            markets__outcomes__result_status='PENDING'
+        ).distinct()
+
+        for fixture in completed_fixtures:
+            try:
+                # Get all market outcomes for this fixture
+                outcomes = MarketOutcome.objects.filter(
+                    market__fixture_display=fixture
+                )
+
+                # Update outcome results based on fixture scores
+                for outcome in outcomes:
+                    if outcome.market.category.name == 'Match Winner':
+                        if fixture.home_team_score > fixture.away_team_score:
+                            outcome.result_status = 'WON' if outcome.outcome_name == 'Home' else 'LOST'
+                        elif fixture.away_team_score > fixture.home_team_score:
+                            outcome.result_status = 'WON' if outcome.outcome_name == 'Away' else 'LOST'
+                        else:
+                            outcome.result_status = 'WON' if outcome.outcome_name == 'Draw' else 'LOST'
+                    elif outcome.market.category.name == 'Over/Under':
+                        total_goals = fixture.home_team_score + fixture.away_team_score
+                        point_value = float(outcome.point_value or 0)
+                        if total_goals > point_value:
+                            outcome.result_status = 'WON' if outcome.outcome_name == 'Over' else 'LOST'
+                        elif total_goals < point_value:
+                            outcome.result_status = 'WON' if outcome.outcome_name == 'Under' else 'LOST'
+                        else:
+                            outcome.result_status = 'PUSH'
+                    
+                    outcome.save()
+
+                # Settle all bets for this fixture
+                settle_bets_for_fixture_task.delay(fixture.id)
+
+            except Exception as e:
+                logger.error(f"Error settling fixture {fixture.id}: {str(e)}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Error in check_and_settle_fixtures task: {str(e)}")
+
+@shared_task
+def settle_bets_for_fixture(fixture_id):
+    """
+    Task to settle all bets for a specific fixture
+    """
+    try:
+        fixture = FootballFixture.objects.get(id=fixture_id)
+        
+        # Get all pending bets for this fixture
+        pending_bets = Bet.objects.filter(
+            market_outcome__market__fixture_display=fixture,
+            status='PENDING'
+        )
+
+        for bet in pending_bets:
+            try:
+                # Update bet status based on outcome result
+                bet.status = bet.market_outcome.result_status
+                bet.save()
+
+                # If bet is won, add winnings to wallet
+                if bet.status == 'WON':
+                    bet.user.wallet.add_funds(bet.potential_winnings)
+                    bet.user.wallet.transactions.create(
+                        amount=bet.potential_winnings,
+                        transaction_type='BET_WON',
+                        description=f"Won bet on {fixture}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Error settling bet {bet.id}: {str(e)}")
+                continue
+
+        # Settle all tickets containing these bets
+        settle_tickets_with_bets.delay([bet.id for bet in pending_bets])
+
+    except Exception as e:
+        logger.error(f"Error in settle_bets_for_fixture task: {str(e)}")
+
+@shared_task
+def settle_tickets_with_bets(bet_ids):
+    """
+    Task to settle all tickets containing specific bets
+    """
+    try:
+        # Get all tickets containing these bets
+        tickets = BetTicket.objects.filter(
+            bets__id__in=bet_ids,
+            status='PENDING'
+        ).distinct()
+
+        for ticket in tickets:
+            try:
+                # Check if all bets in ticket are settled
+                if all(bet.status != 'PENDING' for bet in ticket.bets.all()):
+                    ticket.settle_ticket()
+            except Exception as e:
+                logger.error(f"Error settling ticket {ticket.id}: {str(e)}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Error in settle_tickets_with_bets task: {str(e)}")
+
+@shared_task
+def check_upcoming_fixtures():
+    """
+    Task to check and update status of upcoming fixtures
+    """
+    try:
+        now = timezone.now()
+        
+        # Update fixtures that should have started
+        FootballFixture.objects.filter(
+            status='PENDING',
+            commence_time__lte=now
+        ).update(status='STARTED')
+
+        # Update fixtures that should have completed (assuming 2 hours duration)
+        FootballFixture.objects.filter(
+            status='STARTED',
+            commence_time__lte=now - timedelta(hours=2)
+        ).update(status='COMPLETED')
+
+    except Exception as e:
+        logger.error(f"Error in check_upcoming_fixtures task: {str(e)}")

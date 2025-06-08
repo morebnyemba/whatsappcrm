@@ -6,6 +6,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 // Layout and Page Imports
 import DashboardLayout from './components/DashboardLayout';
+import WelcomeScreen from './components/WelcomeScreen';
 import Dashboard from './pages/Dashboard';
 import ApiSettings from './pages/ApiSettings';
 import FlowsPage from './pages/FlowsPage';
@@ -15,6 +16,12 @@ import ContactsPage from './pages/ContactsPage';
 import SavedData from './pages/SavedData';
 import Conversation from './pages/Conversation';
 import LoginPage from './pages/LoginPage';
+
+// Betting Feature Pages
+import Matches from './pages/betting/Matches';
+import Tickets from './pages/betting/Tickets';
+import Wallet from './pages/betting/Wallet';
+import Profile from './pages/betting/Profile';
 
 const NotFoundPage = () => (
   <div className="p-10 text-center">
@@ -36,6 +43,7 @@ export default function App() {
       <AuthProvider> {/* AuthProvider is a child, its hooks (useNavigate, useLocation) will work */}
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/welcome" element={<WelcomeScreen />} />
           
           {/* Protected Routes */}
           <Route 
@@ -57,6 +65,13 @@ export default function App() {
             <Route path="contacts" element={<ContactsPage />} />
             <Route path="saved-data" element={<SavedData />} />
             <Route path="conversation" element={<Conversation />} />
+
+            {/* Betting Feature Routes */}
+            <Route path="matches" element={<Matches />} />
+            <Route path="tickets" element={<Tickets />} />
+            <Route path="wallet" element={<Wallet />} />
+            <Route path="profile" element={<Profile />} />
+
             <Route path="*" element={<NotFoundPage />} /> {/* Catches unhandled routes under "/" */}
           </Route>
           

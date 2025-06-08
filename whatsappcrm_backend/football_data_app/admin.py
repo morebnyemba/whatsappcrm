@@ -7,7 +7,11 @@ from .models import (
     Bookmaker,
     MarketCategory,
     Market,
-    MarketOutcome
+    MarketOutcome,
+    UserWallet,
+    WalletTransaction,
+    Bet,
+    BetTicket
 )
 
 @admin.register(League)
@@ -38,10 +42,9 @@ class LeagueAdmin(admin.ModelAdmin):
             - 'updated_at': Timestamp of the last update to the league.
             - 'last_fetched_events': Timestamp of the last fetched events for the league.
     """
-    list_display = ('name', 'sport_key', 'sport_title', 'active', 'last_fetched_events', 'updated_at')
-    list_filter = ('active', 'sport_key')
+    list_display = ('name', 'sport_key', 'sport_title', 'active', 'last_fetched_events')
+    list_filter = ('active',)
     search_fields = ('name', 'sport_key', 'sport_title')
-    readonly_fields = ('created_at', 'updated_at', 'last_fetched_events')
 
 @admin.register(Team)
 class TeamAdmin(admin.ModelAdmin):
@@ -96,12 +99,9 @@ class MarketAdmin(admin.ModelAdmin):
         inlines (list): Specifies inline models to be displayed within the admin interface. Includes MarketOutcomeInline.
         autocomplete_fields (list): Enables autocomplete functionality for specified fields. Includes fixture_display, bookmaker, and category.
     """
-    list_display = ('fixture_display', 'bookmaker', 'category', 'api_market_key', 'last_updated_odds_api', 'updated_at')
-    list_filter = ('bookmaker', 'category', 'api_market_key', 'fixture_display__league')
-    search_fields = ('fixture_display__event_api_id', 'fixture_display__home_team_name', 'fixture_display__away_team_name', 'bookmaker__name', 'api_market_key')
-    readonly_fields = ('created_at', 'updated_at', 'last_updated_odds_api')
-    inlines = [MarketOutcomeInline]
-    autocomplete_fields = ['fixture_display', 'bookmaker', 'category']
+    list_display = ('fixture_display', 'bookmaker', 'category', 'api_market_key')
+    list_filter = ('bookmaker', 'category')
+    search_fields = ('fixture_display__home_team_name', 'fixture_display__away_team_name', 'api_market_key')
 
 class MarketInline(admin.TabularInline): # Or admin.StackedInline
     """
@@ -144,21 +144,9 @@ class FootballFixtureAdmin(admin.ModelAdmin):
         - Scores & Updates: Includes fields for scores and last update timestamps.
         - Timestamps: Collapsible section for created_at and updated_at fields.
     """
-    list_display = (
-        'event_api_id',
-        'league',
-        'home_team_name',
-        'away_team_name',
-        'commence_time',
-        'home_team_score',
-        'away_team_score',
-        'status',
-        'last_odds_update',
-        'last_score_update'
-    )
-    list_filter = ('status', 'league', 'commence_time', 'sport_key')
-    search_fields = ('event_api_id', 'home_team_name', 'away_team_name', 'league__name', 'sport_key')
-    readonly_fields = ('created_at', 'updated_at', 'last_odds_update', 'last_score_update')
+    list_display = ('home_team_name', 'away_team_name', 'commence_time', 'status', 'league')
+    list_filter = ('status', 'league', 'commence_time')
+    search_fields = ('home_team_name', 'away_team_name', 'event_api_id')
     date_hierarchy = 'commence_time'
     inlines = [MarketInline] # Display markets directly on the fixture page
     autocomplete_fields = ['league', 'home_team', 'away_team']
@@ -178,10 +166,9 @@ class FootballFixtureAdmin(admin.ModelAdmin):
         }),
     )
 
-
 @admin.register(Bookmaker)
 class BookmakerAdmin(admin.ModelAdmin):
-    list_display = ('name', 'api_bookmaker_key', 'updated_at')
+    list_display = ('name', 'api_bookmaker_key', 'last_update_from_api')
     search_fields = ('name', 'api_bookmaker_key')
     readonly_fields = ('created_at', 'updated_at')
 
@@ -223,16 +210,36 @@ class MarketOutcomeAdmin(admin.ModelAdmin):
         list_editable (tuple): Specifies fields that can be edited directly in the list view.
             Includes 'result_status'.
     """
-    list_display = ('market', 'outcome_name', 'odds', 'point_value', 'result_status', 'updated_at')
-    list_filter = ('result_status', 'market__category', 'market__bookmaker', 'market__fixture_display__league')
-    search_fields = (
-        'outcome_name',
-        'market__fixture_display__event_api_id',
-        'market__fixture_display__home_team_name',
-        'market__fixture_display__away_team_name',
-        'market__bookmaker__name'
-    )
+    list_display = ('market', 'outcome_name', 'odds', 'point_value', 'result_status')
+    list_filter = ('result_status', 'market__bookmaker', 'market__category')
+    search_fields = ('outcome_name', 'market__fixture_display__home_team_name', 'market__fixture_display__away_team_name')
     readonly_fields = ('created_at', 'updated_at')
     autocomplete_fields = ['market']
     list_editable = ('result_status',) # Allow editing result_status directly in the list view
+
+@admin.register(UserWallet)
+class UserWalletAdmin(admin.ModelAdmin):
+    list_display = ('user', 'balance', 'created_at', 'updated_at')
+    search_fields = ('user__username', 'user__email')
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display = ('wallet', 'amount', 'transaction_type', 'created_at')
+    list_filter = ('transaction_type', 'created_at')
+    search_fields = ('wallet__user__username', 'description')
+    date_hierarchy = 'created_at'
+
+@admin.register(Bet)
+class BetAdmin(admin.ModelAdmin):
+    list_display = ('user', 'market_outcome', 'amount', 'potential_winnings', 'status', 'created_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('user__username', 'market_outcome__outcome_name')
+    date_hierarchy = 'created_at'
+
+@admin.register(BetTicket)
+class BetTicketAdmin(admin.ModelAdmin):
+    list_display = ('user', 'total_stake', 'potential_winnings', 'status', 'bet_type', 'created_at')
+    list_filter = ('status', 'bet_type', 'created_at')
+    search_fields = ('user__username',)
+    date_hierarchy = 'created_at'
 

@@ -20,15 +20,22 @@ import {
   FiChevronRight,
   FiShare2,       // Good for Flows (diagram/connections)
   FiUsers,        // Good for Contacts
-  FiImage         // Good for Media Library
+  FiImage,        // Good for Media Library
+  FiDollarSign,   // Good for Wallet
+  FiAward,        // Good for Tickets
+  FiUser         // Good for Profile
 } from 'react-icons/fi';
 
-// Updated navigation links
+// Updated navigation links with betting features
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: <FiHome className="h-5 w-5" /> },
+  { to: '/matches', label: 'Matches', icon: <FiAward className="h-5 w-5" /> },
+  { to: '/tickets', label: 'My Tickets', icon: <FiAward className="h-5 w-5" /> },
+  { to: '/wallet', label: 'Wallet', icon: <FiDollarSign className="h-5 w-5" /> },
+  { to: '/profile', label: 'Profile', icon: <FiUser className="h-5 w-5" /> },
   { to: '/conversation', label: 'Conversations', icon: <FiMessageSquare className="h-5 w-5" /> },
   { to: '/contacts', label: 'Contacts', icon: <FiUsers className="h-5 w-5" /> },
-  { to: '/flows', label: 'Flows', icon: <FiShare2 className="h-5 w-5" /> }, // Changed from Bot Builder
+  { to: '/flows', label: 'Flows', icon: <FiShare2 className="h-5 w-5" /> },
   { to: '/media-library', label: 'Media Library', icon: <FiImage className="h-5 w-5" /> },
   { to: '/api-settings', label: 'API Settings', icon: <FiSettings className="h-5 w-5" /> },
   // { to: '/saved-data', label: 'Saved Data', icon: <FiDatabase className="h-5 w-5" /> }, // Uncomment if you use this route
