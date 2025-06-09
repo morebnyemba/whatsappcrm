@@ -139,11 +139,16 @@ def initialize_football_betting_flow():
     
     # Create steps and transitions
     for step_config in flow_config["steps"]:
+        # Extract the step configuration
+        step_type = step_config["type"]
+        step_name = step_config["name"]
+        
+        # Create the step with proper configuration
         step = FlowStep.objects.create(
             flow=flow,
-            name=step_config["name"],
-            step_type=step_config["type"],
-            config=step_config
+            name=step_name,
+            step_type=step_type,
+            config=step_config  # Store the entire step config in the config field
         )
         
         # Create transitions
