@@ -145,8 +145,13 @@ class MetaWebhookAPIView(View):
             return HttpResponse("Invalid JSON payload", status=400)
 
         base_log_defaults = {
-            'app_config': active_config, 'payload_object_type': payload.get("object"),
-            'processing_status': 'pending'
+            'app_config': active_config,
+            'waba_id_received': payload.get('entry', [{}])[0].get('id'),
+            'phone_number_id_received': payload.get('entry', [{}])[0].get('changes', [{}])[0].get('value', {}).get('metadata', {}).get('phone_number_id'),
+            'event_type': 'unknown',
+            'payload_object_type': payload.get('object'),
+            'processing_status': 'pending',
+            'processing_notes': None
         }
 
         try:

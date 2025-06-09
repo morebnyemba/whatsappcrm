@@ -545,18 +545,75 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     "text": football_engine.format_bet_history_message(bets)
                 })
         elif action.action_type == "set_context_variable":
-            # ... existing set_context_variable code ...
+            if action.variable_name and action.value_template is not None:
+                value_to_set = _resolve_value(action.value_template, flow_context, contact)
+                flow_context[action.variable_name] = value_to_set
+                logger.info(f"Set context variable '{action.variable_name}' to value: {value_to_set}")
+                updated_context = flow_context.copy()
         elif action.action_type == "update_contact_field":
             if action.field_path and action.value_template is not None:
                 value_to_set = _resolve_value(action.value_template, flow_context, contact)
                 _update_contact_data(contact, action.field_path, value_to_set)
                 logger.info(f"Updated contact field '{action.field_path}' for contact {contact.whatsapp_id} with value: {value_to_set}")
         elif action.action_type == "update_customer_profile":
-            # ... existing update_customer_profile code ...
+            if action.fields_to_update:
+                _update_customer_profile_data(contact, action.fields_to_update, flow_context)
+                logger.info(f"Updated customer profile for contact {contact.whatsapp_id}")
         elif action.action_type == "switch_flow":
-            # ... existing switch_flow code ...
+            if action.target_flow_name:
+                target_flow = Flow.objects.filter(name=action.target_flow_name, is_active=True).first()
+                if target_flow:
+                    entry_point = FlowStep.objects.filter(flow=target_flow, is_entry_point=True).first()
+                    if entry_point:
+                        logger.info(f"Switching flow for contact {contact.whatsapp_id} from '{contact_flow_state.current_flow.name}' to '{target_flow.name}'")
+                        _clear_contact_flow_state(contact)
+                        new_flow_context = action.initial_context_template or {}
+                        contact_flow_state = ContactFlowState.objects.create(
+                            contact=contact,
+                            current_flow=target_flow,
+                            current_step=entry_point,
+                            flow_context_data=new_flow_context,
+                            started_at=timezone.now()
+                        )
+                        step_actions, updated_flow_context = _execute_step_actions(entry_point, contact, new_flow_context.copy())
+                        messages_to_send.extend(step_actions)
+                        updated_context = updated_flow_context
+                    else:
+                        logger.error(f"Target flow '{target_flow.name}' has no entry point step")
+                else:
+                    logger.error(f"Target flow '{action.target_flow_name}' not found or not active")
         elif action.action_type == "fetch_football_data":
-            # ... existing fetch_football_data code ...
+            if action.data_type and action.league_code_variable and action.output_variable_name:
+                league_code = _get_value_from_context_or_contact(action.league_code_variable, flow_context, contact)
+                if league_code:
+                    try:
+                        if action.data_type == "scheduled_fixtures":
+                            data = football_engine.get_scheduled_fixtures(
+                                league_code=league_code,
+                                days_ahead=action.days_ahead_for_fixtures
+                            )
+                        elif action.data_type == "finished_results":
+                            data = football_engine.get_finished_results(
+                                league_code=league_code,
+                                days_past=action.days_past_for_results
+                            )
+                        else:
+                            raise ValueError(f"Invalid data_type: {action.data_type}")
+                        
+                        flow_context[action.output_variable_name] = data
+                        logger.info(f"Fetched {action.data_type} for league {league_code} and saved to {action.output_variable_name}")
+                        updated_context = flow_context.copy()
+                    except Exception as e:
+                        logger.error(f"Error fetching football data: {str(e)}")
+                        messages_to_send.append({
+                            "type": "text",
+                            "text": "Sorry, I encountered an error while fetching the football data. Please try again later."
+                        })
+                else:
+                    logger.error(f"League code variable '{action.league_code_variable}' not found in context")
+        elif action.action_type == "handle_football_betting":
+            # ... existing handle_football_betting code ...
+            pass
 
     return messages_to_send, updated_context
 
