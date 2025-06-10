@@ -6,6 +6,7 @@ from django.db import transaction, models
 from django.utils import timezone
 from dateutil import parser
 from datetime import timedelta
+from decimal import Decimal
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
@@ -57,12 +58,13 @@ def fetch_and_update_leagues_task(self):
                     'name': item.get('title', 'Unknown League'), 
                     'sport_key': 'soccer', 
                     'active': True,
-                    'logo_url': item.get('logo') # Fetches the logo URL
+                    'logo_url': item.get('logo')
                 }
             )
             if created: created_count += 1
             else: updated_count += 1
         logger.info(f"Leagues Task Complete: {created_count} created, {updated_count} updated.")
+        return f"Processed {created_count + updated_count} leagues."
     except Exception as e:
         logger.exception("Critical error in league fetching task.")
         raise self.retry(exc=e)
@@ -79,7 +81,6 @@ def fetch_events_for_league_task(self, league_id):
         events_data = client.get_events(sport_key=league.api_id)
         
         for item in events_data:
-            # FIX: This guard clause prevents crashes on outright markets
             if not item.get('home_team') or not item.get('away_team'):
                 logger.warning(f"Skipping event ID {item.get('id')} in league {league.name} as it lacks valid team data.")
                 continue
@@ -93,7 +94,7 @@ def fetch_events_for_league_task(self, league_id):
                     defaults={
                         'league': league, 'home_team': home_obj, 'away_team': away_obj,
                         'match_date': parser.isoparse(item['commence_time']),
-                        'status': 'SCHEDULED' # Always start as scheduled
+                        'status': 'SCHEDULED'
                     }
                 )
                 if created: created_count += 1
@@ -108,11 +109,11 @@ def fetch_events_for_league_task(self, league_id):
         logger.exception(f"Unexpected error fetching events for league {league_id}.")
         raise self.retry(exc=e)
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=600)
-def process_leagues_and_dispatch_subtasks_task(self):
+# --- Corrected Orchestrator Task Chain ---
+@shared_task(bind=True)
+def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
     """
-    Step 2: Processes all active leagues to dispatch sub-tasks for events, odds, and scores.
-    This runs only after the league fetching task is complete.
+    Step 2: Processes leagues to dispatch sub-tasks. Accepts previous task result.
     """
     now = timezone.now()
     logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
@@ -123,11 +124,9 @@ def process_leagues_and_dispatch_subtasks_task(self):
         return
 
     for league in leagues:
-        # Check if it's time to discover new events for this league
         if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
             fetch_events_for_league_task.apply_async(args=[league.id])
 
-        # Find fixtures that need their odds updated and dispatch tasks
         stale_fixtures_q = models.Q(
             models.Q(match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))),
             models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES))
@@ -138,26 +137,19 @@ def process_leagues_and_dispatch_subtasks_task(self):
             batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
             fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
 
-        # Dispatch score checking task for each league
         fetch_scores_for_league_task.apply_async(args=[league.id])
         
     logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
 
-# --- Main Orchestrator ---
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
 def run_the_odds_api_full_update_task():
-    """
-    Main orchestrator task that initiates the data pipeline using a Celery chain
-    to ensure a reliable, sequential execution of critical steps.
-    """
+    """Main orchestrator task using a Celery chain."""
     logger.info("Orchestrator: Kicking off the full data update pipeline.")
     
-    # FIX: Use a chain to solve the race condition
     pipeline = chain(
         fetch_and_update_leagues_task.s(),
         process_leagues_and_dispatch_subtasks_task.s()
     )
-    
     pipeline.apply_async()
     
     logger.info("Orchestrator: Update pipeline has been dispatched.")
@@ -264,13 +256,31 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
             logger.warning(f"Cannot settle outcomes for fixture {fixture_id}: scores are missing.")
             return
 
+        outcomes_to_update = []
         for market in fixture.markets.prefetch_related('outcomes'):
             for outcome in market.outcomes.filter(result_status='PENDING'):
-                # Your settlement logic here
-                outcome.result_status = 'WON' 
-                outcome.save()
+                new_status = 'LOST' # Default to lost and prove otherwise
+                if market.api_market_key == 'h2h':
+                    if (outcome.outcome_name == fixture.home_team.name and home_score > away_score) or \
+                       (outcome.outcome_name == fixture.away_team.name and away_score > home_score) or \
+                       (outcome.outcome_name.lower() == 'draw' and home_score == away_score):
+                        new_status = 'WON'
+                elif market.api_market_key == 'totals' and outcome.point_value is not None:
+                    total_score = home_score + away_score
+                    if total_score > outcome.point_value:
+                        new_status = 'WON' if 'over' in outcome.outcome_name.lower() else 'LOST'
+                    elif total_score < outcome.point_value:
+                        new_status = 'WON' if 'under' in outcome.outcome_name.lower() else 'LOST'
+                    else:
+                        new_status = 'PUSH'
+                
+                if new_status != outcome.result_status:
+                    outcome.result_status = new_status
+                    outcomes_to_update.append(outcome)
         
-        logger.info(f"Settlement: Marked outcomes for fixture {fixture_id}.")
+        if outcomes_to_update:
+            MarketOutcome.objects.bulk_update(outcomes_to_update, ['result_status'])
+        logger.info(f"Settlement: Marked {len(outcomes_to_update)} outcomes for fixture {fixture_id}.")
         return fixture_id
     except FootballFixture.DoesNotExist:
         logger.warning(f"Cannot settle outcomes: fixture {fixture_id} not found or not finished.")
