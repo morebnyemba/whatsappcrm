@@ -95,8 +95,7 @@ def settle_bets_for_fixture_task(self, fixture_id):
 @shared_task(bind=True, max_retries=3, default_retry_delay=5 * 60)
 def fetch_football_leagues_task(self):
     """
-    Task to fetch only football/soccer leagues efficiently.
-    This task will:
+    Task to fetch football leagues from The Odds API.
     1. Clear existing leagues
     2. Fetch only football leagues
     3. Create them in the database
@@ -122,10 +121,10 @@ def fetch_football_leagues_task(self):
                 
             # Create the league
             League.objects.create(
-                sport_key=key,
+                api_id=key,
                 name=title,
-                sport_title=title,
-                active=True
+                country='Unknown',  # Default value
+                season='2024'  # Default value
             )
             created_count += 1
             
@@ -142,27 +141,70 @@ def fetch_football_leagues_task(self):
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=10 * 60)
 def fetch_events_for_league_task(self, league_id):
-    try: league = League.objects.get(id=league_id, active=True)
-    except League.DoesNotExist: return f"League {league_id} not found/active."
-    client = TheOddsAPIClient(); logger.info(f"Fetching events for {league.sport_key}")
     try:
-        events_data = client.get_events(sport_key=league.sport_key)
-        if not events_data: league.last_fetched_events = timezone.now(); league.save(); return f"No events found for {league.sport_key}."
+        league = League.objects.get(id=league_id)
+    except League.DoesNotExist:
+        return f"League {league_id} not found."
+    
+    client = TheOddsAPIClient()
+    logger.info(f"Fetching events for {league.api_id}")
+    
+    try:
+        events_data = client.get_events(sport_key=league.api_id)
+        if not events_data:
+            return f"No events found for {league.api_id}."
+            
         created_count, updated_count = 0, 0
         for item in events_data:
-            event_id, commence_str, home_team, away_team, sport_key = item.get('id'), item.get('commence_time'), item.get('home_team'), item.get('away_team'), item.get('sport_key')
-            if not all([event_id, commence_str, home_team, away_team, sport_key]): continue
-            try: commence_time = parser.isoparse(commence_str)
-            except ValueError: continue
+            event_id = item.get('id')
+            commence_str = item.get('commence_time')
+            home_team = item.get('home_team')
+            away_team = item.get('away_team')
+            sport_key = item.get('sport_key')
+            
+            if not all([event_id, commence_str, home_team, away_team, sport_key]):
+                continue
+                
+            try:
+                commence_time = parser.isoparse(commence_str)
+            except ValueError:
+                continue
+                
             with transaction.atomic():
-                home_obj, away_obj = Team.get_or_create_team(home_team), Team.get_or_create_team(away_team)
-                _, created = FootballFixture.objects.update_or_create(event_api_id=event_id, defaults={'league': league, 'sport_key': sport_key, 'commence_time': commence_time, 'home_team_name': home_team, 'away_team_name': away_team, 'home_team': home_obj, 'away_team': away_obj})
-                if created: created_count += 1
-                else: updated_count += 1
-        league.last_fetched_events = timezone.now(); league.save()
-        logger.info(f"Events task for {league.sport_key} finished. C:{created_count}, U:{updated_count}.")
-    except TheOddsAPIException as e: logger.error(f"API Error fetching events for {league.sport_key}: {e}"); raise self.retry(exc=e)
-    except Exception as e: logger.exception(f"Unexpected error fetching events for {league.sport_key}."); raise self.retry(exc=e)
+                home_obj, _ = Team.objects.get_or_create(
+                    name=home_team,
+                    defaults={'api_id': f"{sport_key}_{home_team}"}
+                )
+                away_obj, _ = Team.objects.get_or_create(
+                    name=away_team,
+                    defaults={'api_id': f"{sport_key}_{away_team}"}
+                )
+                
+                _, created = FootballFixture.objects.update_or_create(
+                    api_id=event_id,
+                    defaults={
+                        'league': league,
+                        'home_team': home_obj,
+                        'away_team': away_obj,
+                        'match_date': commence_time,
+                        'status': 'SCHEDULED'
+                    }
+                )
+                
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+                    
+        logger.info(f"Events task for {league.api_id} finished. Created: {created_count}, Updated: {updated_count}")
+        return f"Successfully processed {created_count + updated_count} events."
+        
+    except TheOddsAPIException as e:
+        logger.error(f"API Error fetching events for {league.api_id}: {e}")
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception(f"Unexpected error fetching events for {league.api_id}")
+        raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=5 * 60)
 def fetch_odds_for_events_task(self, sport_key, event_ids_list, regions=None, markets=None):
@@ -277,21 +319,21 @@ def run_the_odds_api_full_update_task():
     logger.info("Orchestrator: run_the_odds_api_full_update_task started.")
     fetch_football_leagues_task.apply_async()
 
-    active_leagues = League.objects.filter(active=True)
-    if not active_leagues.exists():
-        logger.info("Orchestrator: No active leagues found. Ensure leagues are fetched and marked active in Admin.")
-        return "No active leagues."
+    leagues = League.objects.all()
+    if not leagues.exists():
+        logger.info("Orchestrator: No leagues found. Ensure leagues are fetched.")
+        return "No leagues found."
 
     now = timezone.now()
     event_discovery_staleness = now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)
     batch_size = ODDS_FETCH_EVENT_BATCH_SIZE
 
-    for league in active_leagues:
-        logger.info(f"Orchestrator: Processing league: {league.sport_key}")
+    for league in leagues:
+        logger.info(f"Orchestrator: Processing league: {league.api_id}")
         
-        # Step 1: Discover events if the league's event list is stale.
-        if league.last_fetched_events is None or league.last_fetched_events < event_discovery_staleness:
-            logger.info(f"Orchestrator: Dispatching event discovery for {league.sport_key}.")
+        # Step 1: Discover events if the league's event list is stale
+        if not hasattr(league, 'last_fetched_events') or league.last_fetched_events is None or league.last_fetched_events < event_discovery_staleness:
+            logger.info(f"Orchestrator: Dispatching event discovery for {league.api_id}")
             fetch_events_for_league_task.apply_async(args=[league.id])
         
         # Step 2: Find fixtures that need their odds updated.
