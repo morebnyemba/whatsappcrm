@@ -37,12 +37,15 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
             logger.warning(f"Could not parse point from outcome: '{outcome_name_api}' for market '{market_key_api}'")
     return name_part, point_part
 
-# --- Data Fetching Tasks (Now with Logo Logic) ---
+# --- Data Fetching & Processing Tasks ---
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    """Fetches and updates football leagues, now including their logos."""
+    """
+    Step 1: Fetches and updates football leagues from the API, including logos.
+    """
     client, created_count, updated_count = TheOddsAPIClient(), 0, 0
-    logger.info("Starting league fetch task.")
+    logger.info("Pipeline Step 1: Starting league fetch task.")
     try:
         sports_data = client.get_sports(all_sports=True)
         for item in sports_data:
@@ -54,55 +57,111 @@ def fetch_and_update_leagues_task(self):
                     'name': item.get('title', 'Unknown League'), 
                     'sport_key': 'soccer', 
                     'active': True,
-                    'logo_url': item.get('logo') # <-- ADDED LOGO
+                    'logo_url': item.get('logo') # Fetches the logo URL
                 }
             )
             if created: created_count += 1
             else: updated_count += 1
-        logger.info(f"Leagues Task: {created_count} created, {updated_count} updated.")
-    except TheOddsAPIException as e:
-        logger.error(f"API Error fetching leagues: {e}")
-        raise self.retry(exc=e)
+        logger.info(f"Leagues Task Complete: {created_count} created, {updated_count} updated.")
     except Exception as e:
-        logger.exception("Unexpected error in league fetching task.")
+        logger.exception("Critical error in league fetching task.")
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id):
-    """Fetches and updates events (fixtures), now including team logos."""
+    """
+    Fetches events for a league, skipping any that lack team data to prevent errors.
+    """
     client, created_count, updated_count = TheOddsAPIClient(), 0, 0
     try:
         league = League.objects.get(id=league_id)
         logger.info(f"Fetching events for league: {league.name}")
         events_data = client.get_events(sport_key=league.api_id)
+        
         for item in events_data:
-            home_obj, _ = Team.objects.update_or_create(name=item['home_team'], defaults={'logo_url': item.get('home_team_logo')})
-            away_obj, _ = Team.objects.update_or_create(name=item['away_team'], defaults={'logo_url': item.get('away_team_logo')})
+            # FIX: This guard clause prevents crashes on outright markets
+            if not item.get('home_team') or not item.get('away_team'):
+                logger.warning(f"Skipping event ID {item.get('id')} in league {league.name} as it lacks valid team data.")
+                continue
+
+            with transaction.atomic():
+                home_obj, _ = Team.objects.update_or_create(name=item['home_team'], defaults={'logo_url': item.get('home_team_logo')})
+                away_obj, _ = Team.objects.update_or_create(name=item['away_team'], defaults={'logo_url': item.get('away_team_logo')})
+                
+                _, created = FootballFixture.objects.update_or_create(
+                    api_id=item['id'],
+                    defaults={
+                        'league': league, 'home_team': home_obj, 'away_team': away_obj,
+                        'match_date': parser.isoparse(item['commence_time']),
+                        'status': 'SCHEDULED' # Always start as scheduled
+                    }
+                )
+                if created: created_count += 1
+                else: updated_count += 1
             
-            _, created = FootballFixture.objects.update_or_create(
-                api_id=item['id'],
-                defaults={
-                    'league': league, 'home_team': home_obj, 'away_team': away_obj,
-                    'match_date': parser.isoparse(item['commence_time'])
-                }
-            )
-            if created: created_count += 1
-            else: updated_count += 1
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
         logger.info(f"Events for {league.name}: {created_count} created, {updated_count} updated.")
     except League.DoesNotExist:
         logger.warning(f"League with ID {league_id} not found for event fetching.")
-    except TheOddsAPIException as e:
-        logger.error(f"API Error fetching events for league {league_id}: {e}")
-        raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"Unexpected error fetching events for league {league_id}.")
         raise self.retry(exc=e)
 
-# --- The rest of the tasks remain the same ---
-# (fetch_odds_for_event_batch_task, fetch_scores_for_league_task, settlement tasks, and orchestrator)
-# They are included below for completeness.
+@shared_task(bind=True, max_retries=2, default_retry_delay=600)
+def process_leagues_and_dispatch_subtasks_task(self):
+    """
+    Step 2: Processes all active leagues to dispatch sub-tasks for events, odds, and scores.
+    This runs only after the league fetching task is complete.
+    """
+    now = timezone.now()
+    logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
+    
+    leagues = League.objects.filter(active=True)
+    if not leagues.exists():
+        logger.warning("Orchestrator: No active leagues found. Halting pipeline.")
+        return
+
+    for league in leagues:
+        # Check if it's time to discover new events for this league
+        if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
+            fetch_events_for_league_task.apply_async(args=[league.id])
+
+        # Find fixtures that need their odds updated and dispatch tasks
+        stale_fixtures_q = models.Q(
+            models.Q(match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))),
+            models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES))
+        )
+        event_ids = list(FootballFixture.objects.filter(league=league, status='SCHEDULED').filter(stale_fixtures_q).values_list('api_id', flat=True))
+        
+        for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
+            batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
+            fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
+
+        # Dispatch score checking task for each league
+        fetch_scores_for_league_task.apply_async(args=[league.id])
+        
+    logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
+
+# --- Main Orchestrator ---
+@shared_task(name="football_data_app.run_the_odds_api_full_update")
+def run_the_odds_api_full_update_task():
+    """
+    Main orchestrator task that initiates the data pipeline using a Celery chain
+    to ensure a reliable, sequential execution of critical steps.
+    """
+    logger.info("Orchestrator: Kicking off the full data update pipeline.")
+    
+    # FIX: Use a chain to solve the race condition
+    pipeline = chain(
+        fetch_and_update_leagues_task.s(),
+        process_leagues_and_dispatch_subtasks_task.s()
+    )
+    
+    pipeline.apply_async()
+    
+    logger.info("Orchestrator: Update pipeline has been dispatched.")
+    return "Full data update pipeline initiated successfully."
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
@@ -153,7 +212,6 @@ def fetch_scores_for_league_task(self, league_id):
         ).values_list('api_id', flat=True)
 
         if not fixtures_to_check.exists():
-            logger.info(f"No fixtures need score updates for league {league.name}.")
             return
             
         client = TheOddsAPIClient()
@@ -250,28 +308,3 @@ def settle_tickets_for_fixture_task(self, fixture_id):
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}.")
         raise self.retry(exc=e)
-
-@shared_task(name="football_data_app.run_the_odds_api_full_update")
-def run_the_odds_api_full_update_task():
-    now = timezone.now()
-    logger.info("Orchestrator task started.")
-    
-    fetch_and_update_leagues_task.apply_async()
-    
-    for league in League.objects.filter(active=True):
-        if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
-            fetch_events_for_league_task.apply_async(args=[league.id])
-
-        stale_fixtures_q = models.Q(
-            models.Q(match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))),
-            models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES))
-        )
-        event_ids = list(FootballFixture.objects.filter(league=league, status='SCHEDULED').filter(stale_fixtures_q).values_list('api_id', flat=True))
-        
-        for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
-            batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
-            fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
-
-        fetch_scores_for_league_task.apply_async(args=[league.id])
-        
-    logger.info("Orchestrator task finished dispatching jobs.")

@@ -40,12 +40,16 @@ class TeamAdmin(admin.ModelAdmin):
     display_logo.short_description = 'Logo'
 
 class MarketInline(admin.TabularInline):
-    """Allows viewing and editing Markets directly within the FootballFixture admin page."""
+    """
+    Allows viewing and editing Markets directly within the FootballFixture admin page.
+    This provides a nested view, making it easy to see all markets for a given fixture.
+    """
     model = Market
     extra = 0
     fields = ('bookmaker', 'category', 'api_market_key', 'last_updated_odds_api', 'is_active')
     readonly_fields = ('last_updated_odds_api',)
     autocomplete_fields = ['bookmaker', 'category']
+    show_change_link = True
 
 @admin.register(FootballFixture)
 class FootballFixtureAdmin(admin.ModelAdmin):
@@ -74,6 +78,7 @@ class MarketOutcomeInline(admin.TabularInline):
     model = MarketOutcome
     extra = 0
     fields = ('outcome_name', 'odds', 'point_value', 'result_status', 'is_active')
+    readonly_fields = ('result_status',) # Result is set by settlement tasks
 
 @admin.register(Market)
 class MarketAdmin(admin.ModelAdmin):
@@ -91,3 +96,4 @@ class MarketOutcomeAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'result_status', 'market__category', 'market__bookmaker')
     search_fields = ('outcome_name', 'market__fixture_display__home_team__name', 'market__fixture_display__away_team__name')
     autocomplete_fields = ['market']
+    list_select_related = ('market__fixture_display', 'market__category', 'market__bookmaker')
