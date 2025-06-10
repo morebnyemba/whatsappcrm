@@ -4,7 +4,7 @@ from datetime import timedelta
 import logging
 import json
 import re
-from typing import List, Dict, Any, Optional, Union, Literal
+from typing import List, Dict, Any, Optional, Union, Literal, Tuple
 from django.db import models
 from django.utils import timezone
 from django.db import transaction
@@ -493,127 +493,166 @@ def _clear_contact_flow_state(contact: Contact, error: bool = False, reason: str
         logger.debug(f"No flow state to clear for contact {contact.whatsapp_id} (ID: {contact.id}). Reason: {log_suffix}.")
 
 
-def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, is_re_execution: bool = False) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Execute actions for a flow step"""
-    messages_to_send = []
+def _execute_step_actions(
+    step: FlowStep, 
+    contact: Contact, 
+    flow_context: dict, 
+    is_re_execution: bool = False
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Execute actions for a flow step, handling all supported action types robustly.
+    Returns (messages_to_send, updated_context).
+    """
+    messages_to_send: List[Dict[str, Any]] = []
     updated_context = flow_context.copy()
 
     try:
-        from football_data_app.football_engine import FootballEngine
-        football_engine = FootballEngine()
+        football_engine = FootballEngine() if FOOTBALL_APP_ENABLED else None
     except Exception as e:
         logger.error(f"Failed to initialize football engine: {str(e)}")
         football_engine = None
 
-    for action in step.actions_to_run:
-        if action.action_type == "handle_football_betting" and football_engine:
-            if action.betting_action == "view_matches":
-                matches = football_engine.get_upcoming_matches()
-                if not matches:
-                    messages_to_send.append({
-                        "type": "text",
-                        "text": "No upcoming matches found."
-                    })
-                else:
-                    for match in matches:
+    # Get actions_to_run from step's config
+    actions_to_run = []
+    if isinstance(step.config, dict):
+        actions_to_run = step.config.get('actions_to_run', [])
+    if not isinstance(actions_to_run, list):
+        actions_to_run = []
+
+    for action in actions_to_run:
+        try:
+            action_type = action.get('action_type')
+            
+            if action_type == "handle_football_betting" and football_engine:
+                betting_action = action.get('betting_action')
+                if betting_action == "view_matches":
+                    matches = football_engine.get_upcoming_matches()
+                    if not matches:
                         messages_to_send.append({
                             "type": "text",
-                            "text": football_engine.format_match_message(match)
+                            "text": "No upcoming matches found."
                         })
-            elif action.betting_action == "place_bet" and action.bet_details:
-                try:
-                    result = football_engine.place_bet_via_whatsapp(
-                        user_id=contact.user.id,
-                        match_id=int(action.bet_details['match_id']),
-                        market_category=action.bet_details['market'],
-                        outcome_name=action.bet_details['outcome'],
-                        amount=Decimal(str(action.bet_details['amount']))
-                    )
-                    messages_to_send.append({
-                        "type": "text",
-                        "text": result['message']
-                    })
-                except ValueError as e:
-                    messages_to_send.append({
-                        "type": "text",
-                        "text": f"Error placing bet: {str(e)}"
-                    })
-            elif action.betting_action == "view_bets":
-                bets = football_engine.get_user_bets(contact.user.id)
-                messages_to_send.append({
-                    "type": "text",
-                    "text": football_engine.format_bet_history_message(bets)
-                })
-        elif action.action_type == "set_context_variable":
-            if action.variable_name and action.value_template is not None:
-                value_to_set = _resolve_value(action.value_template, flow_context, contact)
-                flow_context[action.variable_name] = value_to_set
-                logger.info(f"Set context variable '{action.variable_name}' to value: {value_to_set}")
-                updated_context = flow_context.copy()
-        elif action.action_type == "update_contact_field":
-            if action.field_path and action.value_template is not None:
-                value_to_set = _resolve_value(action.value_template, flow_context, contact)
-                _update_contact_data(contact, action.field_path, value_to_set)
-                logger.info(f"Updated contact field '{action.field_path}' for contact {contact.whatsapp_id} with value: {value_to_set}")
-        elif action.action_type == "update_customer_profile":
-            if action.fields_to_update:
-                _update_customer_profile_data(contact, action.fields_to_update, flow_context)
-                logger.info(f"Updated customer profile for contact {contact.whatsapp_id}")
-        elif action.action_type == "switch_flow":
-            if action.target_flow_name:
-                target_flow = Flow.objects.filter(name=action.target_flow_name, is_active=True).first()
-                if target_flow:
-                    entry_point = FlowStep.objects.filter(flow=target_flow, is_entry_point=True).first()
-                    if entry_point:
-                        logger.info(f"Switching flow for contact {contact.whatsapp_id} from '{contact_flow_state.current_flow.name}' to '{target_flow.name}'")
-                        _clear_contact_flow_state(contact)
-                        new_flow_context = action.initial_context_template or {}
-                        contact_flow_state = ContactFlowState.objects.create(
-                            contact=contact,
-                            current_flow=target_flow,
-                            current_step=entry_point,
-                            flow_context_data=new_flow_context,
-                            started_at=timezone.now()
-                        )
-                        step_actions, updated_flow_context = _execute_step_actions(entry_point, contact, new_flow_context.copy())
-                        messages_to_send.extend(step_actions)
-                        updated_context = updated_flow_context
                     else:
-                        logger.error(f"Target flow '{target_flow.name}' has no entry point step")
-                else:
-                    logger.error(f"Target flow '{action.target_flow_name}' not found or not active")
-        elif action.action_type == "fetch_football_data":
-            if action.data_type and action.league_code_variable and action.output_variable_name:
-                league_code = _get_value_from_context_or_contact(action.league_code_variable, flow_context, contact)
-                if league_code:
+                        for match in matches:
+                            messages_to_send.append({
+                                "type": "text",
+                                "text": football_engine.format_match_message(match)
+                            })
+                elif betting_action == "place_bet" and action.get('bet_details'):
                     try:
-                        if action.data_type == "scheduled_fixtures":
-                            data = football_engine.get_scheduled_fixtures(
-                                league_code=league_code,
-                                days_ahead=action.days_ahead_for_fixtures
-                            )
-                        elif action.data_type == "finished_results":
-                            data = football_engine.get_finished_results(
-                                league_code=league_code,
-                                days_past=action.days_past_for_results
-                            )
-                        else:
-                            raise ValueError(f"Invalid data_type: {action.data_type}")
-                        
-                        flow_context[action.output_variable_name] = data
-                        logger.info(f"Fetched {action.data_type} for league {league_code} and saved to {action.output_variable_name}")
-                        updated_context = flow_context.copy()
-                    except Exception as e:
-                        logger.error(f"Error fetching football data: {str(e)}")
+                        result = football_engine.place_bet_via_whatsapp(
+                            user_id=contact.user.id,
+                            match_id=int(action['bet_details']['match_id']),
+                            market_category=action['bet_details']['market'],
+                            outcome_name=action['bet_details']['outcome'],
+                            amount=Decimal(str(action['bet_details']['amount']))
+                        )
                         messages_to_send.append({
                             "type": "text",
-                            "text": "Sorry, I encountered an error while fetching the football data. Please try again later."
+                            "text": result['message']
                         })
-                else:
-                    logger.error(f"League code variable '{action.league_code_variable}' not found in context")
-        elif action.action_type == "handle_football_betting":
-            # ... existing handle_football_betting code ...
-            pass
+                    except ValueError as e:
+                        messages_to_send.append({
+                            "type": "text",
+                            "text": f"Error placing bet: {str(e)}"
+                        })
+                elif betting_action == "view_bets":
+                    bets = football_engine.get_user_bets(contact.user.id)
+                    messages_to_send.append({
+                        "type": "text",
+                        "text": football_engine.format_bet_history_message(bets)
+                    })
+                    
+            elif action_type == "set_context_variable":
+                variable_name = action.get('variable_name')
+                value_template = action.get('value_template')
+                if variable_name and value_template is not None:
+                    value_to_set = _resolve_value(value_template, flow_context, contact)
+                    flow_context[variable_name] = value_to_set
+                    logger.info(f"Set context variable '{variable_name}' to value: {value_to_set}")
+                    updated_context = flow_context.copy()
+                    
+            elif action_type == "update_contact_field":
+                field_path = action.get('field_path')
+                value_template = action.get('value_template')
+                if field_path and value_template is not None:
+                    value_to_set = _resolve_value(value_template, flow_context, contact)
+                    _update_contact_data(contact, field_path, value_to_set)
+                    logger.info(f"Updated contact field '{field_path}' for contact {contact.whatsapp_id}")
+                    
+            elif action_type == "update_customer_profile":
+                fields_to_update = action.get('fields_to_update')
+                if fields_to_update:
+                    _update_customer_profile_data(contact, fields_to_update, flow_context)
+                    logger.info(f"Updated customer profile for contact {contact.whatsapp_id}")
+                    
+            elif action_type == "switch_flow":
+                target_flow_name = action.get('target_flow_name')
+                if target_flow_name:
+                    target_flow = Flow.objects.filter(name=target_flow_name, is_active=True).first()
+                    if target_flow:
+                        entry_point = FlowStep.objects.filter(flow=target_flow, is_entry_point=True).first()
+                        if entry_point:
+                            logger.info(f"Switching flow for contact {contact.whatsapp_id} to '{target_flow.name}'")
+                            _clear_contact_flow_state(contact)
+                            new_flow_context = action.get('initial_context_template') or {}
+                            contact_flow_state = ContactFlowState.objects.create(
+                                contact=contact,
+                                current_flow=target_flow,
+                                current_step=entry_point,
+                                flow_context_data=new_flow_context,
+                                started_at=timezone.now()
+                            )
+                            step_actions, updated_flow_context = _execute_step_actions(
+                                entry_point, contact, new_flow_context.copy()
+                            )
+                            messages_to_send.extend(step_actions)
+                            updated_context = updated_flow_context
+                        else:
+                            logger.error(f"Target flow '{target_flow.name}' has no entry point step")
+                    else:
+                        logger.error(f"Target flow '{target_flow_name}' not found or not active")
+                        
+            elif action_type == "fetch_football_data" and football_engine:
+                data_type = action.get('data_type')
+                league_code_variable = action.get('league_code_variable')
+                output_variable_name = action.get('output_variable_name')
+                
+                if all([data_type, league_code_variable, output_variable_name]):
+                    league_code = _get_value_from_context_or_contact(league_code_variable, flow_context, contact)
+                    if league_code:
+                        try:
+                            if data_type == "scheduled_fixtures":
+                                data = football_engine.get_scheduled_fixtures(
+                                    league_code=league_code,
+                                    days_ahead=action.get('days_ahead_for_fixtures')
+                                )
+                            elif data_type == "finished_results":
+                                data = football_engine.get_finished_results(
+                                    league_code=league_code,
+                                    days_past=action.get('days_past_for_results')
+                                )
+                            else:
+                                raise ValueError(f"Invalid data_type: {data_type}")
+                            
+                            flow_context[output_variable_name] = data
+                            logger.info(f"Fetched {data_type} for league {league_code}")
+                            updated_context = flow_context.copy()
+                        except Exception as e:
+                            logger.error(f"Error fetching football data: {str(e)}")
+                            messages_to_send.append({
+                                "type": "text",
+                                "text": "Sorry, I encountered an error while fetching the football data."
+                            })
+                    else:
+                        logger.error(f"League code variable '{league_code_variable}' not found in context")
+                        
+        except Exception as e:
+            logger.error(f"Error executing action {action.get('action_type')}: {str(e)}")
+            messages_to_send.append({
+                "type": "text",
+                "text": "Sorry, I encountered an error while processing this action."
+            })
 
     return messages_to_send, updated_context
 
