@@ -144,11 +144,20 @@ def initialize_football_betting_flow():
         step_name = step_config["name"]
         
         # Create the step with proper configuration
+        if step_type == "action":
+            # For action steps, ensure actions_to_run is in the config
+            config = {
+                "actions_to_run": step_config.get("actions_to_run", [])
+            }
+        else:
+            # For other steps, store the entire config
+            config = step_config
+        
         step = FlowStep.objects.create(
             flow=flow,
             name=step_name,
             step_type=step_type,
-            config=step_config  # Store the entire step config in the config field
+            config=config  # Store the proper config in the config field
         )
         
         # Create transitions
