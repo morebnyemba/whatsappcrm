@@ -1,4 +1,6 @@
+# football_data_app/management/commands/football_league_setup.py
 from django.core.management.base import BaseCommand
+from django.db import transaction
 from football_data_app.models import League
 from football_data_app.the_odds_api_client import TheOddsAPIClient
 import logging
@@ -7,11 +9,9 @@ logger = logging.getLogger(__name__)
 
 def setup_football_leagues():
     """
-    Function to fetch and setup only football leagues.
-    This is optimized to use minimal API credits by:
-    1. Only fetching football leagues
-    2. Making a single API call
-    3. Creating leagues in bulk
+    Fetches and sets up only football leagues from The Odds API.
+    This is optimized to use minimal API credits and is safe to run multiple times.
+    It uses `update_or_create` to prevent duplicates and keep data fresh.
     """
     client = TheOddsAPIClient()
     logger.info("Starting football leagues setup.")
@@ -23,36 +23,46 @@ def setup_football_leagues():
             logger.error("No sports data received from API")
             return
             
-        # Filter and prepare football leagues
-        football_leagues = []
-        for item in sports_data:
-            key = item.get('key')
-            title = item.get('title')
-            
-            # Only process football/soccer leagues
-            if not key or not title or not key.startswith('soccer_'):
-                continue
+        created_count = 0
+        updated_count = 0
+        
+        # Use a transaction to ensure all or nothing
+        with transaction.atomic():
+            for item in sports_data:
+                key = item.get('key')
+                title = item.get('title')
                 
-            football_leagues.append(League(
-                sport_key=key,
-                name=title,
-                sport_title=title,
-                active=True
-            ))
-            
-        # Bulk create leagues
-        if football_leagues:
-            League.objects.bulk_create(football_leagues)
-            logger.info(f"Successfully created {len(football_leagues)} football leagues")
-        else:
-            logger.warning("No football leagues found in the API response")
+                # Only process football/soccer leagues
+                if not key or not title or not key.startswith('soccer_'):
+                    continue
+                
+                # Use update_or_create to prevent duplicates and keep names fresh
+                _, created = League.objects.update_or_create(
+                    api_id=key,  # Correct field for the unique API key
+                    defaults={
+                        'name': title,
+                        'sport_key': 'soccer', # Hardcode the sport key as per logic
+                        'active': True,
+                        'logo_url': item.get('logo') # Now correctly handles the logo
+                    }
+                )
+                
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+                    
+        logger.info(f"Football leagues setup finished. Created: {created_count}, Updated: {updated_count}.")
             
     except Exception as e:
-        logger.exception("Error setting up football leagues")
-        raise
+        logger.exception("An error occurred during football leagues setup")
+        # Do not re-raise the exception to allow the command to exit gracefully
+        # The exception is already logged.
 
 class Command(BaseCommand):
-    help = 'Sets up football leagues from The Odds API'
+    help = 'Fetches and updates the list of active football leagues from The Odds API.'
 
     def handle(self, *args, **options):
-        setup_football_leagues() 
+        self.stdout.write(self.style.SUCCESS("Starting the football league setup process..."))
+        setup_football_leagues()
+        self.stdout.write(self.style.SUCCESS("Football league setup process completed."))
