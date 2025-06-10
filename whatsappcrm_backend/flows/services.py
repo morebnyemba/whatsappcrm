@@ -15,7 +15,6 @@ from conversations.models import Contact, Message
 from football_data_app.models import FootballFixture
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState
 from customer_data.models import CustomerProfile
-from football_data_app.football_engine import FootballEngine
 
 try:
     from media_manager.models import MediaAsset
@@ -234,7 +233,7 @@ class StepConfigQuestion(BasePydanticConfig):
             raise ValueError(f"message_config for question is invalid: {e.errors()}")
 
 class ActionItemConfig(BasePydanticConfig):
-    action_type: Literal["set_context_variable", "update_contact_field", "update_customer_profile", "switch_flow", "fetch_football_data", "handle_football_betting"]
+    action_type: Literal["set_context_variable", "update_contact_field", "update_customer_profile", "switch_flow", "fetch_football_data"]
     variable_name: Optional[str] = None
     value_template: Optional[Any] = None
     field_path: Optional[str] = None
@@ -249,29 +248,27 @@ class ActionItemConfig(BasePydanticConfig):
     days_past_for_results: Optional[int] = Field(default=2)
     days_ahead_for_fixtures: Optional[int] = Field(default=7)
 
-    # Football betting specific fields
-    betting_action: Optional[Literal["view_matches", "place_bet", "view_bets"]] = None
-    bet_details: Optional[Dict[str, Any]] = None
-
     @root_validator(pre=False, skip_on_failure=True)
     def check_action_fields(cls, values):
         action_type = values.get('action_type')
+        if action_type == 'set_context_variable':
+            if values.get('variable_name') is None or 'value_template' not in values:
+                raise ValueError("For set_context_variable, 'variable_name' and 'value_template' are required.")
+        elif action_type == 'update_contact_field':
+            if not values.get('field_path') or 'value_template' not in values:
+                raise ValueError("For update_contact_field, 'field_path' and 'value_template' are required.")
+        elif action_type == 'update_customer_profile':
+            if not values.get('fields_to_update') or not isinstance(values.get('fields_to_update'), dict):
+                raise ValueError("For update_customer_profile, 'fields_to_update' (a dictionary) is required.")
+        elif action_type == 'switch_flow':
+            if not values.get('target_flow_name'):
+                raise ValueError("For switch_flow, 'target_flow_name' is required.")
         
-        if action_type == 'handle_football_betting':
-            betting_action = values.get('betting_action')
-            if not betting_action:
-                raise ValueError("betting_action is required for handle_football_betting action")
-            
-            if betting_action == 'place_bet':
-                bet_details = values.get('bet_details')
-                if not bet_details:
-                    raise ValueError("bet_details is required for place_bet action")
-                required_fields = ['match_id', 'market', 'outcome', 'amount']
-                missing_fields = [field for field in required_fields if field not in bet_details]
-                if missing_fields:
-                    raise ValueError(f"Missing required fields in bet_details: {', '.join(missing_fields)}")
-        
+        elif action_type == 'fetch_football_data':
+            if not values.get('data_type') or not values.get('output_variable_name'):
+                raise ValueError("For fetch_football_data, 'data_type' and 'output_variable_name' are required.")
         return values
+        
 
 class StepConfigAction(BasePydanticConfig):
     actions_to_run: List[ActionItemConfig] = Field(default_factory=list, min_items=1)
@@ -493,122 +490,301 @@ def _clear_contact_flow_state(contact: Contact, error: bool = False, reason: str
         logger.debug(f"No flow state to clear for contact {contact.whatsapp_id} (ID: {contact.id}). Reason: {log_suffix}.")
 
 
-def _execute_step_actions(
-    step: FlowStep, 
-    contact: Contact, 
-    flow_context: dict, 
-    is_re_execution: bool = False
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Executes all actions associated with a given flow step.
-    This function is corrected to properly access step configurations
-    and validate them before execution.
-    """
-    messages_to_send: List[Dict[str, Any]] = []
-    updated_context = flow_context.copy()
+def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, is_re_execution: bool = False) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    actions_to_perform = []
+    raw_step_config = step.config or {}
+    current_step_context = flow_context.copy()
 
-    try:
-        football_engine = FootballEngine() if FOOTBALL_APP_ENABLED else None
-    except Exception as e:
-        logger.error(f"Failed to initialize football engine: {e}")
-        football_engine = None
+    logger.debug(
+        f"Executing actions for step '{step.name}' (ID: {step.id}, Type: {step.step_type}) "
+        f"for contact {contact.whatsapp_id} (ID: {contact.id}). Is re-execution: {is_re_execution}. "
+        f"Raw Config: {json.dumps(raw_step_config) if isinstance(raw_step_config, dict) else str(raw_step_config)}"
+    )
 
-    # Correctly access 'actions_to_run' from the 'config' dictionary.
-    actions_config_list = step.config.get('actions_to_run', [])
-    if not isinstance(actions_config_list, list):
-        logger.warning(f"Step {step.id} ('{step.step_id}') 'actions_to_run' is not a list. Found: {type(actions_config_list)}. Skipping actions.")
-        return messages_to_send, updated_context
-
-    logger.info(f"Executing actions for step: {step.step_id}. Action count: {len(actions_config_list)}")
-
-    for action_config in actions_config_list:
+    if step.step_type == 'send_message':
         try:
-            # Validate each action's configuration using the Pydantic model
-            action_item = ActionItemConfig(**action_config)
-            action_type = action_item.action_type
+            send_message_config = StepConfigSendMessage.model_validate(raw_step_config)
+            actual_message_type = send_message_config.message_type
+            final_api_data_structure = {}
+            logger.debug(f"Step '{step.name}': Validated send_message config. Type: '{actual_message_type}'.")
+
+            payload_field_value = getattr(send_message_config, actual_message_type, None)
+
+            if payload_field_value is None:
+                logger.error(f"Step '{step.name}': Payload field '{actual_message_type}' is None after Pydantic validation. Raw Config: {raw_step_config}")
             
-            logger.debug(f"Executing validated action '{action_type}' for step '{step.step_id}'.")
+            elif actual_message_type == "text":
+                text_content: TextMessageContent = payload_field_value
+                resolved_body = _resolve_value(text_content.body, current_step_context, contact)
+                logger.debug(f"Step '{step.name}': Resolved text body: '{resolved_body[:100]}{'...' if len(resolved_body) > 100 else ''}'")
+                final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
 
-            if action_type == "handle_football_betting" and football_engine:
-                if action_item.betting_action == "view_matches":
-                    matches = football_engine.get_upcoming_matches()
-                    if not matches:
-                        messages_to_send.append({"type": "text", "text": "No upcoming matches found."})
-                    else:
-                        for match in matches:
-                            messages_to_send.append({"type": "text", "text": football_engine.format_match_message(match)})
-                
-                elif action_item.betting_action == "place_bet" and action_item.bet_details:
+            elif actual_message_type in ['image', 'document', 'audio', 'video', 'sticker']:
+                media_conf: MediaMessageContent = payload_field_value
+                media_data_to_send = {}
+                valid_source_found = False
+                if MEDIA_ASSET_ENABLED and media_conf.asset_pk:
                     try:
-                        result = football_engine.place_bet_via_whatsapp(
-                            user_id=contact.user.id,
-                            match_id=int(action_item.bet_details['match_id']),
-                            market_category=action_item.bet_details['market'],
-                            outcome_name=action_item.bet_details['outcome'],
-                            amount=Decimal(str(action_item.bet_details['amount']))
-                        )
-                        messages_to_send.append({"type": "text", "text": result.get('message', 'Bet processed.')})
-                    except ValueError as e:
-                        messages_to_send.append({"type": "text", "text": f"Error placing bet: {e}"})
+                        asset_qs = MediaAsset.objects
+                        # MODIFICATION: Removed company filter for MediaAsset
+                        asset = asset_qs.get(pk=media_conf.asset_pk)
+                        if asset.status == 'synced' and asset.whatsapp_media_id and not asset.is_whatsapp_id_potentially_expired():
+                            media_data_to_send['id'] = asset.whatsapp_media_id
+                            valid_source_found = True
+                            logger.info(f"Step '{step.name}': Using MediaAsset {asset.pk} ('{asset.name}') with WA ID: {asset.whatsapp_media_id}.")
+                        else:
+                            logger.warning(f"Step '{step.name}': MediaAsset {asset.pk} ('{asset.name}') not usable (Status: {asset.status}, WA ID: {asset.whatsapp_media_id}, Expired: {asset.is_whatsapp_id_potentially_expired()}). Trying direct id/link.")
+                    except MediaAsset.DoesNotExist:
+                        logger.error(f"Step '{step.name}': MediaAsset pk={media_conf.asset_pk} not found. Trying direct id/link.")
+                    except Exception as e_asset:
+                        logger.error(f"Step '{step.name}': Error accessing MediaAsset pk={media_conf.asset_pk}: {e_asset}", exc_info=True)
+
+                if not valid_source_found:
+                    if media_conf.id:
+                        media_data_to_send['id'] = _resolve_value(media_conf.id, current_step_context, contact)
+                        valid_source_found = True
+                        logger.debug(f"Step '{step.name}': Using direct media ID '{media_data_to_send['id']}'.")
+                    elif media_conf.link:
+                        media_data_to_send['link'] = _resolve_value(media_conf.link, current_step_context, contact)
+                        valid_source_found = True
+                        logger.debug(f"Step '{step.name}': Using direct media link '{media_data_to_send['link']}'.")
                 
-                elif action_item.betting_action == "view_bets":
-                    bets = football_engine.get_user_bets(contact.user.id)
-                    messages_to_send.append({"type": "text", "text": football_engine.format_bet_history_message(bets)})
+                if not valid_source_found:
+                    logger.error(f"Step '{step.name}': No valid media source (asset_pk, id, or link) for '{actual_message_type}'. Message part will be missing.")
+                else:
+                    if media_conf.caption:
+                        media_data_to_send['caption'] = _resolve_value(media_conf.caption, current_step_context, contact)
+                    if actual_message_type == 'document' and media_conf.filename:
+                        media_data_to_send['filename'] = _resolve_value(media_conf.filename, current_step_context, contact)
+                    final_api_data_structure = media_data_to_send
 
-            elif action_type == "set_context_variable":
-                if action_item.variable_name and action_item.value_template is not None:
-                    value_to_set = _resolve_value(action_item.value_template, updated_context, contact)
-                    updated_context[action_item.variable_name] = value_to_set
-                    logger.info(f"Set context variable '{action_item.variable_name}' to: {str(value_to_set)[:150]}")
+            elif actual_message_type == "interactive":
+                interactive_payload_obj: InteractiveMessagePayload = payload_field_value
+                interactive_payload_dict = interactive_payload_obj.model_dump(exclude_none=True, by_alias=True)
+                resolved_interactive_dict = _resolve_value(interactive_payload_dict, current_step_context, contact)
+                logger.debug(f"Step '{step.name}': Resolved interactive payload: {json.dumps(resolved_interactive_dict, indent=2)}")
+                final_api_data_structure = resolved_interactive_dict
 
-            elif action_type == "update_contact_field":
-                if action_item.field_path and action_item.value_template is not None:
-                    value_to_set = _resolve_value(action_item.value_template, updated_context, contact)
-                    _update_contact_data(contact, action_item.field_path, value_to_set)
+            elif actual_message_type == "template":
+                template_payload_obj: TemplateMessageContent = payload_field_value
+                template_payload_dict = template_payload_obj.model_dump(exclude_none=True, by_alias=True)
+                if 'components' in template_payload_dict and template_payload_dict['components']:
+                    template_payload_dict['components'] = _resolve_template_components(
+                        template_payload_dict['components'], current_step_context, contact
+                    )
+                logger.debug(f"Step '{step.name}': Resolved template payload: {json.dumps(template_payload_dict, indent=2)}")
+                final_api_data_structure = template_payload_dict
+            
+            elif actual_message_type == "contacts":
+                contacts_list_of_objects: List[ContactObject] = payload_field_value
+                contacts_list_of_dicts = [c.model_dump(exclude_none=True, by_alias=True) for c in contacts_list_of_objects]
+                resolved_contacts_list = _resolve_value(contacts_list_of_dicts, current_step_context, contact)
+                logger.debug(f"Step '{step.name}': Resolved contacts payload: {json.dumps(resolved_contacts_list, indent=2)}")
+                final_api_data_structure = {"contacts": resolved_contacts_list}
 
-            elif action_type == "update_customer_profile":
-                if action_item.fields_to_update:
-                    _update_customer_profile_data(contact, action_item.fields_to_update, updated_context)
+            elif actual_message_type == "location":
+                location_obj: LocationMessageContent = payload_field_value
+                location_dict = location_obj.model_dump(exclude_none=True, by_alias=True)
+                resolved_location_dict = _resolve_value(location_dict, current_step_context, contact)
+                logger.debug(f"Step '{step.name}': Resolved location payload: {json.dumps(resolved_location_dict, indent=2)}")
+                final_api_data_structure = resolved_location_dict
 
-            elif action_type == "switch_flow":
-                # This action is handled in the main processing loop to manage the state correctly.
-                # Here we just prepare the command for the main loop.
-                logger.info(f"Queueing internal command to switch flow to '{action_item.target_flow_name}'.")
-                messages_to_send.append({
-                    'type': '_internal_command_switch_flow',
-                    'target_flow_name': action_item.target_flow_name,
-                    'initial_context': _resolve_value(action_item.initial_context_template, updated_context, contact),
-                    'new_flow_trigger_message_body': _resolve_value(action_item.message_to_evaluate_for_new_flow, updated_context, contact)
+            if final_api_data_structure:
+                logger.info(f"Step '{step.name}': Prepared '{actual_message_type}' message data. Snippet: {str(final_api_data_structure)[:250]}...")
+                actions_to_perform.append({
+                    'type': 'send_whatsapp_message',
+                    'recipient_wa_id': contact.whatsapp_id,
+                    'message_type': actual_message_type,
+                    'data': final_api_data_structure
                 })
-
-            elif action_type == "fetch_football_data" and FOOTBALL_APP_ENABLED:
-                if all([action_item.data_type, action_item.league_code_variable, action_item.output_variable_name]):
-                    league_code = _get_value_from_context_or_contact(action_item.league_code_variable, updated_context, contact)
-                    if league_code:
-                        try:
-                            formatted_data = get_formatted_football_data(
-                                data_type=action_item.data_type,
-                                league_code=league_code,
-                                days_past=action_item.days_past_for_results,
-                                days_ahead=action_item.days_ahead_for_fixtures
-                            )
-                            updated_context[action_item.output_variable_name] = formatted_data
-                            logger.info(f"Fetched '{action_item.data_type}' for league '{league_code}' into var '{action_item.output_variable_name}'.")
-                        except Exception as e:
-                            logger.error(f"Error calling get_formatted_football_data: {e}")
-                    else:
-                        logger.warning(f"Could not resolve league_code from variable '{action_item.league_code_variable}'")
-
+            elif actual_message_type:
+                logger.warning(
+                    f"Step '{step.name}': No data payload was generated for message_type '{actual_message_type}'. "
+                    f"Validated Pydantic Config: {send_message_config.model_dump_json(indent=2) if send_message_config else 'None'}"
+                )
         except ValidationError as e:
-            logger.error(f"Invalid action configuration in step {step.id}. Config: {action_config}. Error: {e}")
-            continue # Skip this invalid action
+            logger.error(f"Pydantic validation error for 'send_message' step '{step.name}' (ID: {step.id}) config: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
         except Exception as e:
-            logger.error(f"Error executing action in step {step.id}. Config: {action_config}. Error: {e}", exc_info=True)
-            # Optionally, send an error message to the user
-            messages_to_send.append({"type": "text", "text": "Sorry, I encountered an error while processing that action."})
+            logger.error(f"Unexpected error processing 'send_message' step '{step.name}' (ID: {step.id}): {e}", exc_info=True)
 
-    return messages_to_send, updated_context
+    elif step.step_type == 'question':
+        try:
+            question_config = StepConfigQuestion.model_validate(raw_step_config)
+            logger.debug(f"Validated 'question' step '{step.name}' (ID: {step.id}) config.")
+            if question_config.message_config and not is_re_execution:
+                logger.info(f"Processing message_config for question step '{step.name}'.")
+                try:
+                    dummy_send_step = FlowStep(
+                        name=f"{step.name}_prompt_message",
+                        step_type="send_message",
+                        config=question_config.message_config
+                    )
+                    send_actions, _ = _execute_step_actions(dummy_send_step, contact, current_step_context.copy())
+                    actions_to_perform.extend(send_actions)
+                    logger.debug(f"Generated {len(send_actions)} send actions for question prompt of step '{step.name}'.")
+                except ValidationError as ve:
+                    logger.error(f"Pydantic validation error for 'message_config' within 'question' step '{step.name}': {ve.errors()}", exc_info=False)
+                except Exception as ex_msg_conf:
+                    logger.error(f"Error processing message_config for 'question' step '{step.name}': {ex_msg_conf}", exc_info=True)
+            
+            if question_config.reply_config:
+                current_step_context['_question_awaiting_reply_for'] = {
+                    'variable_name': question_config.reply_config.save_to_variable,
+                    'expected_type': question_config.reply_config.expected_type,
+                    'validation_regex': question_config.reply_config.validation_regex,
+                    'original_question_step_id': step.id
+                }
+                logger.info(f"Step '{step.name}': Awaiting reply for '{question_config.reply_config.save_to_variable}'. Type: '{question_config.reply_config.expected_type}'.")
+        except ValidationError as e:
+            logger.error(f"Pydantic validation for 'question' step '{step.name}' (ID: {step.id}) failed: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
+        except Exception as e_q_step:
+            logger.error(f"Unexpected error in 'question' step '{step.name}' (ID: {step.id}): {e_q_step}", exc_info=True)
 
+    elif step.step_type == 'action':
+        try:
+            action_step_config = StepConfigAction.model_validate(raw_step_config)
+            logger.debug(f"Validated 'action' step '{step.name}' (ID: {step.id}) config with {len(action_step_config.actions_to_run)} actions.")
+            for i, action_item_conf in enumerate(action_step_config.actions_to_run):
+                action_type = action_item_conf.action_type
+                logger.info(f"Step '{step.name}': Executing action item {i+1}/{len(action_step_config.actions_to_run)} of type '{action_type}'.")
+                if action_type == 'set_context_variable' and action_item_conf.variable_name is not None:
+                    resolved_value = _resolve_value(action_item_conf.value_template, current_step_context, contact)
+                    current_step_context[action_item_conf.variable_name] = resolved_value
+                    logger.info(f"Step '{step.name}': Context variable '{action_item_conf.variable_name}' set to: '{str(resolved_value)[:100]}'.")
+                
+                elif action_type == 'update_contact_field' and action_item_conf.field_path is not None:
+                    resolved_value = _resolve_value(action_item_conf.value_template, current_step_context, contact)
+                    _update_contact_data(contact, action_item_conf.field_path, resolved_value)
+                
+                elif action_type == 'update_customer_profile' and action_item_conf.fields_to_update is not None:
+                    if isinstance(action_item_conf.fields_to_update, dict):
+                        resolved_fields_to_update = _resolve_value(action_item_conf.fields_to_update, current_step_context, contact)
+                        _update_customer_profile_data(contact, resolved_fields_to_update, current_step_context)
+                    else:
+                        logger.error(f"Step '{step.name}': Action 'update_customer_profile' has invalid 'fields_to_update' (not a dict): {action_item_conf.fields_to_update}")
+                
+                elif action_type == 'switch_flow' and action_item_conf.target_flow_name is not None:
+                    resolved_initial_context = _resolve_value(action_item_conf.initial_context_template or {}, current_step_context, contact)
+                    resolved_msg_body = _resolve_value(action_item_conf.message_to_evaluate_for_new_flow, current_step_context, contact) if action_item_conf.message_to_evaluate_for_new_flow else None
+                    
+                    logger.info(f"Step '{step.name}': Queuing switch to flow '{action_item_conf.target_flow_name}'. Initial context: {resolved_initial_context}, Trigger message: '{resolved_msg_body}'")
+                    actions_to_perform.append({
+                        'type': '_internal_command_switch_flow',
+                        'target_flow_name': action_item_conf.target_flow_name,
+                        'initial_context': resolved_initial_context if isinstance(resolved_initial_context, dict) else {},
+                        'new_flow_trigger_message_body': resolved_msg_body
+                    })
+                    logger.debug(f"Step '{step.name}': Switch flow action encountered. Further actions in this step will be skipped.")
+                    break
+                elif action_type == 'fetch_football_data':
+                    if not FOOTBALL_APP_ENABLED:
+                        logger.error(f"Step '{step.name}': fetch_football_data action called, but football_data_app.flow_actions not available.")
+                        current_step_context[action_item_conf.output_variable_name] = "Error: Football data feature is currently unavailable."
+                        continue
+
+                    data_type = action_item_conf.data_type
+                    output_var = action_item_conf.output_variable_name
+                    league_code_var_path = action_item_conf.league_code_variable
+
+                    selected_league_code = None
+                    if league_code_var_path:
+                        selected_league_code = _get_value_from_context_or_contact(league_code_var_path, current_step_context, contact)
+
+                    days_past = action_item_conf.days_past_for_results
+                    days_ahead = action_item_conf.days_ahead_for_fixtures
+
+                    logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code from context ('{league_code_var_path}'): '{selected_league_code}', Data type: '{data_type}'.")
+
+                    display_text = get_formatted_football_data(
+                        league_code=selected_league_code,
+                        data_type=data_type,
+                        days_ahead=days_ahead,
+                        days_past=days_past
+                            )
+                    current_step_context[output_var] = display_text
+                    logger.info(f"Step '{step.name}': Context variable '{output_var}' set after fetching football data. Length: {len(display_text)}")
+
+                else:
+                    logger.warning(f"Step '{step.name}': Unknown or misconfigured action_item_type '{action_type}'. Config: {action_item_conf.model_dump_json(indent=2)}")
+        except ValidationError as e:
+            logger.error(f"Pydantic validation for 'action' step '{step.name}' (ID: {step.id}) failed: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
+        except Exception as e_act_step:
+            logger.error(f"Unexpected error in 'action' step '{step.name}' (ID: {step.id}): {e_act_step}", exc_info=True)
+
+    elif step.step_type == 'end_flow':
+        try:
+            end_flow_config = StepConfigEndFlow.model_validate(raw_step_config)
+            logger.info(f"Executing 'end_flow' step '{step.name}' (ID: {step.id}) for contact {contact.whatsapp_id} (ID: {contact.id}).")
+            
+            if end_flow_config.message_config:
+                logger.debug(f"Step '{step.name}': End_flow step has a final message to send. Config: {end_flow_config.message_config}")
+                try:
+                    dummy_end_msg_step = FlowStep(
+                        name=f"{step.name}_final_message",
+                        step_type="send_message",
+                        config=end_flow_config.message_config
+                    )
+                    send_actions, _ = _execute_step_actions(dummy_end_msg_step, contact, current_step_context.copy())
+                    actions_to_perform.extend(send_actions)
+                    logger.debug(f"Generated {len(send_actions)} send actions for the final message of end_flow step '{step.name}'.")
+                except ValidationError as ve_msg_conf:
+                    logger.error(f"Pydantic validation error for 'message_config' within 'end_flow' step '{step.name}': {ve_msg_conf.errors()}", exc_info=False)
+                except Exception as ex_end_msg:
+                    logger.error(f"Error processing message_config for 'end_flow' step '{step.name}': {ex_end_msg}", exc_info=True)
+            else:
+                logger.debug(f"Step '{step.name}': No final message configured for this end_flow step.")
+            
+            clear_reason = f'Flow ended at step {step.name} (ID: {step.id})'
+            logger.info(f"Step '{step.name}': {clear_reason}. Clearing flow state directly for contact {contact.whatsapp_id}.")
+            _clear_contact_flow_state(contact, reason=clear_reason)
+            
+
+        except ValidationError as e_conf:
+            logger.error(f"Pydantic validation error for 'end_flow' step '{step.name}' (ID: {step.id}) config: {e_conf.errors()}. Raw config: {raw_step_config}", exc_info=False)
+            _clear_contact_flow_state(contact, error=True, reason=f"Error validating config for end_flow step '{step.name}' (ID: {step.id})")
+        except Exception as e_end_step:
+            logger.error(f"Unexpected error in 'end_flow' step '{step.name}' (ID: {step.id}): {e_end_step}", exc_info=True)
+            _clear_contact_flow_state(contact, error=True, reason=f"Error executing end_flow step '{step.name}' (ID: {step.id})")
+    elif step.step_type == 'human_handover':
+        try:
+            handover_config = StepConfigHumanHandover.model_validate(raw_step_config)
+            logger.info(f"Executing 'human_handover' step '{step.name}' (ID: {step.id}) for contact {contact.whatsapp_id}.")
+            if handover_config.pre_handover_message_text and not is_re_execution:
+                resolved_msg = _resolve_value(handover_config.pre_handover_message_text, current_step_context, contact)
+                logger.debug(f"Step '{step.name}': Sending pre-handover message: '{resolved_msg}'")
+                actions_to_perform.append({
+                    'type': 'send_whatsapp_message',
+                    'recipient_wa_id': contact.whatsapp_id,
+                    'message_type': 'text',
+                    'data': {'body': resolved_msg}
+                })
+            
+            contact.needs_human_intervention = True
+            contact.intervention_requested_at = timezone.now()
+            contact.save(update_fields=['needs_human_intervention', 'intervention_requested_at'])
+            logger.info(f"Contact {contact.whatsapp_id} (ID: {contact.id}, Name: {contact.name or 'N/A'}) flagged for human intervention from step '{step.name}'.")
+            
+            notification_info = _resolve_value(
+                handover_config.notification_details,
+                current_step_context,
+                contact
+            )
+            logger.info(f"HUMAN_INTERVENTION_ALERT: Contact: {contact.whatsapp_id} (ID: {contact.id}), Name: {contact.name or 'N/A'}, Details: {notification_info}, Context: {json.dumps(current_step_context)}")
+            
+            actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Human handover at step {step.name} (ID: {step.id})'})
+            logger.info(f"Step '{step.name}': Human handover initiated for contact {contact.whatsapp_id}. Flow state will be cleared.")
+        except ValidationError as e:
+            logger.error(f"Pydantic validation for 'human_handover' step '{step.name}' (ID: {step.id}) failed: {e.errors()}. Raw config: {raw_step_config}", exc_info=False)
+        except Exception as e_hh_step:
+            logger.error(f"Unexpected error in 'human_handover' step '{step.name}' (ID: {step.id}): {e_hh_step}", exc_info=True)
+
+    elif step.step_type in ['condition', 'wait_for_reply', 'start_flow_node']:
+        logger.debug(f"Step '{step.name}' (ID: {step.id}, Type: '{step.step_type}') is structural. No direct actions executed by _execute_step_actions.")
+    else:
+        logger.warning(f"Unhandled step_type: '{step.step_type}' for step '{step.name}' (ID: {step.id}). No actions executed.")
+
+    logger.debug(f"Finished executing actions for step '{step.name}' (ID: {step.id}). Generated {len(actions_to_perform)} actions. Resulting context (snippet): {str(current_step_context)[:200]}...")
+    return actions_to_perform, current_step_context
 
 def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     actions_to_perform = []
@@ -632,7 +808,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         entry_point_step = FlowStep.objects.filter(flow=triggered_flow, is_entry_point=True).first()
         if entry_point_step:
             logger.info(f"Starting flow '{triggered_flow.name}' for contact {contact.whatsapp_id} at entry step '{entry_point_step.name}'.")
-            _clear_contact_flow_state(contact) # Clear any previous state before starting anew
+            _clear_contact_flow_state(contact)
             contact_flow_state = ContactFlowState.objects.create(
                 contact=contact,
                 current_flow=triggered_flow,
@@ -644,8 +820,8 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             actions_to_perform.extend(step_actions)
             
             current_db_state = ContactFlowState.objects.filter(pk=contact_flow_state.pk).first()
-            if current_db_state: # Check if state was not cleared by entry step itself
-                if current_db_state.flow_context_data != updated_flow_context: # Save context if changed
+            if current_db_state:
+                if current_db_state.flow_context_data != updated_flow_context:
                     current_db_state.flow_context_data = updated_flow_context
                     current_db_state.save(update_fields=['flow_context_data', 'last_updated_at'])
             else:
@@ -736,12 +912,10 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             else:
                 logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
             flow_context.pop('_fallback_count', None)
-                    # START OF MODIFICATION
-            # Persist the updated context immediately after a valid question reply is processed
+            
             contact_flow_state.flow_context_data = flow_context
             contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
             logger.debug(f"Saved updated flow_context for contact {contact.whatsapp_id} after processing valid reply for Q-step '{current_step.name}'.")
-            # END OF MODIFICATION
         
         
         else:
@@ -1231,26 +1405,20 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
         
         logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, path '{field_path}', resolved value from template '{value_template}': '{str(resolved_value)[:100]}'.")
 
-        field_name = field_path # Assuming field_path is the direct model field name for non-JSON fields
+        field_name = field_path
 
-        # --- START: Generalized "skip" and specific field handling ---
         if isinstance(resolved_value, str) and resolved_value.lower() == 'skip':
-            # Check if the model field corresponding to field_name allows null
             model_field = next((f for f in CustomerProfile._meta.fields if f.name == field_name), None)
             if model_field and model_field.null:
                 resolved_value = None
                 logger.debug(f"Field '{field_name}' was 'skip', resolved_value set to None as model field allows null.")
             else:
-                # If field doesn't allow null, "skip" effectively means "don't update" or "set to empty string if CharField"
-                # For simplicity here, if it's not nullable and user said skip, we might log and not include in changed_fields
-                # or set to "" if it's a CharField. For now, let's assume it becomes None and setattr handles it (or Django raises error if not nullable).
-                # Best practice: Ensure skippable fields are null=True in model.
                 logger.warning(f"Field '{field_name}' was 'skip'. If model field is not nullable, this might cause issues or save the string 'skip'. Resolved value kept as 'skip' for now if not nullable.")
                 if model_field and not model_field.null and isinstance(model_field, (models.CharField, models.TextField)):
-                    resolved_value = "" # Default to empty string for non-nullable CharFields/TextFields if skipped
-                elif model_field and not model_field.null: # For other non-nullable types, skip might be an error
+                    resolved_value = ""
+                elif model_field and not model_field.null:
                         logger.error(f"Field '{field_name}' is not nullable and was skipped. Skipping update for this field.")
-                        continue # Skip trying to set this field
+                        continue
 
         if field_name == 'gender':
             gender_map = {
@@ -1259,27 +1427,23 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                 "gender_other": "other",
                 "gender_skip": "prefer_not_to_say"
             }
-            # resolved_value might be None here if "skip" was processed above and gender field allows null
-            if resolved_value is not None: # Only map if not already None due to a general "skip"
+            if resolved_value is not None:
                 original_gender_reply_id = str(resolved_value).lower()
-                resolved_value = gender_map.get(original_gender_reply_id, None) # Default to None if mapping fails
+                resolved_value = gender_map.get(original_gender_reply_id, None)
             logger.debug(f"Field 'gender' (original reply_id: '{original_gender_reply_id if 'original_gender_reply_id' in locals() else 'N/A'}') mapped to model value: '{resolved_value}'.")
         
         elif field_name == 'date_of_birth':
             if isinstance(resolved_value, str) and resolved_value:
-                # Ensure YYYY-MM-DD format. Your regex for the question step should enforce this.
-                if not re.match(r"^(19[0-9]{2}|20[0-9]{2})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$", resolved_value): # Broader year range
+                if not re.match(r"^(19[0-9]{2}|20[0-9]{2})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$", resolved_value):
                     logger.warning(f"Invalid date format or range for date_of_birth '{resolved_value}' for contact {contact.id}. Setting to None.")
                     resolved_value = None
             elif not resolved_value:
                 resolved_value = None
             logger.debug(f"Field 'date_of_birth' processed value: '{resolved_value}'.")
-        # --- END: Generalized "skip" and specific field handling ---
 
         parts = field_path.split('.')
         try:
-            if len(parts) == 1: # Direct attribute of CustomerProfile
-                # field_name is already set
+            if len(parts) == 1:
                 protected_fields = ['id', 'pk', 'contact', 'contact_id', 'created_at', 'updated_at', 'last_updated_from_conversation']
                 
                 if hasattr(profile, field_name) and field_name.lower() not in protected_fields:
@@ -1295,7 +1459,6 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                     logger.warning(f"CustomerProfile field '{field_name}' not found on model or is protected for contact {contact.whatsapp_id}.")
             
             elif parts[0] in ['preferences', 'custom_attributes'] and len(parts) > 1:
-                # ... (Your existing logic for JSON fields - this seems okay from the file you provided) ...
                 json_field_name = parts[0]
                 json_data = getattr(profile, json_field_name)
                 if json_data is None: json_data = {}
@@ -1359,7 +1522,6 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         contact_flow_state_qs = ContactFlowState.objects.select_for_update().select_related(
             'current_flow', 'current_step'
         )
-        # MODIFICATION: Removed company filter based on non-multitenant requirement
         contact_flow_state = contact_flow_state_qs.get(contact=contact)
         
         flow_name = contact_flow_state.current_flow.name if contact_flow_state.current_flow else "N/A"
@@ -1391,7 +1553,6 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         }]
         return actions_to_perform
         
-    # MODIFICATION: Removed company filter
     current_contact_flow_state_after_initial_handling = ContactFlowState.objects.filter(contact=contact).first()
     
     if current_contact_flow_state_after_initial_handling:
