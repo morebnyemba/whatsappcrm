@@ -296,13 +296,3 @@ JAZZMIN_UI_TWEAKS = {
 THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', 'c0d3eaf570d461e9dc7622f0543eac1e') # Replace with your actual key or ensure env var is set
 
 # Operational Parameters for The Odds API tasks
-THE_ODDS_API_DEFAULT_REGIONS = "eu,uk,au,us,us2"  # Comma-separated list of regions
-THE_ODDS_API_DEFAULT_MARKETS = "h2h"  # Comma-separated list of markets
-THE_ODDS_API_BATCH_SIZE = 10  # Number of event_ids to pass to get_odds at once
-THE_ODDS_API_DAYS_FROM_SCORES = 3  # How many past days to check for scores by default
-
-# Thresholds for fetching odds
-THE_ODDS_API_LEAD_TIME_DAYS = 3  # How many days in advance to start fetching odds for general upcoming events
-THE_ODDS_API_UPCOMING_STALENESS_MINUTES = 120  # Frequency (in mins) to update odds for general upcoming events
-THE_ODDS_API_IMMINENT_STALENESS_MINUTES = 30  # Frequency (in mins) to update odds for imminently starting events
-THE_ODDS_API_POST_COMMENCEMENT_GRACE_HOURS = 1 # How long after an event starts to still try to fetch its initial odds if missed
