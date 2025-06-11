@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
-DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads")
+# *** FIX: Request all significant market types ***
+DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads,btts")
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
@@ -144,6 +145,7 @@ def update_all_scores_task(self):
 
 
 # --- Individual Sub-Tasks ---
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
     """(Sub-task) Fetches and updates odds for a batch of events."""
@@ -258,6 +260,11 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
                         new_status = 'WON' if 'under' in outcome.outcome_name.lower() else 'LOST'
                     else:
                         new_status = 'PUSH'
+                elif market.api_market_key == 'btts':
+                    both_scored = home_score > 0 and away_score > 0
+                    if (outcome.outcome_name == 'Yes' and both_scored) or \
+                       (outcome.outcome_name == 'No' and not both_scored):
+                        new_status = 'WON'
                 
                 if new_status != 'PENDING':
                     outcome.result_status = new_status
