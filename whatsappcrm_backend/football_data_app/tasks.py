@@ -308,3 +308,15 @@ def settle_tickets_for_fixture_task(self, fixture_id):
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}.")
         raise self.retry(exc=e)
+
+@shared_task(bind=True)
+def update_scores_for_all_active_leagues_task(self):
+    """
+    This is the main task to be scheduled in Django Admin.
+    It finds all active leagues and dispatches a score check for each one.
+    """
+    logger.info("Master Score Task: Starting score updates for all active leagues.")
+    active_leagues = League.objects.filter(active=True)
+    for league in active_leagues:
+        fetch_scores_for_league_task.apply_async(args=[league.id])
+    logger.info(f"Master Score Task: Dispatched score checks for {active_leagues.count()} leagues.")
