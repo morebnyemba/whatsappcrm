@@ -14,12 +14,15 @@ from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 logger = logging.getLogger(__name__)
 
-# --- Configuration ---
+# --- FIX: Restored Configuration Constants ---
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
-DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
+DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us")
 DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads")
+ODDS_IMMINENT_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_IMMINENT_STALENESS_MINUTES', 15)
+ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
+DAYS_FROM_FOR_SCORES = getattr(settings, 'THE_ODDS_API_DAYS_FROM_SCORES', 3)
 
 # --- Helper Function ---
 def _parse_outcome_details(outcome_name_api, market_key_api):
@@ -98,10 +101,9 @@ def fetch_events_for_league_task(self, league_id):
         logger.exception(f"Unexpected error fetching events for league {league_id}.")
         raise self.retry(exc=e)
 
-# --- Corrected Orchestrator Task Chain ---
 @shared_task(bind=True)
 def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
-    """Step 2: Processes leagues to dispatch sub-tasks. Accepts previous task result."""
+    """Step 2: Processes leagues to dispatch sub-tasks."""
     now = timezone.now()
     logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
     
@@ -128,6 +130,7 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
         
     logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
 
+# --- Main Orchestrator ---
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
 def run_the_odds_api_full_update_task():
     """Main orchestrator task using a Celery chain."""
@@ -143,7 +146,6 @@ def run_the_odds_api_full_update_task():
     return "Full data update pipeline initiated successfully."
 
 # --- Individual Sub-Tasks ---
-
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
     """Fetches and updates odds for a batch of events."""
@@ -187,21 +189,16 @@ def fetch_scores_for_league_task(self, league_id):
     now = timezone.now()
     try:
         league = League.objects.get(id=league_id)
-        
-        # *** ROBUST QUERY FIX ***
-        # This query correctly finds all fixtures that could need a status update.
         fixtures_to_check = FootballFixture.objects.filter(
-            models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
-            models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now + timedelta(minutes=5)),
+            models.Q(league=league, status='LIVE') | models.Q(league=league, status='SCHEDULED', match_date__lt=now),
             models.Q(last_score_update__isnull=True) | models.Q(last_score_update__lt=now - timedelta(minutes=10))
-        ).distinct()
+        ).values_list('api_id', flat=True)
 
         if not fixtures_to_check.exists():
             return
             
-        fixture_ids = list(fixtures_to_check.values_list('api_id', flat=True))
         client = TheOddsAPIClient()
-        scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_ids)
+        scores_data = client.get_scores(sport_key=league.api_id, event_ids=list(fixtures_to_check))
         
         for score_item in scores_data:
             with transaction.atomic():
@@ -232,6 +229,9 @@ def fetch_scores_for_league_task(self, league_id):
                     
     except League.DoesNotExist:
         logger.warning(f"League {league_id} not found for score fetching.")
+    except TheOddsAPIException as e:
+        logger.error(f"API error fetching scores for league {league_id}: {e}")
+        raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"Unexpected error fetching scores for league {league_id}.")
         raise self.retry(exc=e)
