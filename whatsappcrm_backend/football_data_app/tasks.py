@@ -40,13 +40,12 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    """Scheduled Task: Fetches and updates football leagues from the API."""
+    """Step 1: Fetches and updates football leagues from the API."""
     client = TheOddsAPIClient()
     created_count, updated_count = 0, 0
-    logger.info("League Fetch Task: Starting.")
+    logger.info("Pipeline Step 1: Starting league fetch task.")
     try:
         sports_data = client.get_sports(all_sports=True)
-        logger.info(f"League Fetch Task: Received {len(sports_data)} total sports/leagues from API.")
         for item in sports_data:
             if 'soccer' not in item.get('key', ''): continue
             
@@ -68,13 +67,12 @@ def fetch_events_for_league_task(self, league_id):
     client, created_count, updated_count = TheOddsAPIClient(), 0, 0
     try:
         league = League.objects.get(id=league_id)
-        logger.info(f"Fetching events for league: {league.name} (ID: {league_id})")
+        logger.info(f"Fetching events for league: {league.name}")
         events_data = client.get_events(sport_key=league.api_id)
-        logger.info(f"Received {len(events_data)} events for league {league.name}.")
         
         for item in events_data:
             if not item.get('home_team') or not item.get('away_team'):
-                logger.warning(f"Skipping event ID {item.get('id')} in league {league.name} as it lacks team data.")
+                logger.warning(f"Skipping event ID {item.get('id')} as it lacks team data.")
                 continue
 
             with transaction.atomic():
@@ -102,22 +100,20 @@ def fetch_events_for_league_task(self, league_id):
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def process_leagues_task(self):
+def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
     """
-    Scheduled Task: Iterates through all active leagues to discover new events
-    and fetch odds for upcoming fixtures.
+    Step 2 of the main pipeline. Iterates through leagues to dispatch odds and score updates.
     """
     now = timezone.now()
-    logger.info("Main Processing Task: Discovering events and fetching odds.")
+    logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
     
     leagues = League.objects.filter(active=True)
     if not leagues.exists():
-        logger.info("Main Processing Task: No active leagues to process.")
+        logger.warning("Orchestrator: No active leagues found to process.")
         return
 
     for league in leagues:
         if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
-            logger.info(f"Dispatching event discovery for stale league: {league.name}")
             fetch_events_for_league_task.apply_async(args=[league.id])
 
         stale_fixtures_q = models.Q(
@@ -131,23 +127,27 @@ def process_leagues_task(self):
             for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
                 batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
                 fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
-        
-    logger.info(f"Main Processing Task: Finished dispatching jobs for {leagues.count()} leagues.")
 
-@shared_task(bind=True)
-def update_all_scores_task(self):
-    """
-    Scheduled Task: This is the primary task for score updates.
-    It finds all active leagues and dispatches a score check for each one.
-    """
-    logger.info("Score Update Task: Starting score updates for all active leagues.")
-    active_leagues = League.objects.filter(active=True)
-    for league in active_leagues:
         fetch_scores_for_league_task.apply_async(args=[league.id])
-    logger.info(f"Score Update Task: Dispatched score checks for {active_leagues.count()} leagues.")
+        
+    logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
+
+# --- Main Orchestrator ---
+@shared_task(name="football_data_app.run_the_odds_api_full_update")
+def run_the_odds_api_full_update_task():
+    """Main orchestrator task that uses a Celery chain for a reliable data pipeline."""
+    logger.info("Orchestrator: Kicking off the full data update pipeline.")
+    
+    pipeline = chain(
+        fetch_and_update_leagues_task.s(),
+        process_leagues_and_dispatch_subtasks_task.s()
+    )
+    pipeline.apply_async()
+    
+    logger.info("Orchestrator: Update pipeline has been dispatched.")
+    return "Full data update pipeline initiated successfully."
 
 # --- Individual Sub-Tasks ---
-
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
     """(Sub-task) Fetches and updates odds for a batch of events."""
@@ -199,8 +199,6 @@ def fetch_scores_for_league_task(self, league_id):
             return
             
         fixture_ids = list(fixtures_to_check.values_list('api_id', flat=True))
-        logger.info(f"Found {len(fixture_ids)} fixtures to check for scores in league: {league.name}")
-        
         client = TheOddsAPIClient()
         scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_ids)
         
@@ -220,7 +218,6 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.last_score_update = now
                     fixture.save()
                     
-                    logger.info(f"Fixture {fixture.id} marked as FINISHED. Score: {home_s}-{away_s}. Triggering settlement.")
                     chain(
                         settle_outcomes_for_fixture_task.s(fixture.id),
                         settle_bets_for_fixture_task.s(),
@@ -230,7 +227,6 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.status = FootballFixture.FixtureStatus.LIVE
                     fixture.last_score_update = now
                     fixture.save()
-                    logger.info(f"Fixture {fixture.id} status updated to LIVE.")
                     
     except League.DoesNotExist:
         logger.warning(f"League with ID {league_id} not found for score fetching.")
