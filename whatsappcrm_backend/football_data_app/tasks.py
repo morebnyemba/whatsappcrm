@@ -40,10 +40,10 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    """Step 1: Fetches and updates football leagues from the API."""
+    """Scheduled Task: Fetches and updates football leagues from the API."""
     client = TheOddsAPIClient()
     created_count, updated_count = 0, 0
-    logger.info("Pipeline Step 1: Starting league fetch task.")
+    logger.info("League Fetch Task: Starting.")
     try:
         sports_data = client.get_sports(all_sports=True)
         for item in sports_data:
@@ -56,14 +56,13 @@ def fetch_and_update_leagues_task(self):
             if created: created_count += 1
             else: updated_count += 1
         logger.info(f"Leagues Task Complete: {created_count} created, {updated_count} updated.")
-        return f"Processed {created_count + updated_count} leagues."
     except Exception as e:
         logger.exception("Critical error in league fetching task.")
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id):
-    """Fetches events for a league, skipping any without valid team names."""
+    """(Sub-task) Fetches events for a specific league."""
     client, created_count, updated_count = TheOddsAPIClient(), 0, 0
     try:
         league = League.objects.get(id=league_id)
@@ -72,7 +71,7 @@ def fetch_events_for_league_task(self, league_id):
         
         for item in events_data:
             if not item.get('home_team') or not item.get('away_team'):
-                logger.warning(f"Skipping event ID {item.get('id')} in league {league.name} as it lacks valid team data.")
+                logger.warning(f"Skipping event ID {item.get('id')} as it lacks team data.")
                 continue
 
             with transaction.atomic():
@@ -100,14 +99,17 @@ def fetch_events_for_league_task(self, league_id):
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
-    """Step 2: Processes leagues to dispatch sub-tasks."""
+def process_leagues_task(self):
+    """
+    Scheduled Task: Iterates through all active leagues to discover new events
+    and fetch odds for upcoming fixtures.
+    """
     now = timezone.now()
-    logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
+    logger.info("Main Processing Task: Discovering events and fetching odds.")
     
     leagues = League.objects.filter(active=True)
     if not leagues.exists():
-        logger.warning("Orchestrator: No active leagues found. Halting pipeline.")
+        logger.info("Main Processing Task: No active leagues to process.")
         return
 
     for league in leagues:
@@ -120,33 +122,31 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
         )
         event_ids = list(FootballFixture.objects.filter(league=league, status='SCHEDULED').filter(stale_fixtures_q).values_list('api_id', flat=True))
         
-        for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
-            batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
-            fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
-
-        fetch_scores_for_league_task.apply_async(args=[league.id])
+        if event_ids:
+            logger.info(f"Found {len(event_ids)} fixtures needing odds update for league: {league.name}")
+            for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
+                batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
+                fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
         
-    logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
+    logger.info(f"Main Processing Task: Finished dispatching jobs for {leagues.count()} leagues.")
 
-# --- Main Orchestrator ---
-@shared_task(name="football_data_app.run_the_odds_api_full_update")
-def run_the_odds_api_full_update_task():
-    """Main orchestrator task using a Celery chain."""
-    logger.info("Orchestrator: Kicking off the full data update pipeline.")
-    
-    pipeline = chain(
-        fetch_and_update_leagues_task.s(),
-        process_leagues_and_dispatch_subtasks_task.s()
-    )
-    pipeline.apply_async()
-    
-    logger.info("Orchestrator: Update pipeline has been dispatched.")
-    return "Full data update pipeline initiated successfully."
+@shared_task(bind=True)
+def update_all_scores_task(self):
+    """
+    Scheduled Task: This is the primary task for score updates.
+    It finds all active leagues and dispatches a score check for each one.
+    """
+    logger.info("Score Update Task: Starting score updates for all active leagues.")
+    active_leagues = League.objects.filter(active=True)
+    for league in active_leagues:
+        fetch_scores_for_league_task.apply_async(args=[league.id])
+    logger.info(f"Score Update Task: Dispatched score checks for {active_leagues.count()} leagues.")
 
 # --- Individual Sub-Tasks ---
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
-    """Fetches and updates odds for a batch of events."""
+    """(Sub-task) Fetches and updates odds for a batch of events."""
     client = TheOddsAPIClient()
     logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key}.")
     try:
@@ -174,16 +174,13 @@ def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
 
         FootballFixture.objects.filter(api_id__in=event_ids).update(last_odds_update=timezone.now())
         logger.info(f"Successfully processed odds for {len(fixtures)} fixtures.")
-    except TheOddsAPIException as e:
-        logger.error(f"API Error fetching odds for {sport_key}: {e}")
-        raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"Unexpected error fetching odds for {sport_key}.")
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id):
-    """Fetches scores and updates status for live or recently started fixtures."""
+    """(Sub-task) Fetches scores and updates status for a single league."""
     now = timezone.now()
     try:
         league = League.objects.get(id=league_id)
@@ -205,9 +202,8 @@ def fetch_scores_for_league_task(self, league_id):
         for score_item in scores_data:
             with transaction.atomic():
                 fixture = FootballFixture.objects.select_for_update().get(api_id=score_item['id'])
-                is_completed = score_item.get('completed', False)
                 
-                if is_completed:
+                if score_item.get('completed', False):
                     home_s, away_s = None, None
                     if score_item.get('scores'):
                         for score in score_item['scores']:
@@ -230,14 +226,14 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.save()
                     
     except League.DoesNotExist:
-        logger.warning(f"League {league_id} not found for score fetching.")
+        logger.warning(f"League with ID {league_id} not found for score fetching.")
     except Exception as e:
         logger.exception(f"Unexpected error fetching scores for league {league_id}.")
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
 def settle_outcomes_for_fixture_task(self, fixture_id):
-    """Settles the result status of all market outcomes for a finished fixture."""
+    """(Sub-task) Settles the result status of all market outcomes for a finished fixture."""
     try:
         fixture = FootballFixture.objects.get(id=fixture_id, status=FootballFixture.FixtureStatus.FINISHED)
         home_score, away_score = fixture.home_team_score, fixture.away_team_score
@@ -249,7 +245,7 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
         outcomes_to_update = []
         for market in fixture.markets.prefetch_related('outcomes'):
             for outcome in market.outcomes.filter(result_status='PENDING'):
-                new_status = 'LOST' # Default to lost
+                new_status = 'LOST'
                 if market.api_market_key == 'h2h':
                     if (outcome.outcome_name == fixture.home_team.name and home_score > away_score) or \
                        (outcome.outcome_name == fixture.away_team.name and away_score > home_score) or \
@@ -280,6 +276,7 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
 
 @shared_task(bind=True)
 def settle_bets_for_fixture_task(self, fixture_id):
+    """(Sub-task) Settles all individual bets for a fixture."""
     if not fixture_id: return None
     try:
         bets_to_settle = Bet.objects.filter(market_outcome__market__fixture_display_id=fixture_id, status='PENDING')
@@ -287,8 +284,6 @@ def settle_bets_for_fixture_task(self, fixture_id):
             if bet.market_outcome.result_status != 'PENDING':
                 bet.status = bet.market_outcome.result_status
                 bet.save()
-                if bet.status == 'WON':
-                    pass
         logger.info(f"Settlement: Settled {bets_to_settle.count()} bets for fixture {fixture_id}.")
         return fixture_id
     except Exception as e:
@@ -297,6 +292,7 @@ def settle_bets_for_fixture_task(self, fixture_id):
 
 @shared_task(bind=True)
 def settle_tickets_for_fixture_task(self, fixture_id):
+    """(Sub-task) Settles all bet tickets related to a fixture."""
     if not fixture_id: return None
     try:
         ticket_ids_to_check = BetTicket.objects.filter(bets__market_outcome__market__fixture_display_id=fixture_id).distinct().values_list('id', flat=True)
@@ -308,15 +304,3 @@ def settle_tickets_for_fixture_task(self, fixture_id):
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}.")
         raise self.retry(exc=e)
-
-@shared_task(bind=True)
-def update_scores_for_all_active_leagues_task(self):
-    """
-    This is the main task to be scheduled in Django Admin.
-    It finds all active leagues and dispatches a score check for each one.
-    """
-    logger.info("Master Score Task: Starting score updates for all active leagues.")
-    active_leagues = League.objects.filter(active=True)
-    for league in active_leagues:
-        fetch_scores_for_league_task.apply_async(args=[league.id])
-    logger.info(f"Master Score Task: Dispatched score checks for {active_leagues.count()} leagues.")
