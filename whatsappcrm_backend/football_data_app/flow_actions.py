@@ -15,8 +15,8 @@ def get_formatted_football_data(
     days_past: int = 2
 ):
     """
-    Fetches and formats football data (fixtures or results) for display.
-    This version uses the correct model fields and has improved logic.
+    Fetches and formats football data for display.
+    This version aggregates odds from all bookmakers and presents a clean, simple list.
     """
     logger.info(f"Getting formatted football data. Type: '{data_type}', League Code: '{league_code}'")
 
@@ -31,22 +31,23 @@ def get_formatted_football_data(
             status=FootballFixture.FixtureStatus.SCHEDULED,
             match_date__gte=start_date,
             match_date__lte=end_date
-        ).select_related('home_team', 'away_team', 'league').order_by('match_date')
+        ).select_related('home_team', 'away_team', 'league').prefetch_related(
+            'markets__outcomes'
+        ).order_by('match_date')
 
         if league_code:
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
 
     elif data_type == "finished_results":
         data_type_label = "Recent Results"
+        # This part remains unchanged as results don't show odds
         end_date = now
         start_date = now - timedelta(days=days_past)
-        
         fixtures_qs = FootballFixture.objects.filter(
             status=FootballFixture.FixtureStatus.FINISHED,
             match_date__gte=start_date,
             match_date__lte=end_date
         ).select_related('home_team', 'away_team', 'league').order_by('-match_date')
-
         if league_code:
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
     
@@ -61,19 +62,36 @@ def get_formatted_football_data(
 
     message_lines = [f"⚽ *{data_type_label}*"]
     
-    # Limit to 10 to keep the message from getting too long
     for match in fixtures_qs[:10]:
-        # Format the match time to a user-friendly string
         match_time_local = timezone.localtime(match.match_date)
         time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
 
         line = f"\n*Match ID*: {match.id}\n"
         line += f"🗓️ {time_str}\n"
-        line += f"{match.home_team.name} vs {match.away_team.name}"
+        line += f"*{match.home_team.name} vs {match.away_team.name}*"
         
         if match.status == 'FINISHED' and match.home_team_score is not None:
             line += f"\n🏁 *Result: {match.home_team_score} - {match.away_team_score}*"
-            
+        
+        # --- NEW: Aggregate odds from all bookmakers ---
+        all_outcomes = {}
+        for market in match.markets.all():
+            for outcome in market.outcomes.all():
+                # Create a unique key for each outcome type (e.g., "Over 2.5", "Chelsea")
+                outcome_key = f"{outcome.outcome_name}{outcome.point_value or ''}"
+                # Store the best odds available for that outcome
+                if outcome_key not in all_outcomes or outcome.odds > all_outcomes[outcome_key].odds:
+                    all_outcomes[outcome_key] = outcome
+        
+        if all_outcomes:
+            line += f"\n\n- *Available Odds* -"
+            for _, best_outcome in sorted(all_outcomes.items()):
+                point_str = f" {best_outcome.point_value}" if best_outcome.point_value is not None else ""
+                line += f"\n    • {best_outcome.outcome_name}{point_str}: *{best_outcome.odds}*"
+        else:
+            if match.status == 'SCHEDULED':
+                line += "\n\n_Odds will be available soon._"
+
         message_lines.append(line)
         
     return "\n\n---\n".join(message_lines)
