@@ -46,6 +46,7 @@ def fetch_and_update_leagues_task(self):
     logger.info("League Fetch Task: Starting.")
     try:
         sports_data = client.get_sports(all_sports=True)
+        logger.info(f"League Fetch Task: Received {len(sports_data)} total sports/leagues from API.")
         for item in sports_data:
             if 'soccer' not in item.get('key', ''): continue
             
@@ -56,6 +57,7 @@ def fetch_and_update_leagues_task(self):
             if created: created_count += 1
             else: updated_count += 1
         logger.info(f"Leagues Task Complete: {created_count} created, {updated_count} updated.")
+        return f"Processed {created_count + updated_count} leagues."
     except Exception as e:
         logger.exception("Critical error in league fetching task.")
         raise self.retry(exc=e)
@@ -66,12 +68,13 @@ def fetch_events_for_league_task(self, league_id):
     client, created_count, updated_count = TheOddsAPIClient(), 0, 0
     try:
         league = League.objects.get(id=league_id)
-        logger.info(f"Fetching events for league: {league.name}")
+        logger.info(f"Fetching events for league: {league.name} (ID: {league_id})")
         events_data = client.get_events(sport_key=league.api_id)
+        logger.info(f"Received {len(events_data)} events for league {league.name}.")
         
         for item in events_data:
             if not item.get('home_team') or not item.get('away_team'):
-                logger.warning(f"Skipping event ID {item.get('id')} as it lacks team data.")
+                logger.warning(f"Skipping event ID {item.get('id')} in league {league.name} as it lacks team data.")
                 continue
 
             with transaction.atomic():
@@ -114,6 +117,7 @@ def process_leagues_task(self):
 
     for league in leagues:
         if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
+            logger.info(f"Dispatching event discovery for stale league: {league.name}")
             fetch_events_for_league_task.apply_async(args=[league.id])
 
         stale_fixtures_q = models.Q(
@@ -185,7 +189,6 @@ def fetch_scores_for_league_task(self, league_id):
     try:
         league = League.objects.get(id=league_id)
         
-        # *** ROBUST QUERY FIX ***
         fixtures_to_check = FootballFixture.objects.filter(
             models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
             models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now + timedelta(minutes=5)),
@@ -196,6 +199,8 @@ def fetch_scores_for_league_task(self, league_id):
             return
             
         fixture_ids = list(fixtures_to_check.values_list('api_id', flat=True))
+        logger.info(f"Found {len(fixture_ids)} fixtures to check for scores in league: {league.name}")
+        
         client = TheOddsAPIClient()
         scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_ids)
         
@@ -215,6 +220,7 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.last_score_update = now
                     fixture.save()
                     
+                    logger.info(f"Fixture {fixture.id} marked as FINISHED. Score: {home_s}-{away_s}. Triggering settlement.")
                     chain(
                         settle_outcomes_for_fixture_task.s(fixture.id),
                         settle_bets_for_fixture_task.s(),
@@ -224,6 +230,7 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.status = FootballFixture.FixtureStatus.LIVE
                     fixture.last_score_update = now
                     fixture.save()
+                    logger.info(f"Fixture {fixture.id} status updated to LIVE.")
                     
     except League.DoesNotExist:
         logger.warning(f"League with ID {league_id} not found for score fetching.")
