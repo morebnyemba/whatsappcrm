@@ -43,7 +43,8 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
     """Step 1: Fetches and updates football leagues from the API."""
-    client, created_count, updated_count = TheOddsAPIClient(), 0, 0
+    client = TheOddsAPIClient()
+    created_count, updated_count = 0, 0
     logger.info("Pipeline Step 1: Starting league fetch task.")
     try:
         sports_data = client.get_sports(all_sports=True)
@@ -190,7 +191,6 @@ def fetch_scores_for_league_task(self, league_id):
         league = League.objects.get(id=league_id)
         
         # *** ROBUST QUERY FIX ***
-        # This query now correctly finds all fixtures that could need a status update.
         fixtures_to_check = FootballFixture.objects.filter(
             models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
             models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now + timedelta(minutes=5)),
