@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
-# *** FIX: Request all significant market types ***
 DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads,btts")
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
@@ -147,12 +146,24 @@ def update_all_scores_task(self):
 # --- Individual Sub-Tasks ---
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
-    """(Sub-task) Fetches and updates odds for a batch of events."""
+def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, regions=None):
+    """
+    (Sub-task) Fetches and updates odds for a batch of events.
+    Now accepts 'markets' and 'regions' as arguments.
+    """
     client = TheOddsAPIClient()
-    logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key}.")
+    
+    markets_to_fetch = markets or DEFAULT_ODDS_API_MARKETS
+    regions_to_fetch = regions or DEFAULT_ODDS_API_REGIONS
+
+    logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key} for markets: '{markets_to_fetch}'")
     try:
-        odds_data = client.get_odds(sport_key=sport_key, event_ids=event_ids, regions=DEFAULT_ODDS_API_REGIONS, markets=DEFAULT_ODDS_API_MARKETS)
+        odds_data = client.get_odds(
+            sport_key=sport_key, 
+            event_ids=event_ids, 
+            regions=regions_to_fetch, 
+            markets=markets_to_fetch
+        )
         fixtures = FootballFixture.objects.in_bulk([item['id'] for item in odds_data], field_name='api_id')
 
         with transaction.atomic():
