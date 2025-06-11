@@ -40,10 +40,10 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    """Scheduled Task: Fetches and updates football leagues from the API."""
+    """Step 1: Fetches and updates football leagues from the API."""
     client = TheOddsAPIClient()
     created_count, updated_count = 0, 0
-    logger.info("League Fetch Task: Starting.")
+    logger.info("Pipeline Step 1: Starting league fetch task.")
     try:
         sports_data = client.get_sports(all_sports=True)
         for item in sports_data:
@@ -56,6 +56,7 @@ def fetch_and_update_leagues_task(self):
             if created: created_count += 1
             else: updated_count += 1
         logger.info(f"Leagues Task Complete: {created_count} created, {updated_count} updated.")
+        return f"Processed {created_count + updated_count} leagues."
     except Exception as e:
         logger.exception("Critical error in league fetching task.")
         raise self.retry(exc=e)
@@ -99,17 +100,16 @@ def fetch_events_for_league_task(self, league_id):
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def process_leagues_task(self):
+def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
     """
-    Scheduled Task: Iterates through all active leagues to discover new events
-    and fetch odds for upcoming fixtures.
+    Step 2 of the main pipeline. Iterates through leagues to dispatch odds and score updates.
     """
     now = timezone.now()
-    logger.info("Main Processing Task: Discovering events and fetching odds.")
+    logger.info("Pipeline Step 2: Processing leagues and dispatching sub-tasks.")
     
     leagues = League.objects.filter(active=True)
     if not leagues.exists():
-        logger.info("Main Processing Task: No active leagues to process.")
+        logger.warning("Orchestrator: No active leagues found to process.")
         return
 
     for league in leagues:
@@ -127,43 +127,37 @@ def process_leagues_task(self):
             for i in range(0, len(event_ids), ODDS_FETCH_EVENT_BATCH_SIZE):
                 batch = event_ids[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
                 fetch_odds_for_event_batch_task.apply_async(args=[league.api_id, batch])
-        
-    logger.info(f"Main Processing Task: Finished dispatching jobs for {leagues.count()} leagues.")
 
-@shared_task(bind=True)
-def update_all_scores_task(self):
-    """
-    Scheduled Task: This is the primary task for score updates.
-    It finds all active leagues and dispatches a score check for each one.
-    """
-    logger.info("Score Update Task: Starting score updates for all active leagues.")
-    active_leagues = League.objects.filter(active=True)
-    for league in active_leagues:
         fetch_scores_for_league_task.apply_async(args=[league.id])
-    logger.info(f"Score Update Task: Dispatched score checks for {active_leagues.count()} leagues.")
+        
+    logger.info(f"Orchestrator: Finished dispatching jobs for {leagues.count()} leagues.")
+
+
+# --- Main Orchestrator ---
+@shared_task(name="football_data_app.run_the_odds_api_full_update")
+def run_the_odds_api_full_update_task():
+    """Main orchestrator task that uses a Celery chain for a reliable data pipeline."""
+    logger.info("Orchestrator: Kicking off the full data update pipeline.")
+    
+    pipeline = chain(
+        fetch_and_update_leagues_task.s(),
+        process_leagues_and_dispatch_subtasks_task.s()
+    )
+    pipeline.apply_async()
+    
+    logger.info("Orchestrator: Update pipeline has been dispatched.")
+    return "Full data update pipeline initiated successfully."
 
 
 # --- Individual Sub-Tasks ---
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, regions=None):
-    """
-    (Sub-task) Fetches and updates odds for a batch of events.
-    Now accepts 'markets' and 'regions' as arguments.
-    """
+def fetch_odds_for_event_batch_task(self, sport_key, event_ids):
+    """(Sub-task) Fetches and updates odds for a batch of events."""
     client = TheOddsAPIClient()
-    
-    markets_to_fetch = markets or DEFAULT_ODDS_API_MARKETS
-    regions_to_fetch = regions or DEFAULT_ODDS_API_REGIONS
-
-    logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key} for markets: '{markets_to_fetch}'")
+    logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key}.")
     try:
-        odds_data = client.get_odds(
-            sport_key=sport_key, 
-            event_ids=event_ids, 
-            regions=regions_to_fetch, 
-            markets=markets_to_fetch
-        )
+        odds_data = client.get_odds(sport_key=sport_key, event_ids=event_ids, regions=DEFAULT_ODDS_API_REGIONS, markets=DEFAULT_ODDS_API_MARKETS)
         fixtures = FootballFixture.objects.in_bulk([item['id'] for item in odds_data], field_name='api_id')
 
         with transaction.atomic():
