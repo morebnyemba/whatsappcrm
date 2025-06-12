@@ -174,11 +174,14 @@ def get_formatted_football_data(
 
     logger.info(f"Successfully formatted data for data_type='{data_type}'. Generated message length: {len(final_message)} characters.")
 
-    # Final check: if the message is still too long, return an error.
-    # This is a last resort; if this happens, the message will fail to send.
+    # --- FINAL SAFETY CHECK TO ENSURE NON-EMPTY BODY ---
+    if not final_message.strip(): # Check if it's empty or just whitespace
+        logger.error(f"Generated message for {data_type} is empty or contains only whitespace. Returning a fallback message.")
+        return "Sorry, I couldn't find or format any football data right now. Please try again later."
+
+    # Final check for length, as this is a single message approach
     if len(final_message) > 4096:
         logger.error(f"Generated message for {data_type} exceeds 4096 characters ({len(final_message)}). This will likely cause a WhatsApp API error. Returning truncated message.")
-        # Truncate to slightly less than the limit to ensure it might pass, and add an ellipsis
         return final_message[:4090] + "..." 
 
     return final_message
