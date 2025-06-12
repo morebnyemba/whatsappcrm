@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def get_formatted_football_data(
     data_type: str, 
     league_code: Optional[str] = None, 
-    days_ahead: int = 10, 
+    days_ahead: int = 7, 
     days_past: int = 2
     # Removed customer_id parameter as customer_tickets functionality is removed
 ) -> str:
