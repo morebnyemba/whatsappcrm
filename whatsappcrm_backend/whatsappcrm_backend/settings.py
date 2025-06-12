@@ -219,8 +219,12 @@ LOGGING = {
         'conversations': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'flows': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'customer_data': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app.tasks': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app.the_odds_api_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
     },
 }
+
 
 WHATSAPP_APP_SECRET = os.getenv('WHATSAPP_APP_SECRET', None)
 # --- Jazzmin Admin Theme Settings ---
