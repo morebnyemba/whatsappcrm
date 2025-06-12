@@ -515,6 +515,9 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
+                # Resolve the text body. This might now return a list of strings.
+                resolved_body_or_list = _resolve_value(text_content.body, current_step_context, contact)
+
                 if isinstance(resolved_body_or_list, list):
                     logger.debug(f"Step '{step.name}': Detected list of message bodies. Preparing {len(resolved_body_or_list)} individual text messages.")
                     for part_idx, part_body in enumerate(resolved_body_or_list):
