@@ -155,7 +155,7 @@ def get_formatted_football_data(
         message_lines.append(main_header)
         
         # --- Increased limit to 10 matches as requested ---
-        num_matches_to_display = 10 
+        num_matches_to_display = 8 
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_matches_to_display)} finished matches.")
         for match in fixtures_qs[:num_matches_to_display]: 
             match_time_local = timezone.localtime(match.match_date)
