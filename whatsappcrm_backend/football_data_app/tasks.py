@@ -159,22 +159,95 @@ def run_the_odds_api_full_update_task():
 
 # --- Individual Sub-Tasks ---
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, regions=None):
+@shared_task(bind=True, max_retries=1, default_retry_delay=60) # Less retries for single event, faster feedback
+def fetch_odds_for_single_event_task(self, sport_key, event_id, markets=None, regions=None):
     """
-    (Sub-task) Fetches and updates odds for a batch of events.
-    Now includes robust handling for 422 Unprocessable Entity errors,
-    attempting to retry individual problematic event IDs.
+    (Sub-task) Fetches and updates odds for a single event.
+    Used as a fallback when batch fetching encounters Unprocessable Entity errors.
     """
     client = TheOddsAPIClient()
     markets_to_fetch = markets or DEFAULT_ODDS_API_MARKETS
     regions_to_fetch = regions or DEFAULT_ODDS_API_REGIONS
 
-    logger.info(f"Fetching odds for {len(event_ids)} events in {sport_key} for markets: '{markets_to_fetch}'")
-    
-    successful_event_ids = []
-    failed_event_ids = []
+    logger.info(f"Fetching odds for single event {event_id} in {sport_key} for markets: '{markets_to_fetch}'")
 
+    try:
+        # Note: get_odds can still take a list, so pass [event_id]
+        odds_data = client.get_odds(
+            sport_key=sport_key,
+            event_ids=[event_id],
+            regions=regions_to_fetch,
+            markets=markets_to_fetch
+        )
+
+        if not odds_data:
+            logger.warning(f"No odds data returned for single event ID {event_id}. It might be too old or not yet available.")
+            return
+
+        # Process the single event's data
+        event_data = odds_data[0] # Expecting only one item in the list
+        
+        fixture = FootballFixture.objects.filter(api_id=event_data['id']).first()
+        if not fixture:
+            logger.warning(f"Fixture with API ID {event_data['id']} not found in DB for single event processing, skipping.")
+            return
+
+        with transaction.atomic():
+            # Clear existing markets for this fixture to prevent stale data
+            Market.objects.filter(fixture_display=fixture).delete()
+            
+            for bookmaker_data in event_data.get('bookmakers', []):
+                bookmaker, _ = Bookmaker.objects.get_or_create(api_bookmaker_key=bookmaker_data['key'], defaults={'name': bookmaker_data['title']})
+                
+                for market_data in bookmaker_data.get('markets', []):
+                    market_key = market_data['key']
+                    category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
+                    
+                    market_instance = Market.objects.create(
+                        fixture_display=fixture, bookmaker=bookmaker, category=category,
+                        api_market_key=market_key, last_updated_odds_api=parser.isoparse(market_data['last_update'])
+                    )
+                    
+                    for outcome_data in market_data.get('outcomes', []):
+                        name, point = _parse_outcome_details(outcome_data['name'], market_key)
+                        MarketOutcome.objects.create(market=market_instance, outcome_name=name, odds=outcome_data['price'], point_value=point)
+            
+            fixture.last_odds_update = timezone.now()
+            fixture.save(update_fields=['last_odds_update'])
+            logger.info(f"Successfully processed odds for single fixture: {fixture.api_id}.")
+
+    except TheOddsAPIException as e:
+        if e.status_code == 422:
+            logger.warning(
+                f"422 Unprocessable Entity for single event {event_id} in {sport_key}. "
+                f"This event ID is likely invalid or too old for odds: {e.response_body or 'No response body'}. "
+                "Will not retry this single event."
+            )
+            return None
+        else:
+            logger.error(f"API Error fetching odds for single event {event_id} in {sport_key}: {e}")
+            raise self.retry(exc=e) # Retry other types of errors
+    except FootballFixture.DoesNotExist:
+        logger.warning(f"Fixture with API ID {event_id} not found for single event processing, skipping.")
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error fetching odds for single event {event_id} in {sport_key}.")
+        raise self.retry(exc=e)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=300)
+def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, regions=None):
+    """
+    (Sub-task) Fetches and updates odds for a batch of events.
+    If a 422 Unprocessable Entity error occurs for the batch, it dispatches
+    individual tasks for each event ID in the batch.
+    """
+    client = TheOddsAPIClient()
+    markets_to_fetch = markets or DEFAULT_ODDS_API_MARKETS
+    regions_to_fetch = regions or DEFAULT_ODDS_API_REGIONS
+
+    logger.info(f"Attempting to fetch odds for {len(event_ids)} events in {sport_key} for markets: '{markets_to_fetch}' (Batch attempt)")
+    
     try:
         odds_data = client.get_odds(
             sport_key=sport_key, 
@@ -183,17 +256,17 @@ def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, re
             markets=markets_to_fetch
         )
         
+        # If we reached here, the batch call was successful or returned no errors (even if no odds data)
         fixtures_map = {item.api_id: item for item in FootballFixture.objects.filter(api_id__in=event_ids)}
 
+        successful_processed_count = 0
         with transaction.atomic():
             for event_data in odds_data:
                 fixture = fixtures_map.get(event_data['id'])
                 if not fixture:
-                    logger.warning(f"Fixture with API ID {event_data['id']} not found in DB, skipping odds processing.")
-                    failed_event_ids.append(event_data['id']) # Or handle as a different type of failure
+                    logger.warning(f"Fixture with API ID {event_data['id']} not found in DB for batch processing, skipping odds. Was it deleted?")
                     continue
                 
-                # Clear existing markets for this fixture to prevent stale data
                 Market.objects.filter(fixture_display=fixture).delete()
                 
                 for bookmaker_data in event_data.get('bookmakers', []):
@@ -214,40 +287,33 @@ def fetch_odds_for_event_batch_task(self, sport_key, event_ids, markets=None, re
                 
                 fixture.last_odds_update = timezone.now()
                 fixture.save(update_fields=['last_odds_update'])
-                successful_event_ids.append(fixture.api_id)
+                successful_processed_count += 1
         
-        logger.info(f"Successfully processed odds for {len(successful_event_ids)} fixtures.")
-        if failed_event_ids:
-            logger.warning(f"Failed to process odds for {len(failed_event_ids)} event IDs in this batch (likely not returned by API): {failed_event_ids}")
+        logger.info(f"Successfully processed odds for {successful_processed_count} fixtures from the batch.")
 
     except TheOddsAPIException as e:
         if e.status_code == 422:
-            # If a 422 occurs for a batch, it's likely due to one or more invalid event_ids.
-            # We can't know which one without a response body, so we'll log and retry
-            # the entire batch, hoping the next attempt (after 300s) might work
-            # if the issue was transient, or if the problematic eventIds become valid
-            # (less likely) or are removed by subsequent calls to fetch_events_for_league_task.
-            
-            # More robust handling for 422:
-            # If this is the first retry (self.request.retries == 0),
-            # log a warning and let it retry.
-            # If it's a subsequent retry, we might consider more aggressive action,
-            # like trying to fetch odds for each event_id individually (if batch size is small enough)
-            # or marking the events as problematic.
-            
             logger.warning(
-                f"The Odds API HTTPError for {sport_key} with event_ids {event_ids}: "
-                f"422 Client Error: Unprocessable Entity. Status: {e.status_code}. Response: {e.response_body or 'No response body'}. "
-                f"Attempt {self.request.retries + 1} of {self.max_retries}. Retrying in {self.default_retry_delay}s."
+                f"Batch odds fetch for {sport_key} received 422 Unprocessable Entity. "
+                f"Likely some event IDs are invalid. Delegating to single-event tasks. "
+                f"Problematic batch event IDs: {event_ids}. Error: {e.response_body or 'No response body'}"
             )
-            # This will retry the entire batch
-            raise self.retry(exc=e)
+            # Instead of retrying the batch, dispatch individual tasks
+            for event_id in event_ids:
+                # Use apply_async here to enqueue immediately
+                fetch_odds_for_single_event_task.apply_async(
+                    args=[sport_key, event_id, markets_to_fetch, regions_to_fetch]
+                )
+            # IMPORTANT: Do NOT raise self.retry(exc=e) here.
+            # We've handled the batch failure by breaking it down.
+            return f"Batch failed, dispatched {len(event_ids)} individual tasks."
         else:
-            logger.error(f"API Error fetching odds for {sport_key} (Event IDs: {event_ids}): {e}")
-            raise self.retry(exc=e)
+            logger.error(f"API Error fetching odds for {sport_key} (Batch Event IDs: {event_ids}): {e}")
+            raise self.retry(exc=e) # Retry other types of errors
     except Exception as e:
-        logger.exception(f"Unexpected error fetching odds for {sport_key} (Event IDs: {event_ids}).")
+        logger.exception(f"Unexpected error fetching odds for {sport_key} (Batch Event IDs: {event_ids}).")
         raise self.retry(exc=e)
+
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id):
@@ -472,7 +538,7 @@ def settle_tickets_for_fixture_task(self, fixture_id):
 
         for ticket_id in ticket_ids_to_check:
             # Re-fetch the ticket and all its bets for the settlement logic
-            # Use select_related for efficiency if BetTicket.bets.all() causes N+1 queries
+            # Use prefetch_related for efficiency if BetTicket.bets.all() causes N+1 queries
             ticket = BetTicket.objects.prefetch_related('bets__market_outcome').get(id=ticket_id)
             
             # Check if all bets on the ticket are no longer PENDING
