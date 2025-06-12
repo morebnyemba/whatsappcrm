@@ -51,20 +51,17 @@ def get_formatted_football_data(
 
         message_lines.append(main_header)
         
-        # --- Increased limit to 10 matches as requested ---
         num_matches_to_display = 10 
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_matches_to_display)} scheduled matches.")
 
         for match in fixtures_qs[:num_matches_to_display]: 
             match_time_local = timezone.localtime(match.match_date)
-            time_str = match_time_local.strftime('%a, %b %d - %I:%M %p') # Re-add date/time
+            time_str = match_time_local.strftime('%a, %b %d - %I:%M %p') 
             
-            # Re-structured line output for scheduled matches
             line = f"\n🏆 *{match.league.name}* (ID: {match.id})" 
-            line += f"\n🗓️ {time_str}" # Re-add match date and time
+            line += f"\n🗓️ {time_str}" 
             line += f"\n{match.home_team.name} vs {match.away_team.name}"
             
-            # --- Aggregate and select best odds for display (one per odd type) ---
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {} 
             
             for market in match.markets.all():
@@ -78,10 +75,8 @@ def get_formatted_football_data(
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
             
-            # --- Prepare compact odds line with emojis ---
             compact_odds_parts: List[str] = []
 
-            # H2H (Moneyline) - 🏠H:Odds | 🤝D:Odds | ✈️A:Odds
             if 'h2h' in aggregated_outcomes:
                 home_odds = aggregated_outcomes['h2h'].get(f"{match.home_team.name}-")
                 draw_odds = aggregated_outcomes['h2h'].get('Draw-')
@@ -91,7 +86,6 @@ def get_formatted_football_data(
                 if draw_odds: compact_odds_parts.append(f"🤝D:*{draw_odds.odds:.2f}*")
                 if away_odds: compact_odds_parts.append(f"✈️A:*{away_odds.odds:.2f}*")
 
-            # Totals (Over/Under) - ⬆️O#.##:Odds | ⬇️U#.##:Odds
             if 'totals' in aggregated_outcomes:
                 best_overall_over = None; best_overall_under = None
                 for outcome_obj in aggregated_outcomes['totals'].values():
@@ -100,17 +94,15 @@ def get_formatted_football_data(
                     elif 'under' in outcome_obj.outcome_name.lower():
                         if best_overall_under is None or outcome_obj.odds > best_overall_under.odds: best_overall_under = outcome_obj
                 
-                if best_overall_over: compact_odds_parts.append(f"⬆️O{best_overall_over.point_value if best_overall_over.point_value is not None else '':.1f}:*{best_overall_over.odds:.2f}*") # Added .1f for point value
-                if best_overall_under: compact_odds_parts.append(f"⬇️U{best_overall_under.point_value if best_overall_under.point_value is not None else '':.1f}:*{best_overall_under.odds:.2f}*") # Added .1f for point value
+                if best_overall_over: compact_odds_parts.append(f"⬆️O{best_overall_over.point_value if best_overall_over.point_value is not None else '':.1f}:*{best_overall_over.odds:.2f}*") 
+                if best_overall_under: compact_odds_parts.append(f"⬇️U{best_overall_under.point_value if best_overall_under.point_value is not None else '':.1f}:*{best_overall_under.odds:.2f}*")
 
-            # BTTS (Both Teams To Score) - ✅BTTS Y:Odds | ❌BTTS N:Odds
             if 'btts' in aggregated_outcomes:
                 yes_odds = aggregated_outcomes['btts'].get('Yes-') 
                 no_odds = aggregated_outcomes['btts'].get('No-')   
                 if yes_odds: compact_odds_parts.append(f"✅BTTS Y:*{yes_odds.odds:.2f}*")
                 if no_odds: compact_odds_parts.append(f"❌BTTS N:*{no_odds.odds:.2f}*")
             
-            # Spreads (Handicap) - 📊 S Team(X.X):Odds
             if 'spreads' in aggregated_outcomes:
                 best_home_spread = None; best_away_spread = None
                 for outcome_obj in aggregated_outcomes['spreads'].values():
@@ -119,20 +111,19 @@ def get_formatted_football_data(
                     elif outcome_obj.outcome_name == match.away_team.name:
                         if best_away_spread is None or outcome_obj.odds > best_away_spread.odds: best_away_spread = outcome_obj
                 
-                if best_home_spread: compact_odds_parts.append(f"📊 S {match.home_team.name}({best_home_spread.point_value if best_home_spread.point_value is not None else '':.1f}):*{best_home_spread.odds:.2f}*") # Added .1f for point value
-                if best_away_spread: compact_odds_parts.append(f"📊 S {match.away_team.name}({best_away_spread.point_value if best_away_spread.point_value is not None else '':.1f}):*{best_away_spread.odds:.2f}*") # Added .1f for point value
+                if best_home_spread: compact_odds_parts.append(f"📊 S {match.home_team.name}({best_home_spread.point_value if best_home_spread.point_value is not None else '':.1f}):*{best_home_spread.odds:.2f}*") 
+                if best_away_spread: compact_odds_parts.append(f"📊 S {match.away_team.name}({best_away_spread.point_value if best_away_spread.point_value is not None else '':.1f}):*{best_away_spread.odds:.2f}*") 
             
-            # Final odds line for this match
             if compact_odds_parts:
                 line += "\nOdds: " + " | ".join(compact_odds_parts)
             else:
-                line += "\n_No odds available_" # Compact message if no odds
+                line += "\n_No odds available_" 
             
             message_lines.append(line)
         
     elif data_type == "finished_results":
+        data_type_label = "Recent Results"
         main_header = "⚽ *Recent Results*"
-        data_type_label = "Recent Results" # For log messages
         end_date = now
         start_date = now - timedelta(days=days_past)
         
@@ -154,20 +145,18 @@ def get_formatted_football_data(
 
         message_lines.append(main_header)
         
-        # --- Increased limit to 10 matches as requested ---
-        num_matches_to_display = 8 
+        num_matches_to_display = 10 
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_matches_to_display)} finished matches.")
         for match in fixtures_qs[:num_matches_to_display]: 
             match_time_local = timezone.localtime(match.match_date)
-            time_str = match_time_local.strftime('%a, %b %d - %I:%M %p') # Re-add date/time
+            time_str = match_time_local.strftime('%a, %b %d - %I:%M %p') 
             
-            # Re-structured line output for finished results
             line = f"\n🏆 *{match.league.name}* (ID: {match.id})" 
-            line += f"\n🗓️ {time_str}" # Re-add match date and time
+            line += f"\n🗓️ {time_str}" 
             line += f"\n{match.home_team.name} vs {match.away_team.name}"
             
             if match.home_team_score is not None:
-                line += f" | Result: *{match.home_team_score} - {match.away_team_score}*" # Compact result
+                line += f" | Result: *{match.home_team_score} - {match.away_team_score}*" 
             
             message_lines.append(line)
 
@@ -179,8 +168,7 @@ def get_formatted_football_data(
     final_message = "\n\n---\n".join(message_lines) 
     
     # --- Add the "Generated by BetBlitz" footer ---
-    now_harare = timezone.localtime(timezone.now()) # Assumes TIME_ZONE in settings is configured to 'Africa/Harare' or similar
-    # Example: June 12, 2025, 10:30 PM CAT
+    now_harare = timezone.localtime(timezone.now()) 
     datetime_str = now_harare.strftime('%B %d, %Y, %I:%M %p %Z') 
     final_message += f"\n\n_Generated by BetBlitz on {datetime_str}_"
 
