@@ -5,7 +5,7 @@ from datetime import timedelta
 from decimal import Decimal 
 
 from .models import FootballFixture, MarketOutcome, Market, League
-from customer_data.models import Bet, BetTicket, Customer # Assuming Customer model is linked to BetTicket
+# Removed imports for Customer, Bet, BetTicket as customer_tickets functionality is removed
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +13,16 @@ def get_formatted_football_data(
     data_type: str, 
     league_code: Optional[str] = None, 
     days_ahead: int = 14, 
-    days_past: int = 2,
-    customer_id: Optional[int] = None # New parameter for customer-specific requests
+    days_past: int = 2
+    # Removed customer_id parameter as customer_tickets functionality is removed
 ) -> str:
     """
-    Fetches and formats football data for display based on the requested data_type.
-    Supports 'scheduled_fixtures' (upcoming matches), 'finished_results' (recent scores),
-    and 'customer_tickets' (user's betting history).
+    Fetches and formats football data for display.
+    Supports 'scheduled_fixtures' (upcoming matches) and 'finished_results' (recent scores).
+    Odds for scheduled fixtures are displayed one per odd type (e.g., single best Over/Under line).
     Includes extensive logging for robustness and clarity.
     """
-    logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past}, customer_id={customer_id})")
+    logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past})")
 
     now = timezone.now()
     message_lines = []
@@ -63,7 +63,9 @@ def get_formatted_football_data(
             line += f"🏆 *League*: {match.league.name}\n"
             line += f"*{match.home_team.name} vs {match.away_team.name}*"
             
-            # --- Aggregate and select best odds for display ---
+            # --- Aggregate and select best odds for display (one per odd type) ---
+            # This dict will store the BEST odds for each unique outcome across ALL bookmakers.
+            # Example: {'h2h': {'Home Team Name-': OutcomeObj, 'Draw-': OutcomeObj}, 'totals': {'Over-2.5': OutcomeObj, 'Under-2.5': OutcomeObj}}
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {} 
             
             logger.debug(f"Aggregating odds for match {match.id}.")
@@ -79,11 +81,11 @@ def get_formatted_football_data(
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
             
-            # --- Prepare display lines based on desired simplification ---
+            # --- Prepare display lines based on desired simplification (one per type) ---
             display_odds_found = False
             display_market_lines = []
 
-            # H2H (Moneyline) - Simplify to just Home, Draw, Away
+            # H2H (Moneyline) - Home | Draw | Away
             if 'h2h' in aggregated_outcomes:
                 h2h_line_parts = []
                 home_odds = None
@@ -106,21 +108,30 @@ def get_formatted_football_data(
                     display_market_lines.append("Head-to-Head: " + " | ".join(h2h_line_parts))
                     display_odds_found = True
 
-            # Totals (Over/Under) - Display ALL available point values
+            # Totals (Over/Under) - Single best Over and single best Under
             if 'totals' in aggregated_outcomes:
-                total_outcomes_to_display = sorted(
-                    aggregated_outcomes['totals'].values(),
-                    key=lambda o: (o.point_value if o.point_value is not None else float('inf'), o.outcome_name)
-                )
+                best_overall_over = None
+                best_overall_under = None
+
+                for outcome_obj in aggregated_outcomes['totals'].values():
+                    if 'over' in outcome_obj.outcome_name.lower():
+                        if best_overall_over is None or outcome_obj.odds > best_overall_over.odds:
+                            best_overall_over = outcome_obj
+                    elif 'under' in outcome_obj.outcome_name.lower():
+                        if best_overall_under is None or outcome_obj.odds > best_overall_under.odds:
+                            best_overall_under = outcome_obj
                 
-                if total_outcomes_to_display:
-                    display_market_lines.append("Totals:")
-                    for outcome_obj in total_outcomes_to_display:
-                        point_str = f" {outcome_obj.point_value}" if outcome_obj.point_value is not None else ""
-                        display_market_lines.append(f"  • {outcome_obj.outcome_name}{point_str}: *{outcome_obj.odds}*")
+                total_line_parts = []
+                if best_overall_over:
+                    total_line_parts.append(f"Over {best_overall_over.point_value if best_overall_over.point_value is not None else ''}: *{best_overall_over.odds}*")
+                if best_overall_under:
+                    total_line_parts.append(f"Under {best_overall_under.point_value if best_overall_under.point_value is not None else ''}: *{best_overall_under.odds}*")
+                
+                if total_line_parts:
+                    display_market_lines.append("Totals: " + " | ".join(total_line_parts))
                     display_odds_found = True
 
-            # BTTS (Both Teams To Score)
+            # BTTS (Both Teams To Score) - Yes | No
             if 'btts' in aggregated_outcomes:
                 btts_line_parts = []
                 yes_odds = aggregated_outcomes['btts'].get('Yes-') 
@@ -133,22 +144,32 @@ def get_formatted_football_data(
                     display_market_lines.append("BTTS: " + " | ".join(btts_line_parts))
                     display_odds_found = True
             
-            # Spreads (Handicap)
+            # Spreads (Handicap) - Single best Home Spread and single best Away Spread
             if 'spreads' in aggregated_outcomes:
-                spread_outcomes_to_display = sorted(
-                    aggregated_outcomes['spreads'].values(),
-                    key=lambda o: (o.point_value if o.point_value is not None else float('-inf'), o.outcome_name)
-                )
-                if spread_outcomes_to_display:
-                    display_market_lines.append("Spreads:")
-                    for outcome_obj in spread_outcomes_to_display:
-                        point_str = f" ({outcome_obj.point_value})" if outcome_obj.point_value is not None else ""
-                        display_market_lines.append(f"  • {outcome_obj.outcome_name}{point_str}: *{outcome_obj.odds}*")
+                best_home_spread = None
+                best_away_spread = None
+
+                for outcome_obj in aggregated_outcomes['spreads'].values():
+                    if outcome_obj.outcome_name == match.home_team.name:
+                        if best_home_spread is None or outcome_obj.odds > best_home_spread.odds:
+                            best_home_spread = outcome_obj
+                    elif outcome_obj.outcome_name == match.away_team.name:
+                        if best_away_spread is None or outcome_obj.odds > best_away_spread.odds:
+                            best_away_spread = outcome_obj
+                
+                spread_line_parts = []
+                if best_home_spread:
+                    spread_line_parts.append(f"{match.home_team.name} ({best_home_spread.point_value}): *{best_home_spread.odds}*")
+                if best_away_spread:
+                    spread_line_parts.append(f"{match.away_team.name} ({best_away_spread.point_value}): *{best_away_spread.odds}*")
+                
+                if spread_line_parts:
+                    display_market_lines.append("Spreads: " + " | ".join(spread_line_parts))
                     display_odds_found = True
 
             # --- Final odds output assembly ---
             if display_odds_found:
-                line += f"\n\n- *Best Odds* -\n" + "\n".join(display_market_lines)
+                line += f"\n\n- *Best Odds* -\n" + "\n".join([f" • {l}" for l in display_market_lines])
             else:
                 if match.status == 'SCHEDULED':
                     line += "\n\n_Odds will be available soon._"
@@ -185,7 +206,7 @@ def get_formatted_football_data(
 
             line = f"\n*Match ID*: {match.id}\n"
             line += f"🗓️ {time_str}\n"
-            line += f"🏆 *League*: {match.league.name}\n" # Added league name here
+            line += f"🏆 *League*: {match.league.name}\n"
             line += f"*{match.home_team.name} vs {match.away_team.name}*\n"
             if match.home_team_score is not None:
                 line += f"🏁 *Result: {match.home_team_score} - {match.away_team_score}*"
@@ -193,96 +214,6 @@ def get_formatted_football_data(
                 line += "_Scores not available_"
             
             message_lines.append(line)
-
-    elif data_type == "customer_tickets":
-        data_type_label = "Your Bet Tickets"
-        if customer_id is None:
-            logger.warning("Request for customer_tickets without a customer_id. Returning error.")
-            return "Please provide a customer ID to view bet tickets."
-
-        try:
-            customer = Customer.objects.get(id=customer_id)
-            logger.info(f"Fetching bet tickets for customer ID: {customer_id} ({customer.name}).")
-        except Customer.DoesNotExist:
-            logger.warning(f"Customer with ID {customer_id} not found when requesting tickets.")
-            return "Customer not found."
-        except Exception as e:
-            logger.exception(f"Unexpected error retrieving customer {customer_id} for ticket request.")
-            return "An internal error occurred while fetching your tickets."
-
-        # Fetch tickets for the customer, ordered by creation date, prefetching related data
-        logger.debug(f"Querying for bet tickets for customer {customer.id}.")
-        tickets_qs = BetTicket.objects.filter(
-            customer=customer
-        ).prefetch_related(
-            'bets__market_outcome__market__fixture_display__home_team',
-            'bets__market_outcome__market__fixture_display__away_team',
-            'bets__market_outcome__market__fixture_display__league',
-            'bets__market_outcome__market__bookmaker',
-            'bets__market_outcome__market__category'
-        ).order_by('-created_at')
-
-        if not tickets_qs.exists():
-            logger.info(f"No bet tickets found for customer ID: {customer_id}.")
-            return f"No bet tickets found for {customer.name}."
-
-        message_lines = [f"🎫 *{data_type_label}* for {customer.name}"]
-        
-        # Limit the number of tickets displayed (e.g., last 5 tickets)
-        logger.debug(f"Formatting details for up to {min(tickets_qs.count(), 5)} customer tickets.")
-        for ticket in tickets_qs[:5]: 
-            ticket_line = f"\n*Ticket ID*: {ticket.id}\n"
-            ticket_line += f"💰 *Total Stake*: ${ticket.total_stake:.2f}\n"
-            ticket_line += f"📈 *Potential Payout*: ${ticket.potential_payout:.2f}\n"
-            ticket_line += f"📊 *Status*: {ticket.status}\n"
-            if ticket.settled_at:
-                ticket_line += f"🗓️ *Settled*: {timezone.localtime(ticket.settled_at).strftime('%b %d, %I:%M %p')}\n"
-            
-            ticket_line += "\n*Bets on this Ticket*:\n"
-            
-            if not ticket.bets.exists():
-                ticket_line += "  _No individual bets found for this ticket._\n"
-                logger.warning(f"Ticket {ticket.id} has no associated bets.")
-
-            for bet in ticket.bets.all():
-                try:
-                    outcome = bet.market_outcome
-                    market = outcome.market
-                    fixture = market.fixture_display
-                    
-                    bet_status = bet.status
-                    # Format bet status for display
-                    if bet_status == 'PENDING':
-                        bet_status_display = "⏳ PENDING"
-                    elif bet_status == 'WON':
-                        bet_status_display = "✅ WON"
-                    elif bet_status == 'LOST':
-                        bet_status_display = "❌ LOST"
-                    elif bet_status == 'PUSH':
-                        bet_status_display = "➡️ PUSH"
-                    else:
-                        bet_status_display = bet_status.upper() # Fallback for other statuses
-
-                    bet_detail_line = (
-                        f"  • {fixture.home_team.name} vs {fixture.away_team.name} "
-                        f"({fixture.league.name})\n"
-                        f"    - Market: {market.category.name} ({market.bookmaker.name})\n"
-                        f"    - Pick: {outcome.outcome_name}"
-                    )
-                    if outcome.point_value is not None:
-                        bet_detail_line += f" {outcome.point_value}"
-                    bet_detail_line += f": *{outcome.odds}* (Status: {bet_status_display})"
-                    
-                    ticket_line += f"{bet_detail_line}\n"
-                    logger.debug(f"Added bet {bet.id} detail to ticket {ticket.id} output.")
-                except AttributeError as e:
-                    logger.error(f"Missing related data for bet {bet.id} on ticket {ticket.id}: {e}. Skipping bet detail.")
-                    ticket_line += f"  • _Invalid bet data (Bet ID: {bet.id}) - Data missing._\n"
-                except Exception as e:
-                    logger.exception(f"Unexpected error processing bet {bet.id} for ticket {ticket.id}.")
-                    ticket_line += f"  • _Error retrieving bet data (Bet ID: {bet.id}) - See logs._\n"
-
-            message_lines.append(ticket_line)
 
     else:
         logger.warning(f"Invalid data type requested: '{data_type}'. Returning error message.")
