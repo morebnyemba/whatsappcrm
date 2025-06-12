@@ -515,9 +515,30 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
-                resolved_body = _resolve_value(text_content.body, current_step_context, contact)
-                logger.debug(f"Step '{step.name}': Resolved text body: '{resolved_body[:100]}{'...' if len(resolved_body) > 100 else ''}'")
-                final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
+                if isinstance(resolved_body_or_list, list):
+                    logger.debug(f"Step '{step.name}': Detected list of message bodies. Preparing {len(resolved_body_or_list)} individual text messages.")
+                    for part_idx, part_body in enumerate(resolved_body_or_list):
+                        if not isinstance(part_body, str):
+                            logger.warning(f"Step '{step.name}': Message part {part_idx+1} is not a string ({type(part_body)}), skipping.")
+                            continue
+                        if len(part_body) > 4096: # Final check before sending
+                            logger.error(f"Step '{step.name}': Message part {part_idx+1} exceeds 4096 chars ({len(part_body)}). Truncating for sending. Original body: '{part_body[:200]}...'")
+                            part_body = part_body[:4096] # Truncate as a last resort
+
+                        actions_to_perform.append({
+                            'type': 'send_whatsapp_message',
+                            'recipient_wa_id': contact.whatsapp_id,
+                            'message_type': actual_message_type,
+                            'data': {'body': part_body, 'preview_url': text_content.preview_url}
+                        })
+                        logger.info(f"Step '{step.name}': Prepared '{actual_message_type}' message data part {part_idx+1}. Snippet: '{part_body[:250]}...'")
+                    # Set final_api_data_structure to an empty dict to indicate multiple actions were added directly
+                    final_api_data_structure = {} 
+                else:
+                    # Original logic for a single string body
+                    resolved_body = resolved_body_or_list # It's a single string
+                    logger.debug(f"Step '{step.name}': Resolved text body: '{resolved_body[:100]}{'...' if len(resolved_body) > 100 else ''}'")
+                    final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
 
             elif actual_message_type in ['image', 'document', 'audio', 'video', 'sticker']:
                 media_conf: MediaMessageContent = payload_field_value
