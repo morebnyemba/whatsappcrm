@@ -13,7 +13,7 @@ def get_formatted_football_data(
     league_code: Optional[str] = None, 
     days_ahead: int = 10, 
     days_past: int = 2
-) -> str: # Return type remains str for single message output
+) -> str:
     """
     Fetches and formats football data for display in a single, attractive message.
     Output includes: League, Match ID, Date/Time, Teams, and simplified odds/results.
@@ -94,8 +94,14 @@ def get_formatted_football_data(
                     elif 'under' in outcome_obj.outcome_name.lower():
                         if best_overall_under is None or outcome_obj.odds > best_overall_under.odds: best_overall_under = outcome_obj
                 
-                if best_overall_over: compact_odds_parts.append(f"⬆️O{best_overall_over.point_value if best_overall_over.point_value is not None else '':.1f}:*{best_overall_over.odds:.2f}*") 
-                if best_overall_under: compact_odds_parts.append(f"⬇️U{best_overall_under.point_value if best_overall_under.point_value is not None else '':.1f}:*{best_overall_under.odds:.2f}*")
+                if best_overall_over:
+                    # FIX: Apply .1f only if point_value is not None, otherwise use empty string directly
+                    over_point_str = f"{best_overall_over.point_value:.1f}" if best_overall_over.point_value is not None else ""
+                    compact_odds_parts.append(f"⬆️O{over_point_str}:*{best_overall_over.odds:.2f}*") 
+                if best_overall_under:
+                    # FIX: Apply .1f only if point_value is not None, otherwise use empty string directly
+                    under_point_str = f"{best_overall_under.point_value:.1f}" if best_overall_under.point_value is not None else ""
+                    compact_odds_parts.append(f"⬇️U{under_point_str}:*{best_overall_under.odds:.2f}*")
 
             if 'btts' in aggregated_outcomes:
                 yes_odds = aggregated_outcomes['btts'].get('Yes-') 
@@ -111,8 +117,14 @@ def get_formatted_football_data(
                     elif outcome_obj.outcome_name == match.away_team.name:
                         if best_away_spread is None or outcome_obj.odds > best_away_spread.odds: best_away_spread = outcome_obj
                 
-                if best_home_spread: compact_odds_parts.append(f"📊 S {match.home_team.name}({best_home_spread.point_value if best_home_spread.point_value is not None else '':.1f}):*{best_home_spread.odds:.2f}*") 
-                if best_away_spread: compact_odds_parts.append(f"📊 S {match.away_team.name}({best_away_spread.point_value if best_away_spread.point_value is not None else '':.1f}):*{best_away_spread.odds:.2f}*") 
+                if best_home_spread:
+                    # FIX: Apply .1f only if point_value is not None
+                    home_spread_point_str = f"{best_home_spread.point_value:.1f}" if best_home_spread.point_value is not None else ""
+                    compact_odds_parts.append(f"📊 S {match.home_team.name}({home_spread_point_str}):*{best_home_spread.odds:.2f}*") 
+                if best_away_spread:
+                    # FIX: Apply .1f only if point_value is not None
+                    away_spread_point_str = f"({best_away_spread.point_value:.1f})" if best_away_spread.point_value is not None else ""
+                    compact_odds_parts.append(f"📊 S {match.away_team.name}{away_spread_point_str}:*{best_away_spread.odds:.2f}*") 
             
             if compact_odds_parts:
                 line += "\nOdds: " + " | ".join(compact_odds_parts)
