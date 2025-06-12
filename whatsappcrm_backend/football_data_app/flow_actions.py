@@ -16,7 +16,7 @@ MESSAGE_SEPARATOR = "\n\n---\n" # Separator between individual match/result bloc
 def get_formatted_football_data(
     data_type: str, 
     league_code: Optional[str] = None, 
-    days_ahead: int = 10,  # Changed default back to 10 days
+    days_ahead: int = 5,  # Changed default back to 10 days
     days_past: int = 2
 ) -> List[str]: # Return type remains List[str] for multi-message support
     """
