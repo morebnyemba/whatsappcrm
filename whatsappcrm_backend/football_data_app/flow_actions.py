@@ -1,4 +1,3 @@
-# whatsappcrm_backend/football_data_app/flow_actions.py
 import logging
 from typing import Optional, Dict
 from django.utils import timezone
@@ -16,14 +15,12 @@ def get_formatted_football_data(
     days_ahead: int = 14, 
     days_past: int = 2,
     customer_id: Optional[int] = None # New parameter for customer-specific requests
-):
+) -> str:
     """
-    Fetches and formats football data for display.
-    This version aggregates odds from all bookmakers and presents a clean, simple list.
-    Includes league name for each match and increased days_ahead.
-    Optimized to show only a single, most relevant odd value for H2H, but multiple for Totals.
-    Increased the number of matches returned.
-    Capable of handling requests for 'scheduled_fixtures', 'finished_results', and 'customer_tickets'.
+    Fetches and formats football data for display based on the requested data_type.
+    Supports 'scheduled_fixtures' (upcoming matches), 'finished_results' (recent scores),
+    and 'customer_tickets' (user's betting history).
+    Includes extensive logging for robustness and clarity.
     """
     logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past}, customer_id={customer_id})")
 
@@ -35,6 +32,7 @@ def get_formatted_football_data(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         
+        logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
         fixtures_qs = FootballFixture.objects.filter(
             status=FootballFixture.FixtureStatus.SCHEDULED,
             match_date__gte=start_date,
@@ -44,7 +42,7 @@ def get_formatted_football_data(
         ).order_by('match_date')
 
         if league_code:
-            logger.debug(f"Filtering scheduled fixtures by league_code: {league_code}")
+            logger.debug(f"Filtering scheduled fixtures by league_code: {league_code}.")
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
 
         if not fixtures_qs.exists():
@@ -55,6 +53,7 @@ def get_formatted_football_data(
         message_lines = [f"⚽ *{data_type_label}*"]
         
         # Limiting to 20 matches for brevity in chat responses
+        logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), 20)} scheduled matches.")
         for match in fixtures_qs[:20]: 
             match_time_local = timezone.localtime(match.match_date)
             time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
@@ -67,6 +66,7 @@ def get_formatted_football_data(
             # --- Aggregate and select best odds for display ---
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {} 
             
+            logger.debug(f"Aggregating odds for match {match.id}.")
             for market in match.markets.all():
                 market_key = market.api_market_key
                 if market_key not in aggregated_outcomes:
@@ -159,13 +159,16 @@ def get_formatted_football_data(
         data_type_label = "Recent Results"
         end_date = now
         start_date = now - timedelta(days=days_past)
+        
+        logger.debug(f"Querying for FINISHED fixtures between {start_date} and {end_date}.")
         fixtures_qs = FootballFixture.objects.filter(
             status=FootballFixture.FixtureStatus.FINISHED,
             match_date__gte=start_date,
             match_date__lte=end_date
         ).select_related('home_team', 'away_team', 'league').order_by('-match_date')
+        
         if league_code:
-            logger.debug(f"Filtering finished results by league_code: {league_code}")
+            logger.debug(f"Filtering finished results by league_code: {league_code}.")
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
         
         if not fixtures_qs.exists():
@@ -175,6 +178,7 @@ def get_formatted_football_data(
 
         message_lines = [f"⚽ *{data_type_label}*"]
         
+        logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), 20)} finished matches.")
         for match in fixtures_qs[:20]: # Limiting to 20 matches
             match_time_local = timezone.localtime(match.match_date)
             time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
@@ -202,8 +206,12 @@ def get_formatted_football_data(
         except Customer.DoesNotExist:
             logger.warning(f"Customer with ID {customer_id} not found when requesting tickets.")
             return "Customer not found."
+        except Exception as e:
+            logger.exception(f"Unexpected error retrieving customer {customer_id} for ticket request.")
+            return "An internal error occurred while fetching your tickets."
 
         # Fetch tickets for the customer, ordered by creation date, prefetching related data
+        logger.debug(f"Querying for bet tickets for customer {customer.id}.")
         tickets_qs = BetTicket.objects.filter(
             customer=customer
         ).prefetch_related(
@@ -221,6 +229,7 @@ def get_formatted_football_data(
         message_lines = [f"🎫 *{data_type_label}* for {customer.name}"]
         
         # Limit the number of tickets displayed (e.g., last 5 tickets)
+        logger.debug(f"Formatting details for up to {min(tickets_qs.count(), 5)} customer tickets.")
         for ticket in tickets_qs[:5]: 
             ticket_line = f"\n*Ticket ID*: {ticket.id}\n"
             ticket_line += f"💰 *Total Stake*: ${ticket.total_stake:.2f}\n"
@@ -252,7 +261,7 @@ def get_formatted_football_data(
                     elif bet_status == 'PUSH':
                         bet_status_display = "➡️ PUSH"
                     else:
-                        bet_status_display = bet_status.upper()
+                        bet_status_display = bet_status.upper() # Fallback for other statuses
 
                     bet_detail_line = (
                         f"  • {fixture.home_team.name} vs {fixture.away_team.name} "
@@ -268,18 +277,18 @@ def get_formatted_football_data(
                     logger.debug(f"Added bet {bet.id} detail to ticket {ticket.id} output.")
                 except AttributeError as e:
                     logger.error(f"Missing related data for bet {bet.id} on ticket {ticket.id}: {e}. Skipping bet detail.")
-                    ticket_line += f"  • _Invalid bet data (Bet ID: {bet.id})_\n"
+                    ticket_line += f"  • _Invalid bet data (Bet ID: {bet.id}) - Data missing._\n"
                 except Exception as e:
                     logger.exception(f"Unexpected error processing bet {bet.id} for ticket {ticket.id}.")
-                    ticket_line += f"  • _Error retrieving bet data (Bet ID: {bet.id})_\n"
+                    ticket_line += f"  • _Error retrieving bet data (Bet ID: {bet.id}) - See logs._\n"
 
             message_lines.append(ticket_line)
 
     else:
-        logger.warning(f"Invalid data type requested: '{data_type}'. Returning error.")
-        return "Invalid data type requested."
+        logger.warning(f"Invalid data type requested: '{data_type}'. Returning error message.")
+        return "Invalid data type requested. Please check your input."
 
     # Final assembly of the message
     final_message = "\n\n---\n".join(message_lines)
-    logger.info(f"Successfully formatted data for data_type='{data_type}'. Message length: {len(final_message)} characters.")
+    logger.info(f"Successfully formatted data for data_type='{data_type}'. Generated message length: {len(final_message)} characters.")
     return final_message
