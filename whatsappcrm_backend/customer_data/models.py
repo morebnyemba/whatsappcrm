@@ -5,7 +5,6 @@ from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from decimal import Decimal
-from football_data_app.models import MarketOutcome
 
 class CustomerProfile(models.Model):
     """
@@ -249,7 +248,7 @@ class Bet(models.Model):
     ]
 
     ticket = models.ForeignKey(BetTicket, on_delete=models.CASCADE, related_name='bets')
-    market_outcome = models.ForeignKey(MarketOutcome, on_delete=models.CASCADE, related_name='bets')
+    market_outcome = models.ForeignKey('football_data_app.MarketOutcome', on_delete=models.CASCADE, related_name='bets')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=BET_STATUS, default='PENDING')
