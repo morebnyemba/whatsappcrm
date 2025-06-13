@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
-DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,spreads")
+# UPDATED: Changed default markets to include btts and double_chance, and remove spreads.
+DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals,btts,double_chance")
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
-# NEW: Configurable duration after which a live game is assumed to be finished
 ASSUMED_COMPLETION_MINUTES = getattr(settings, 'THE_ODDS_API_ASSUMED_COMPLETION_MINUTES', 120)
 
 
@@ -420,7 +420,6 @@ def fetch_scores_for_league_task(self, league_id):
 
                 is_completed_by_api = score_item.get('completed', False)
                 
-                # NEW: Time-based fallback check
                 time_since_commence = now - commence_time
                 is_assumed_finished = time_since_commence > timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
 
@@ -633,5 +632,5 @@ def settle_tickets_for_fixture_task(self, fixture_id):
         
         logger.info(f"Task {task_id}: Settlement: Checked {ticket_count} tickets, {settled_count} were newly settled for fixture {fixture_id}.")
     except Exception as e:
-        logger.exception(f"Task {task_ed}: Error settling tickets for fixture {fixture_id}. Retrying...")
+        logger.exception(f"Task {task_id}: Error settling tickets for fixture {fixture_id}. Retrying...")
         raise self.retry(exc=e)
