@@ -136,7 +136,7 @@ def fetch_additional_markets_task(self, event_id):
                         MarketOutcome.objects.create(market=market_instance, outcome_name=name, odds=outcome_data['price'], point_value=point)
     except TheOddsAPIException as e:
         if e.status_code in [404, 422]:
-             logger.warning(f"Task {self.request.id}: API error {e.status_code} for event {event_id}. The API may not support '{ADDITIONAL_ODDS_API_MARKETS}' for this event. Won't retry.")
+             logger.warning(f"Task {self.request.id}: API error {e.status_code} for event {event_id}. Markets not supported or event not found. Won't retry.")
         else:
             raise self.retry(exc=e)
     except FootballFixture.DoesNotExist:
@@ -176,14 +176,19 @@ def fetch_odds_for_event_batch_task(self, league_id, event_ids, markets=None, re
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id):
+    """
+    Fetches scores for live or recently scheduled games and updates their status.
+    This is the primary task for managing the game lifecycle from LIVE to FINISHED.
+    """
+    task_id = self.request.id
     now = timezone.now()
     try:
         league = League.objects.get(id=league_id)
         fixtures_to_check = FootballFixture.objects.filter(
-            league=league, status__in=[FootballFixture.FixtureStatus.LIVE, FootballFixture.FixtureStatus.SCHEDULED]
-        ).filter(
-            models.Q(last_score_update__isnull=True) | models.Q(last_score_update__lt=now - timedelta(minutes=10))
-        )
+            models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
+            models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now + timedelta(minutes=5)),
+        ).distinct()
+
         if not fixtures_to_check.exists(): return
         
         client = TheOddsAPIClient()
@@ -194,28 +199,35 @@ def fetch_scores_for_league_task(self, league_id):
             if not fixture: continue
             
             with transaction.atomic():
-                is_completed = score_item.get('completed', False) or (now - parser.isoparse(score_item['commence_time']) > timedelta(minutes=ASSUMED_COMPLETION_MINUTES))
+                current_status = fixture.status
+                commence_time = parser.isoparse(score_item['commence_time'])
+                if timezone.is_naive(commence_time):
+                    commence_time = timezone.make_aware(commence_time, timezone.get_current_timezone())
+
+                is_completed = score_item.get('completed', False) or (now - commence_time > timedelta(minutes=ASSUMED_COMPLETION_MINUTES))
                 
-                if is_completed and fixture.status != FootballFixture.FixtureStatus.FINISHED:
-                    home_s, away_s = None, None
-                    if score_item.get('scores'):
-                        for score in score_item['scores']:
-                            if score['name'] == fixture.home_team.name: home_s = score['score']
-                            elif score['name'] == fixture.away_team.name: away_s = score['score']
-                    fixture.home_team_score, fixture.away_team_score = (int(home_s) if home_s else None), (int(away_s) if away_s else None)
-                    fixture.status = FootballFixture.FixtureStatus.FINISHED
-                    fixture.save()
-                    logger.info(f"STATUS CHANGE: Fixture {fixture.id} to FINISHED.")
-                    chain(settle_outcomes_for_fixture_task.s(fixture.id), settle_bets_for_fixture_task.s(), settle_tickets_for_fixture_task.s()).apply_async()
-                
-                elif not is_completed and fixture.status == FootballFixture.FixtureStatus.SCHEDULED:
-                    fixture.status = FootballFixture.FixtureStatus.LIVE
-                    fixture.save()
-                    logger.info(f"STATUS CHANGE: Fixture {fixture.id} to LIVE.")
+                if is_completed:
+                    if fixture.status != FootballFixture.FixtureStatus.FINISHED:
+                        home_s, away_s = None, None
+                        if score_item.get('scores'):
+                            for score in score_item['scores']:
+                                if score['name'] == fixture.home_team.name: home_s = score['score']
+                                elif score['name'] == fixture.away_team.name: away_s = score['score']
+                        fixture.home_team_score, fixture.away_team_score = (int(home_s) if home_s else None), (int(away_s) if away_s else None)
+                        fixture.status = FootballFixture.FixtureStatus.FINISHED
+                        fixture.save()
+                        logger.info(f"STATUS CHANGE: Fixture {fixture.id} from {current_status} to FINISHED.")
+                        chain(settle_outcomes_for_fixture_task.s(fixture.id), settle_bets_for_fixture_task.s(), settle_tickets_for_fixture_task.s()).apply_async()
+                else:
+                    if fixture.status == FootballFixture.FixtureStatus.SCHEDULED and commence_time <= now:
+                        fixture.status = FootballFixture.FixtureStatus.LIVE
+                        fixture.save()
+                        logger.info(f"STATUS CHANGE: Fixture {fixture.id} from {current_status} to LIVE.")
 
     except Exception as e:
-        logger.exception(f"Task {self.request.id}: Unexpected error fetching scores for league {league_id}.")
+        logger.exception(f"Task {task_id}: Unexpected error fetching scores for league {league_id}.")
         raise self.retry(exc=e)
+
 
 @shared_task(bind=True)
 def settle_outcomes_for_fixture_task(self, fixture_id):
@@ -228,13 +240,22 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
         for market in fixture.markets.prefetch_related('outcomes'):
             for outcome in market.outcomes.filter(result_status='PENDING'):
                 new_status = 'LOST'
-                # --- Settlement Logic Here ---
                 if market.api_market_key == 'h2h':
                     if (outcome.outcome_name == fixture.home_team.name and home_score > away_score) or \
                        (outcome.outcome_name == fixture.away_team.name and away_score > home_score) or \
                        (outcome.outcome_name.lower() == 'draw' and home_score == away_score):
                         new_status = 'WON'
-                # ... other market settlement logic ...
+                elif market.api_market_key in ['totals', 'alternate_totals'] and outcome.point_value is not None:
+                    total_score = home_score + away_score
+                    if 'over' in outcome.outcome_name.lower():
+                        new_status = 'WON' if total_score > outcome.point_value else 'PUSH' if total_score == outcome.point_value else 'LOST'
+                    elif 'under' in outcome.outcome_name.lower():
+                        new_status = 'WON' if total_score < outcome.point_value else 'PUSH' if total_score == outcome.point_value else 'LOST'
+                elif market.api_market_key == 'btts':
+                    if (outcome.outcome_name == 'Yes' and home_score > 0 and away_score > 0) or \
+                       (outcome.outcome_name == 'No' and not (home_score > 0 and away_score > 0)):
+                        new_status = 'WON'
+                
                 if new_status != 'PENDING':
                     outcome.result_status = new_status
                     outcomes_to_update.append(outcome)
