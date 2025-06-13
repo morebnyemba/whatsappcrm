@@ -10,22 +10,19 @@ from django.utils import timezone
 from django.db import transaction
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 from decimal import Decimal # Ensure Decimal is imported for type hints if used by Pydantic validators
-from conversations.models import Contact
-# Correct lazy imports for models
-from django.apps import apps
-Contact = apps.get_model('conversations', 'Contact')
-Message = apps.get_model('conversations', 'Message')
-# FootballFixture is used, so explicitly import it via apps.get_model
-FootballFixture = apps.get_model('football_data_app', 'FootballFixture')
-CustomerProfile = apps.get_model('customer_data', 'CustomerProfile') # Also used directly for CustomerProfile.DoesNotExist check
 
-# Import your Flow related models
-Flow = apps.get_model('flows', 'Flow')
-FlowStep = apps.get_model('flows', 'FlowStep')
-FlowTransition = apps.get_model('flows', 'FlowTransition')
-ContactFlowState = apps.get_model('flows', 'ContactFlowState')
+# IMPORTANT: Retaining the original import methods as requested.
+# If these cause "attempted relative import beyond top-level package" errors,
+# your environment's PYTHONPATH or Django app structure configuration might need adjustment.
+from conversations.models import Contact # Direct import as originally specified
+from conversations.models import Message # Direct import as originally specified
+from football_data_app.models import FootballFixture # Direct import as originally specified (renamed from Match)
+from customer_data.models import CustomerProfile # Direct import as originally specified
 
-# Import your new utility functions
+# Flow related models (relative import as originally specified)
+from .models import Flow, FlowStep, FlowTransition, ContactFlowState
+
+# Conditional imports as per your original structure
 try:
     from media_manager.models import MediaAsset
     MEDIA_ASSET_ENABLED = True
@@ -37,30 +34,31 @@ logger = logging.getLogger(__name__)
 if not MEDIA_ASSET_ENABLED:
     logger.warning("MediaAsset model not found or could not be imported. MediaAsset functionality (e.g., 'asset_pk') will be disabled in flows.")
 
-# Import the new utility functions for specific actions
-# Using direct imports here assuming relative paths and no circular dependency at top level.
-# If these lead to circular imports at runtime, switch to apps.get_model for the functions.
+# Conditional imports for football_data_app and customer_data actions/utils
+# Retaining the original import method that uses direct package names
+FOOTBALL_APP_ENABLED = False
 try:
-    from ..football_data_app.flow_actions import handle_football_betting_action # Renamed for clarity
-    from ..football_data_app.utils import get_formatted_football_data # For fetching data, now in utils.py
+    # These imports assume 'football_data_app' is directly on Python path or known to Django
+    from football_data_app.flow_actions import handle_football_betting_action # Assuming renamed to handle_football_betting_action
+    from football_data_app.utils import get_formatted_football_data # Assuming this is in utils.py
     FOOTBALL_APP_ENABLED = True
 except ImportError as e:
-    FOOTBALL_APP_ENABLED = False
     logger.warning(f"football_data_app.flow_actions or utils could not be imported. Football-related actions will not work. Error: {e}")
 
+CUSTOMER_DATA_UTILS_ENABLED = False
 try:
-    from ..customer_data import utils as customer_data_utils # Import as alias
+    # This import assumes 'customer_data' is directly on Python path or known to Django
+    import customer_data.utils as customer_data_utils
     CUSTOMER_DATA_UTILS_ENABLED = True
 except ImportError as e:
-    CUSTOMER_DATA_UTILS_ENABLED = False
     logger.warning(f"customer_data.utils could not be imported. Account/Wallet actions will not work. Error: {e}")
 
 
-# --- Pydantic Models (Your original models, plus new action definitions) ---
-
+# --- Pydantic Models ---
 class BasePydanticConfig(BaseModel):
     class Config:
         extra = 'allow' # Allow extra fields for flexibility in config JSONs
+        # Pydantic V2 recommends `model_config = ConfigDict(extra='allow')`
 
 # Your existing message content models
 class TextMessageContent(BasePydanticConfig):
@@ -74,7 +72,7 @@ class MediaMessageContent(BasePydanticConfig):
     caption: Optional[str] = Field(default=None, max_length=1024)
     filename: Optional[str] = None
 
-    @root_validator(pre=False, skip_on_failure=True)
+    @root_validator(pre=True, skip_on_failure=True) # Use pre=True for validation on raw input
     def check_media_source(cls, values):
         asset_pk, media_id, link = values.get('asset_pk'), values.get('id'), values.get('link')
         if not MEDIA_ASSET_ENABLED and asset_pk:
@@ -131,18 +129,18 @@ class TemplateLanguage(BasePydanticConfig):
 class TemplateParameter(BasePydanticConfig):
     type: Literal["text", "currency", "date_time", "image", "document", "video", "payload"]
     text: Optional[str] = None
-    currency: Optional[Dict[str, Any]] = None
-    date_time: Optional[Dict[str, Any]] = None
-    image: Optional[Dict[str, Any]] = None
-    document: Optional[Dict[str, Any]] = None
-    video: Optional[Dict[str, Any]] = None
-    payload: Optional[str] = None
+    currency: Optional[Dict[str, Any]] = None # This dict usually contains { "amount": <value>, "code": "USD" }
+    date_time: Optional[Dict[str, Any]] = None # This dict usually contains { "timestamp": <value> }
+    image: Optional[Dict[str, Any]] = None # This dict usually contains { "link": "...", "id": "..." }
+    document: Optional[Dict[str, Any]] = None # This dict usually contains { "link": "...", "id": "...", "filename": "..." }
+    video: Optional[Dict[str, Any]] = None # This dict usually contains { "link": "...", "id": "..." }
+    payload: Optional[str] = None # For quick reply buttons
 
 class TemplateComponent(BasePydanticConfig):
     type: Literal["header", "body", "button"]
-    sub_type: Optional[Literal['url', 'quick_reply', 'call_button', 'catalog_button', 'mpm_button']] = None
+    sub_type: Optional[Literal['url', 'quick_reply', 'call_button', 'catalog_button', 'mpm_button']] = None # For buttons
     parameters: Optional[List[TemplateParameter]] = None
-    index: Optional[int] = None
+    index: Optional[int] = None # For button components to specify which button
 
 class TemplateMessageContent(BasePydanticConfig):
     name: str
@@ -230,8 +228,8 @@ class StepConfigSendMessage(BasePydanticConfig):
             if not interactive_payload or not getattr(interactive_payload, 'type', None):
                 raise ValueError("For 'interactive' messages, the 'interactive' payload object must exist and itself specify an interactive 'type' (e.g., 'button', 'list').")
             
-            interactive_internal_type = interactive_payload.type
-            interactive_action = interactive_payload.action
+            interactive_internal_type = interactive_payload.get('type') # Access directly as dict key
+            interactive_action = interactive_payload.get('action') # Access directly as dict key
             
             if interactive_internal_type == "button" and not isinstance(interactive_action, InteractiveButtonAction):
                 raise ValueError("For interactive message type 'button', the 'action' field must be a valid InteractiveButtonAction.")
@@ -247,6 +245,9 @@ class ReplyConfig(BasePydanticConfig):
 class StepConfigQuestion(BasePydanticConfig):
     message_config: Dict[str, Any]
     reply_config: ReplyConfig
+    # Added fallback_config for consistent handling of invalid replies in questions
+    fallback_config: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
 
     @field_validator('message_config')
     def validate_message_config_structure(cls, v_dict):
@@ -257,40 +258,42 @@ class StepConfigQuestion(BasePydanticConfig):
             logger.error(f"Invalid message_config for question step: {e.errors()}", exc_info=False)
             raise ValueError(f"message_config for question is invalid: {e.errors()}")
 
-# --- NEW/UPDATED ACTION CONFIG MODELS ---
-class ActionType(str, Enum):
+# --- NEW/UPDATED ACTION CONFIG MODELS (using Literal for action_type - FIX FOR PYDANTIC ERROR) ---
+
+# Define individual action configurations with Literal types for the discriminator
+class ActionType(str, Enum): # This Enum is fine for internal use and defining Literal values
     SET_CONTEXT_VARIABLE = "set_context_variable"
     UPDATE_CONTACT_FIELD = "update_contact_field"
     UPDATE_CUSTOMER_PROFILE = "update_customer_profile"
     SWITCH_FLOW = "switch_flow"
     FETCH_FOOTBALL_DATA = "fetch_football_data"
-    CREATE_ACCOUNT = "create_account" # New
-    PERFORM_DEPOSIT = "perform_deposit" # New
-    PERFORM_WITHDRAWAL = "perform_withdrawal" # New
-    HANDLE_BETTING_ACTION = "handle_betting_action" # New
+    CREATE_ACCOUNT = "create_account"
+    PERFORM_DEPOSIT = "perform_deposit"
+    PERFORM_WITHDRAWAL = "perform_withdrawal"
+    HANDLE_BETTING_ACTION = "handle_betting_action"
 
 class SetContextVariableConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.SET_CONTEXT_VARIABLE
+    action_type: Literal["set_context_variable"] = "set_context_variable"
     variable_name: str
     value_template: Any
 
 class UpdateContactFieldConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.UPDATE_CONTACT_FIELD
+    action_type: Literal["update_contact_field"] = "update_contact_field"
     field_path: str
     value_template: Any
 
 class UpdateCustomerProfileConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.UPDATE_CUSTOMER_PROFILE
+    action_type: Literal["update_customer_profile"] = "update_customer_profile"
     fields_to_update: Dict[str, Any] # Dictionary where keys are field names and values are templates
 
 class SwitchFlowConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.SWITCH_FLOW
+    action_type: Literal["switch_flow"] = "switch_flow"
     target_flow_name: str
     initial_context_template: Optional[Dict[str, Any]] = Field(default_factory=dict)
     message_to_evaluate_for_new_flow: Optional[str] = None # Message body to simulate triggering the new flow
 
 class FetchFootballDataConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.FETCH_FOOTBALL_DATA
+    action_type: Literal["fetch_football_data"] = "fetch_football_data"
     data_type: Literal["scheduled_fixtures", "finished_results"]
     league_code_variable: Optional[str] = None # Path to context var holding league code
     output_variable_name: str # Name of context var to save formatted output
@@ -298,7 +301,7 @@ class FetchFootballDataConfig(BasePydanticConfig):
     days_ahead_for_fixtures: Optional[int] = Field(default=7)
 
 class CreateAccountConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.CREATE_ACCOUNT
+    action_type: Literal["create_account"] = "create_account"
     email_template: Optional[str] = None # Template for email (e.g., {{ flow_context.user_email }})
     first_name_template: Optional[str] = None
     last_name_template: Optional[str] = None
@@ -306,33 +309,32 @@ class CreateAccountConfig(BasePydanticConfig):
     initial_balance: float = 0.0
 
 class PerformDepositConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.PERFORM_DEPOSIT
+    action_type: Literal["perform_deposit"] = "perform_deposit"
     amount_template: Union[float, str] # Can be a direct float or a template string
     description_template: Optional[str] = "Deposit via bot flow"
 
 class PerformWithdrawalConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.PERFORM_WITHDRAWAL
+    action_type: Literal["perform_withdrawal"] = "perform_withdrawal"
     amount_template: Union[float, str]
     description_template: Optional[str] = "Withdrawal via bot flow"
 
 class HandleBettingActionConfig(BasePydanticConfig):
-    action_type: ActionType = ActionType.HANDLE_BETTING_ACTION
+    action_type: Literal["handle_betting_action"] = "handle_betting_action"
     betting_action: str # e.g., 'view_matches', 'create_new_ticket', 'add_bet_to_ticket', 'place_ticket', 'view_my_tickets', 'check_wallet_balance'
     stake_template: Optional[Union[float, str]] = None # Can be a direct float or template (for place_ticket)
     market_outcome_id_template: Optional[str] = None # Template for outcome ID (for add_bet_to_ticket)
     raw_bet_string_template: Optional[str] = None # Template for raw betting string (for place_ticket)
-    # Additional parameters might be needed here if specific betting actions require them
-    # For 'view_matches'/'view_results' data_type, league_code, days_ahead, days_past parameters are handled by the separate FetchFootballDataConfig.
-    # We add them here just in case this action type might also be used to trigger data fetching via handle_football_betting_action.
-    data_type: Optional[Literal["scheduled_fixtures", "finished_results"]] = None
-    league_code_template: Optional[str] = None # Template for league code
-    days_past: Optional[int] = Field(default=2)
-    days_ahead: Optional[int] = Field(default=7)
+    # Additional parameters might be needed here if specific betting actions require them, e.g.:
+    league_code_template: Optional[str] = None # Template for league code (for view_matches/view_results via betting action)
+    days_past: Optional[int] = Field(default=2) # For view_results
+    days_ahead: Optional[int] = Field(default=7) # For view_matches
 
 
-# Main Action Item Union for `actions_to_run` list in StepConfigAction
+# This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
     # This acts as a union type for all action configurations
+    # The `discriminator` argument is crucial for Pydantic to determine which sub-model to use
+    # based on the value of the 'action_type' field.
     root: Union[
         SetContextVariableConfig,
         UpdateContactFieldConfig,
@@ -343,19 +345,26 @@ class ActionItem(BaseModel):
         PerformDepositConfig,
         PerformWithdrawalConfig,
         HandleBettingActionConfig
-    ] = Field(discriminator='action_type') # Discriminator tells Pydantic which type to use based on 'action_type' field
+    ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
+    # This makes it easier to access fields like `action_item_conf.variable_name`
+    # instead of `action_item_conf.root.variable_name`
     def __getattr__(self, name: str) -> Any:
-        return getattr(self.root, name)
+        # Check if the attribute exists on the root model, otherwise raise AttributeError
+        if hasattr(self.root, name):
+            return getattr(self.root, name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     # Custom initializer to correctly parse data into the 'root' field
+    # Pydantic v2 often prefers `model_validate(data)` over direct `__init__` for root fields
+    # However, this pattern is common in Pydantic v1 for discriminator setup.
     def __init__(self, **data: Any):
-        super().__init__(root=data) # Pydantic v2 might prefer model_validate(data) + root = data
+        super().__init__(root=data) # Initialize the root with the incoming data
 
 
 class StepConfigAction(BasePydanticConfig):
-    actions_to_run: List[ActionItem] = Field(default_factory=list, min_items=1) # List of ActionItem (Union)
+    actions_to_run: List[ActionItem] = Field(default_factory=list, min_items=1)
 
 class StepConfigHumanHandover(BasePydanticConfig):
     pre_handover_message_text: Optional[str] = None
@@ -379,7 +388,9 @@ class StepConfigEndFlow(BasePydanticConfig):
 InteractiveMessagePayload.model_rebuild()
 
 
-# --- Helper Functions (Your existing helpers, updated for new actions) ---
+# --- Helper Functions ---
+# _execute_step_actions calls other helpers like _get_value_from_context_or_contact, _resolve_value etc.
+# These helper functions have been updated to match the new Pydantic structure and action types.
 
 def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, contact: Contact) -> Any:
     """
@@ -411,7 +422,7 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
         except CustomerProfile.DoesNotExist:
             logger.debug(f"CustomerProfile does not exist for contact {contact.id} when trying to access '{variable_path}'")
             return None
-        except AttributeError: # If related object is None
+        except AttributeError: # If related object is None (e.g., customerprofile not yet created)
             logger.warning(f"Contact {contact.id} has no 'customerprofile' related object (or it's None) for path '{variable_path}'")
             return None
     else:
@@ -432,22 +443,19 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
                 if callable(attr_or_method):
                     # Handle callable attributes (methods, properties)
                     try:
-                        # Attempt to call it if it takes no arguments (e.g., properties, simple getters)
-                        # This logic is complex; a simpler approach might be to only call if specifically a property or
-                        # to only support attributes. Your original code tries to intelligently call.
-                        # For Django models, typically properties (like .full_name) are accessed directly without ()
-                        # The code here tries to detect if it's a method requiring no args.
                         num_args = -1
-                        # Inspect function/method signature to see if it's callable without arguments
-                        if hasattr(attr_or_method, '__func__'): # For methods on instances
-                            num_args = attr_or_method.__func__.__code__.co_argcount - (1 if not isinstance(attr_or_method.__self__, type) else 0) # Subtract 1 for 'self'
+                        # For methods on instances (including properties)
+                        if hasattr(attr_or_method, '__func__'):
+                            # inspect.signature might be more robust, but this checks for 'self' arg
+                            num_args = attr_or_method.__func__.__code__.co_argcount - (1 if not isinstance(attr_or_method.__self__, type) else 0) 
                             if num_args == 0:
                                 current_value = attr_or_method()
                                 logger.debug(f"Called method '{part}' from path '{variable_path}'.")
                             else:
                                 logger.debug(f"Method '{part}' requires {num_args} args, returning method itself for path '{variable_path}'.")
                                 current_value = attr_or_method # Return the callable if it needs args
-                        elif hasattr(attr_or_method, '__code__'): # For plain functions or staticmethods
+                        # For plain functions or staticmethods (no 'self' arg)
+                        elif hasattr(attr_or_method, '__code__'):
                             num_args = attr_or_method.__code__.co_argcount
                             if num_args == 0:
                                 current_value = attr_or_method()
@@ -530,6 +538,7 @@ def _resolve_template_components(components_config: list, flow_context: dict, co
         return []
     try:
         # Deep copy the config to avoid modifying the original Pydantic object
+        # Use json.loads(json.dumps()) for a simple deep copy of JSON-serializable objects
         resolved_components_list = json.loads(json.dumps(components_config))
         logger.debug(f"Resolving template components. Initial count: {len(resolved_components_list)}. Initial data (sample): {str(resolved_components_list)[:200]}")
 
@@ -610,6 +619,9 @@ def _clear_contact_flow_state(contact: Contact, error: bool = False, reason: str
 
 # Helper to update Contact model fields
 def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
+    """
+    Updates a field on the Contact model (or its custom_fields JSONField) dynamically.
+    """
     if not field_path:
         logger.warning(f"_update_contact_data: Empty field_path for contact {contact.whatsapp_id} (ID: {contact.id}).")
         return
@@ -617,10 +629,10 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
     logger.debug(f"Attempting to update Contact {contact.whatsapp_id} (ID: {contact.id}) field/path '{field_path}' to value '{str(value_to_set)[:100]}'.")
     parts = field_path.split('.')
     
-    if len(parts) == 1:
+    if len(parts) == 1: # Direct field on Contact model
         field_name = parts[0]
         # Protect common fields that should not be directly updated this way
-        protected_fields = ['id', 'pk', 'whatsapp_id', 'company', 'company_id', 'created_at', 'updated_at', 'customerprofile', 'messages', 'current_flow', 'current_flow_state']
+        protected_fields = ['id', 'pk', 'whatsapp_id', 'company', 'company_id', 'created_at', 'updated_at', 'customerprofile', 'messages', 'current_flow', 'current_flow_state', 'needs_human_intervention', 'intervention_requested_at']
         if field_name.lower() in protected_fields:
             logger.warning(f"Attempt to update protected or relational Contact field '{field_name}' denied for contact {contact.whatsapp_id}.")
             return
@@ -633,7 +645,7 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
                 logger.error(f"Error setting Contact field '{field_name}' for {contact.whatsapp_id}: {e}", exc_info=True)
         else:
             logger.warning(f"Contact field '{field_name}' not found on Contact model for contact {contact.whatsapp_id}.")
-    elif parts[0] == 'custom_fields': # Assumed to be a JSONField
+    elif parts[0] == 'custom_fields': # Nested field within Contact.custom_fields (JSONField)
         if not hasattr(contact, 'custom_fields') or contact.custom_fields is None:
             contact.custom_fields = {}
         elif not isinstance(contact.custom_fields, dict):
@@ -641,27 +653,27 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
             contact.custom_fields = {}
 
         current_level = contact.custom_fields
-        for i, key in enumerate(parts[1:-1]):
+        for i, key in enumerate(parts[1:-1]): # Traverse all but the last part
             if not isinstance(current_level, dict):
                 logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: '{key}' is not traversable (parent not a dict) for path '{field_path}'. Current part of path: {parts[1:i+1]}")
                 return
-            current_level = current_level.setdefault(key, {})
-            if not isinstance(current_level, dict):
-                logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: Could not ensure dict at '{key}' for path '{field_path}'.")
+            current_level = current_level.setdefault(key, {}) # Create dict if key doesn't exist
+            if not isinstance(current_level, dict): # Ensure setdefault didn't overwrite with non-dict
+                logger.error(f"Path error in Contact.custom_id fields for {contact.whatsapp_id}: Could not ensure dict at '{key}' for path '{field_path}'.")
                 return
             
-        final_key = parts[-1]
-        if len(parts) > 1 :
+        final_key = parts[-1] # The last part is the field to set
+        if len(parts) > 1 : # Ensure there's at least one key after 'custom_fields'
             if isinstance(current_level, dict):
                 current_level[final_key] = value_to_set
-                contact.save(update_fields=['custom_fields'])
+                contact.save(update_fields=['custom_fields']) # Save the updated JSONField
                 logger.info(f"Updated Contact {contact.whatsapp_id} custom_fields path '{'.'.join(parts[1:])}' to '{str(value_to_set)[:100]}'.")
             else:
                 logger.error(f"Error updating Contact {contact.whatsapp_id} custom_fields: Parent for final key '{final_key}' is not a dict for path '{field_path}'.")
-        else:
+        else: # Case where field_path is just 'custom_fields' (no dot notation)
             logger.warning(f"Ambiguous path '{field_path}' for updating Contact.custom_fields. Expecting 'custom_fields.some_key...'.")
             if isinstance(value_to_set, dict):
-                contact.custom_fields = value_to_set
+                contact.custom_fields = value_to_set # Replace entire custom_fields dict
                 contact.save(update_fields=['custom_fields'])
                 logger.info(f"Replaced entire Contact {contact.whatsapp_id} custom_fields with: {str(value_to_set)[:200]}")
             else:
@@ -670,8 +682,11 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
         logger.warning(f"Unsupported field path structure '{field_path}' for updating Contact model for contact {contact.whatsapp_id}.")
 
 
-# Helper to update CustomerProfile model fields
 def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dict[str, Any], flow_context: dict):
+    """
+    Updates fields on the CustomerProfile model. Handles special mappings (e.g., gender, date_of_birth)
+    and assumes CustomerProfile has JSONFields named 'preferences' and 'custom_attributes' if used.
+    """
     if not fields_to_update_config or not isinstance(fields_to_update_config, dict):
         logger.warning(f"_update_customer_profile_data called for contact {contact.whatsapp_id} (ID: {contact.id}) with invalid fields_to_update_config: {fields_to_update_config}")
         return
@@ -689,64 +704,59 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
         # Resolve value from template
         resolved_value = _resolve_value(value_template, flow_context, contact)
         
-        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, path '{field_name}', resolved value from template '{value_template}': '{str(resolved_value)[:100]}'.")
+        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, field '{field_name}', resolved value from template '{value_template}': '{str(resolved_value)[:100]}'.")
 
         # Specific handling for 'skip' keyword and special fields
         if isinstance(resolved_value, str) and resolved_value.lower() == 'skip':
+            # Try to find the model field to check if it's nullable
             model_field = next((f for f in CustomerProfile._meta.fields if f.name == field_name), None)
             if model_field and model_field.null:
-                resolved_value = None
+                resolved_value = None # Set to None if field is nullable
                 logger.debug(f"Field '{field_name}' was 'skip', resolved_value set to None as model field allows null.")
             else:
-                logger.warning(f"Field '{field_name}' was 'skip'. If model field is not nullable, this might cause issues or save the string 'skip'. Resolved value kept as 'skip' for now if not nullable.")
+                logger.warning(f"Field '{field_name}' was 'skip'. If model field is not nullable, this might cause issues or save the string 'skip'.")
                 if model_field and not model_field.null and isinstance(model_field, (models.CharField, models.TextField)):
-                    resolved_value = "" # Empty string for Char/Text fields if not nullable
+                    resolved_value = "" # Set to empty string for Char/Text fields if not nullable
                 elif model_field and not model_field.null:
                     logger.error(f"Field '{field_name}' is not nullable and was skipped. Skipping update for this field.")
-                    continue # Do not attempt to save
-        
-        # Special handling for 'gender' mapping (example)
+                    continue # Do not attempt to save this field
+
+        # Special handling for 'gender' mapping (example based on interactive reply IDs)
         if field_name == 'gender':
             gender_map = {
-                "gender_male": "Male", # Match choices in CustomerProfile model
-                "gender_female": "Female",
-                "gender_other": "Other",
-                "gender_skip": None # If you have a 'prefer_not_to_say' choice, use that
+                "gender_male": "M", # Map reply IDs to model choices
+                "gender_female": "F",
+                "gender_other": "O",
+                "gender_skip": None # If you have a 'prefer_not_to_say' choice, use that value, otherwise None
             }
             if resolved_value is not None:
                 original_gender_reply_id = str(resolved_value).lower()
                 resolved_value = gender_map.get(original_gender_reply_id, None)
-                if resolved_value is None: # If not mapped, set to None
+                if resolved_value is None and original_gender_reply_id not in gender_map:
                     logger.warning(f"Unknown gender reply ID '{original_gender_reply_id}'. Setting gender to None.")
             logger.debug(f"Field 'gender' (original reply_id: '{original_gender_reply_id if 'original_gender_reply_id' in locals() else 'N/A'}') mapped to model value: '{resolved_value}'.")
             
-        # Special handling for 'date_of_birth' format
+        # Special handling for 'date_of_birth' format (assuming YYYY-MM-DD string)
         elif field_name == 'date_of_birth':
             if isinstance(resolved_value, str) and resolved_value:
-                # Basic YYYY-MM-DD validation
+                # Basic YYYY-MM-DD validation regex
                 if not re.match(r"^(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$", resolved_value):
                     logger.warning(f"Invalid date format or range for date_of_birth '{resolved_value}' for contact {contact.id}. Setting to None.")
                     resolved_value = None
-            elif not resolved_value:
+            elif not resolved_value: # If it's empty string or None
                 resolved_value = None
             logger.debug(f"Field 'date_of_birth' processed value: '{resolved_value}'.")
 
-        # Handle simple direct fields vs JSONField updates
-        # Assumes 'preferences' and 'custom_attributes' are JSONFields
-        json_field_names = ['preferences', 'custom_attributes']
+        # Handle direct model fields vs. JSONField updates (e.g., 'preferences', 'custom_attributes')
+        json_field_names = ['preferences', 'custom_attributes'] # Example JSONFields
         
-        if field_name in json_field_names: # For top-level JSON fields
+        if field_name in json_field_names:
             json_data = getattr(profile, field_name)
             if json_data is None: json_data = {}
             elif not isinstance(json_data, dict):
                 logger.error(f"CustomerProfile.{field_name} for contact {contact.id} is not a dict. Re-initializing.")
                 json_data = {}
             
-            # Since the value is already resolved, we just set it. This implies
-            # fields_to_update_config for JSON fields should provide the *final* dict value.
-            # Example: {"preferences": {"notifications": true}}
-            # If you need nested path updates for JSON fields, _get_value_from_context_or_contact
-            # would need a counterpart for setting nested JSON values.
             if isinstance(resolved_value, dict) or resolved_value is None: # Allow setting dict or None for JSONField
                  if json_data != resolved_value: # Only update if value changed
                     setattr(profile, field_name, resolved_value)
@@ -755,10 +765,10 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                     logger.debug(f"CustomerProfile JSON field '{field_name}' set to '{str(resolved_value)[:100]}'.")
             else:
                 logger.warning(f"CustomerProfile JSON field '{field_name}' expected dict or None, got '{type(resolved_value)}'. Skipping update.")
-        else: # For direct model fields
+        else: # Direct model fields (non-JSONFields)
             try:
-                # Exclude protected fields explicitly
                 protected_fields = ['id', 'pk', 'contact', 'contact_id', 'created_at', 'updated_at', 'last_updated_from_conversation', 'user']
+                
                 if hasattr(profile, field_name) and field_name.lower() not in protected_fields:
                     current_attr_val = getattr(profile, field_name)
                     # Convert Decimal to float for comparison if one is float and other is Decimal
@@ -777,10 +787,10 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                 else:
                     logger.warning(f"CustomerProfile field '{field_name}' not found on model or is protected for contact {contact.whatsapp_id}.")
             except Exception as e:
-                logger.error(f"Error setting CustomerProfile field '{field_name}' for contact {contact.id}: {e}", exc_info=True)
+                logger.error(f"Error processing CustomerProfile field '{field_name}' for contact {contact.id}: {e}", exc_info=True)
                 
     if changed_fields:
-        profile.last_updated_from_conversation = timezone.now()
+        profile.last_updated_from_conversation = timezone.now() # Update timestamp for last conversation update
         if 'last_updated_from_conversation' not in changed_fields:
             changed_fields.append('last_updated_from_conversation')
         
@@ -789,7 +799,7 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
             logger.info(f"CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}) updated. Changed fields: {changed_fields}.")
         except Exception as e_save:
             logger.error(f"Error saving CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}): {e_save}", exc_info=True)
-    elif created:
+    elif created: # If profile was just created but no specific fields were set in this config
         profile.last_updated_from_conversation = timezone.now()
         profile.save(update_fields=['last_updated_from_conversation'])
         logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial last_updated_from_conversation timestamp.")
@@ -873,6 +883,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
 
             elif actual_message_type == "interactive":
                 interactive_payload_obj: InteractiveMessagePayload = payload_field_value
+                # Access interactive payload dictionary to allow resolution
                 interactive_payload_dict = interactive_payload_obj.model_dump(exclude_none=True, by_alias=True)
                 resolved_interactive_dict = _resolve_value(interactive_payload_dict, current_step_context, contact)
                 logger.debug(f"Step '{step.name}': Resolved interactive payload: {json.dumps(resolved_interactive_dict, indent=2)}")
@@ -967,43 +978,32 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 logger.info(f"Step '{step.name}': Executing action item {i+1}/{len(action_step_config.actions_to_run)} of type '{action_type}'.")
                 
                 if action_type == ActionType.SET_CONTEXT_VARIABLE:
-                    if hasattr(action_item_root, 'variable_name') and hasattr(action_item_root, 'value_template'):
-                        resolved_value = _resolve_value(action_item_root.value_template, current_step_context, contact)
-                        current_step_context[action_item_root.variable_name] = resolved_value
-                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.variable_name}' set to: '{str(resolved_value)[:100]}'.")
-                    else:
-                         logger.error(f"Step '{step.name}': 'set_context_variable' action missing 'variable_name' or 'value_template'. Config: {action_item_root.model_dump_json()}")
+                    # Access attributes directly from action_item_root due to __getattr__
+                    resolved_value = _resolve_value(action_item_root.value_template, current_step_context, contact)
+                    current_step_context[action_item_root.variable_name] = resolved_value
+                    logger.info(f"Step '{step.name}': Context variable '{action_item_root.variable_name}' set to: '{str(resolved_value)[:100]}'.")
                 
                 elif action_type == ActionType.UPDATE_CONTACT_FIELD:
-                    if hasattr(action_item_root, 'field_path') and hasattr(action_item_root, 'value_template'):
-                        resolved_value = _resolve_value(action_item_root.value_template, current_step_context, contact)
-                        _update_contact_data(contact, action_item_root.field_path, resolved_value)
-                    else:
-                        logger.error(f"Step '{step.name}': 'update_contact_field' action missing 'field_path' or 'value_template'. Config: {action_item_root.model_dump_json()}")
+                    resolved_value = _resolve_value(action_item_root.value_template, current_step_context, contact)
+                    _update_contact_data(contact, action_item_root.field_path, resolved_value)
                 
                 elif action_type == ActionType.UPDATE_CUSTOMER_PROFILE:
-                    if hasattr(action_item_root, 'fields_to_update') and isinstance(action_item_root.fields_to_update, dict):
-                        resolved_fields_to_update = _resolve_value(action_item_root.fields_to_update, current_step_context, contact)
-                        _update_customer_profile_data(contact, resolved_fields_to_update, current_step_context)
-                    else:
-                        logger.error(f"Step '{step.name}': 'update_customer_profile' action missing 'fields_to_update' (a dictionary). Config: {action_item_root.model_dump_json()}")
+                    resolved_fields_to_update = _resolve_value(action_item_root.fields_to_update, current_step_context, contact)
+                    _update_customer_profile_data(contact, resolved_fields_to_update, current_step_context)
                 
                 elif action_type == ActionType.SWITCH_FLOW:
-                    if hasattr(action_item_root, 'target_flow_name') and action_item_root.target_flow_name is not None:
-                        resolved_initial_context = _resolve_value(action_item_root.initial_context_template or {}, current_step_context, contact)
-                        resolved_msg_body = _resolve_value(action_item_root.message_to_evaluate_for_new_flow, current_step_context, contact) if action_item_root.message_to_evaluate_for_new_flow else None
-                        
-                        logger.info(f"Step '{step.name}': Queuing switch to flow '{action_item_root.target_flow_name}'. Initial context: {resolved_initial_context}, Trigger message: '{resolved_msg_body}'")
-                        actions_to_perform.append({
-                            'type': '_internal_command_switch_flow',
-                            'target_flow_name': action_item_root.target_flow_name,
-                            'initial_context': resolved_initial_context if isinstance(resolved_initial_context, dict) else {},
-                            'new_flow_trigger_message_body': resolved_msg_body
-                        })
-                        logger.debug(f"Step '{step.name}': Switch flow action encountered. Further actions in this step will be skipped.")
-                        break # Stop processing further actions in this step after a flow switch command
-                    else:
-                         logger.error(f"Step '{step.name}': 'switch_flow' action missing 'target_flow_name'. Config: {action_item_root.model_dump_json()}")
+                    resolved_initial_context = _resolve_value(action_item_root.initial_context_template or {}, current_step_context, contact)
+                    resolved_msg_body = _resolve_value(action_item_root.message_to_evaluate_for_new_flow, current_step_context, contact) if action_item_root.message_to_evaluate_for_new_flow else None
+                    
+                    logger.info(f"Step '{step.name}': Queuing switch to flow '{action_item_root.target_flow_name}'. Initial context: {resolved_initial_context}, Trigger message: '{resolved_msg_body}'")
+                    actions_to_perform.append({
+                        'type': '_internal_command_switch_flow',
+                        'target_flow_name': action_item_root.target_flow_name,
+                        'initial_context': resolved_initial_context if isinstance(resolved_initial_context, dict) else {},
+                        'new_flow_trigger_message_body': resolved_msg_body
+                    })
+                    logger.debug(f"Step '{step.name}': Switch flow action encountered. Further actions in this step will be skipped.")
+                    break # Stop processing further actions in this step after a flow switch command
 
                 elif action_type == ActionType.FETCH_FOOTBALL_DATA:
                     if not FOOTBALL_APP_ENABLED:
@@ -1011,26 +1011,23 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context[action_item_root.output_variable_name] = "Error: Football data feature is currently unavailable."
                         continue
 
-                    if hasattr(action_item_root, 'data_type') and hasattr(action_item_root, 'output_variable_name'):
-                        selected_league_code = None
-                        if hasattr(action_item_root, 'league_code_variable') and action_item_root.league_code_variable:
-                            selected_league_code = _get_value_from_context_or_contact(action_item_root.league_code_variable, current_step_context, contact)
+                    selected_league_code = None
+                    if hasattr(action_item_root, 'league_code_variable') and action_item_root.league_code_variable:
+                        selected_league_code = _get_value_from_context_or_contact(action_item_root.league_code_variable, current_step_context, contact)
 
-                        days_past = action_item_root.days_past_for_results
-                        days_ahead = action_item_root.days_ahead_for_fixtures
+                    days_past = action_item_root.days_past_for_results
+                    days_ahead = action_item_root.days_ahead_for_fixtures
 
-                        logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code from context ('{action_item_root.league_code_variable}'): '{selected_league_code}', Data type: '{action_item_root.data_type}'.")
+                    logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code from context ('{action_item_root.league_code_variable}'): '{selected_league_code}', Data type: '{action_item_root.data_type}'.")
 
-                        display_text = get_formatted_football_data(
-                            league_code=selected_league_code,
-                            data_type=action_item_root.data_type,
-                            days_ahead=days_ahead,
-                            days_past=days_past
-                        )
-                        current_step_context[action_item_root.output_variable_name] = display_text
-                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Length: {len(display_text)}")
-                    else:
-                        logger.error(f"Step '{step.name}': 'fetch_football_data' action missing 'data_type' or 'output_variable_name'. Config: {action_item_root.model_dump_json()}")
+                    display_text = get_formatted_football_data(
+                        league_code=selected_league_code,
+                        data_type=action_item_root.data_type,
+                        days_ahead=days_ahead,
+                        days_past=days_past
+                    )
+                    current_step_context[action_item_root.output_variable_name] = display_text
+                    logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Length: {len(display_text)}")
                 
                 # --- NEW ACTION DISPATCHES ---
                 elif action_type == ActionType.CREATE_ACCOUNT:
@@ -1071,33 +1068,30 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['deposit_message'] = "Error: Deposit feature is unavailable."
                         continue
                     
-                    if hasattr(action_item_root, 'amount_template') and hasattr(action_item_root, 'description_template'):
-                        resolved_amount = _resolve_value(action_item_root.amount_template, current_step_context, contact)
-                        # Ensure amount is float for the utility function
-                        try:
-                            resolved_amount = float(resolved_amount)
-                        except (ValueError, TypeError):
-                            logger.error(f"Step '{step.name}': Deposit amount '{resolved_amount}' could not be converted to float.")
-                            current_step_context['deposit_status'] = False
-                            current_step_context['deposit_message'] = "Invalid deposit amount provided."
-                            continue
+                    resolved_amount = _resolve_value(action_item_root.amount_template, current_step_context, contact)
+                    # Ensure amount is float for the utility function
+                    try:
+                        resolved_amount = float(resolved_amount)
+                    except (ValueError, TypeError):
+                        logger.error(f"Step '{step.name}': Deposit amount '{resolved_amount}' could not be converted to float.")
+                        current_step_context['deposit_status'] = False
+                        current_step_context['deposit_message'] = "Invalid deposit amount provided."
+                        continue
 
-                        resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
-                        
-                        result = customer_data_utils.perform_deposit(
-                            whatsapp_id=contact.whatsapp_id,
-                            amount=resolved_amount,
-                            description=resolved_description
-                        )
-                        current_step_context['deposit_status'] = result['success']
-                        current_step_context['deposit_message'] = result['message']
-                        if result['success']:
-                            current_step_context['current_balance'] = result['new_balance']
-                            logger.info(f"Deposit successful for {contact.whatsapp_id}. New balance: {result['new_balance']:.2f}")
-                        else:
-                            logger.error(f"Deposit failed for {contact.whatsapp_id}: {result['message']}")
+                    resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
+                    
+                    result = customer_data_utils.perform_deposit(
+                        whatsapp_id=contact.whatsapp_id,
+                        amount=resolved_amount,
+                        description=resolved_description
+                    )
+                    current_step_context['deposit_status'] = result['success']
+                    current_step_context['deposit_message'] = result['message']
+                    if result['success']:
+                        current_step_context['current_balance'] = result['new_balance']
+                        logger.info(f"Deposit successful for {contact.whatsapp_id}. New balance: {result['new_balance']:.2f}")
                     else:
-                        logger.error(f"Step '{step.name}': 'perform_deposit' action missing 'amount_template' or 'description_template'. Config: {action_item_root.model_dump_json()}")
+                        logger.error(f"Deposit failed for {contact.whatsapp_id}: {result['message']}")
 
                 elif action_type == ActionType.PERFORM_WITHDRAWAL:
                     if not CUSTOMER_DATA_UTILS_ENABLED:
@@ -1106,33 +1100,30 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['withdrawal_message'] = "Error: Withdrawal feature is unavailable."
                         continue
                     
-                    if hasattr(action_item_root, 'amount_template') and hasattr(action_item_root, 'description_template'):
-                        resolved_amount = _resolve_value(action_item_root.amount_template, current_step_context, contact)
-                        # Ensure amount is float
-                        try:
-                            resolved_amount = float(resolved_amount)
-                        except (ValueError, TypeError):
-                            logger.error(f"Step '{step.name}': Withdrawal amount '{resolved_amount}' could not be converted to float.")
-                            current_step_context['withdrawal_status'] = False
-                            current_step_context['withdrawal_message'] = "Invalid withdrawal amount provided."
-                            continue
-                        
-                        resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
-                        
-                        result = customer_data_utils.perform_withdrawal(
-                            whatsapp_id=contact.whatsapp_id,
-                            amount=resolved_amount,
-                            description=resolved_description
-                        )
-                        current_step_context['withdrawal_status'] = result['success']
-                        current_step_context['withdrawal_message'] = result['message']
-                        if result['success']:
-                            current_step_context['current_balance'] = result['new_balance']
-                            logger.info(f"Withdrawal successful for {contact.whatsapp_id}. New balance: {result['new_balance']:.2f}")
-                        else:
-                            logger.error(f"Withdrawal failed for {contact.whatsapp_id}: {result['message']}")
+                    resolved_amount = _resolve_value(action_item_root.amount_template, current_step_context, contact)
+                    # Ensure amount is float
+                    try:
+                        resolved_amount = float(resolved_amount)
+                    except (ValueError, TypeError):
+                        logger.error(f"Step '{step.name}': Withdrawal amount '{resolved_amount}' could not be converted to float.")
+                        current_step_context['withdrawal_status'] = False
+                        current_step_context['withdrawal_message'] = "Invalid withdrawal amount provided."
+                        continue
+                    
+                    resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
+                    
+                    result = customer_data_utils.perform_withdrawal(
+                        whatsapp_id=contact.whatsapp_id,
+                        amount=resolved_amount,
+                        description=resolved_description
+                    )
+                    current_step_context['withdrawal_status'] = result['success']
+                    current_step_context['withdrawal_message'] = result['message']
+                    if result['success']:
+                        current_step_context['current_balance'] = result['new_balance']
+                        logger.info(f"Withdrawal successful for {contact.whatsapp_id}. New balance: {result['new_balance']:.2f}")
                     else:
-                        logger.error(f"Step '{step.name}': 'perform_withdrawal' action missing 'amount_template' or 'description_template'. Config: {action_item_root.model_dump_json()}")
+                        logger.error(f"Withdrawal failed for {contact.whatsapp_id}: {result['message']}")
 
                 elif action_type == ActionType.HANDLE_BETTING_ACTION:
                     if not FOOTBALL_APP_ENABLED:
@@ -1141,49 +1132,44 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context[f"{action_item_root.betting_action}_message"] = "Error: Betting feature is unavailable."
                         continue
                     
-                    if hasattr(action_item_root, 'betting_action') and action_item_root.betting_action:
-                        # Resolve all relevant parameters for betting action
-                        resolved_stake = _resolve_value(action_item_root.stake_template, current_step_context, contact) if hasattr(action_item_root, 'stake_template') else None
-                        try:
-                            if resolved_stake is not None:
-                                resolved_stake = float(resolved_stake)
-                        except (ValueError, TypeError):
-                            logger.error(f"Step '{step.name}': Betting stake '{resolved_stake}' could not be converted to float.")
-                            resolved_stake = None # Ensure it's None if invalid
+                    # Resolve all relevant parameters for betting action
+                    resolved_stake = _resolve_value(action_item_root.stake_template, current_step_context, contact) if hasattr(action_item_root, 'stake_template') else None
+                    try:
+                        if resolved_stake is not None:
+                            resolved_stake = float(resolved_stake)
+                    except (ValueError, TypeError):
+                        logger.error(f"Step '{step.name}': Betting stake '{resolved_stake}' could not be converted to float.")
+                        resolved_stake = None # Ensure it's None if invalid
 
-                        resolved_market_outcome_id = _resolve_value(action_item_root.market_outcome_id_template, current_step_context, contact) if hasattr(action_item_root, 'market_outcome_id_template') else None
-                        resolved_raw_bet_string = _resolve_value(action_item_root.raw_bet_string_template, current_step_context, contact) if hasattr(action_item_root, 'raw_bet_string_template') else None
-                        
-                        # Parameters for view_matches/view_results (if the betting_action itself involves fetching data)
-                        # Note: This overlaps with FetchFootballDataConfig, but `handle_betting_action` might
-                        # wrap some formatting specific to betting views.
-                        resolved_league_code = _resolve_value(action_item_root.league_code_template, current_step_context, contact) if hasattr(action_item_root, 'league_code_template') else None
-                        days_past = action_item_root.days_past if hasattr(action_item_root, 'days_past') else 2
-                        days_ahead = action_item_root.days_ahead if hasattr(action_item_root, 'days_ahead') else 7
+                    resolved_market_outcome_id = _resolve_value(action_item_root.market_outcome_id_template, current_step_context, contact) if hasattr(action_item_root, 'market_outcome_id_template') else None
+                    resolved_raw_bet_string = _resolve_value(action_item_root.raw_bet_string_template, current_step_context, contact) if hasattr(action_item_root, 'raw_bet_string_template') else None
+                    
+                    # Parameters for view_matches/view_results (if the betting_action itself involves fetching data)
+                    resolved_league_code = _resolve_value(action_item_root.league_code_template, current_step_context, contact) if hasattr(action_item_root, 'league_code_template') else None
+                    days_past = action_item_root.days_past if hasattr(action_item_root, 'days_past') else 2
+                    days_ahead = action_item_root.days_ahead if hasattr(action_item_root, 'days_ahead') else 7
 
 
-                        result = handle_football_betting_action(
-                            contact=contact,
-                            action_type=action_item_root.betting_action,
-                            flow_context=current_step_context, # Pass context directly for internal updates by betting action
-                            stake=resolved_stake,
-                            market_outcome_id=resolved_market_outcome_id,
-                            raw_bet_string=resolved_raw_bet_string,
-                            # Pass data fetching params
-                            league_code=resolved_league_code,
-                            days_ahead=days_ahead,
-                            days_past=days_past
-                        )
-                        current_step_context[f"{action_item_root.betting_action}_status"] = result['success']
-                        current_step_context[f"{action_item_root.betting_action}_message"] = result['message']
-                        if result['data']:
-                            current_step_context.update(result['data']) # Merge any returned data into context
-                        if result['success']:
-                            logger.info(f"Betting action '{action_item_root.betting_action}' successful for {contact.whatsapp_id}.")
-                        else:
-                            logger.error(f"Betting action '{action_item_root.betting_action}' failed for {contact.whatsapp_id}: {result['message']}")
+                    result = handle_football_betting_action(
+                        contact=contact,
+                        action_type=action_item_root.betting_action,
+                        flow_context=current_step_context, # Pass context directly for internal updates by betting action
+                        stake=resolved_stake,
+                        market_outcome_id=resolved_market_outcome_id,
+                        raw_bet_string=resolved_raw_bet_string,
+                        # Pass data fetching params
+                        league_code=resolved_league_code,
+                        days_ahead=days_ahead,
+                        days_past=days_past
+                    )
+                    current_step_context[f"{action_item_root.betting_action}_status"] = result['success']
+                    current_step_context[f"{action_item_root.betting_action}_message"] = result['message']
+                    if result['data']:
+                        current_step_context.update(result['data']) # Merge any returned data into context
+                    if result['success']:
+                        logger.info(f"Betting action '{action_item_root.betting_action}' successful for {contact.whatsapp_id}.")
                     else:
-                        logger.error(f"Step '{step.name}': 'handle_betting_action' action missing 'betting_action'. Config: {action_item_root.model_dump_json()}")
+                        logger.error(f"Betting action '{action_item_root.betting_action}' failed for {contact.whatsapp_id}: {result['message']}")
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:
@@ -1669,6 +1655,7 @@ def _evaluate_transition_condition(
         return contains
 
     elif condition_type == 'nfm_response_field_equals':
+        # NFM = Native Flow Message, assuming structure like message_data['interactive']['nfm_reply']['response_json']
         if not nfm_response_data: return False
         field_path = config.get('field_path')
         if not field_path: logger.warning(f"T_ID {transition.id}: 'nfm_response_field_equals' missing field_path."); return False
@@ -1874,198 +1861,6 @@ def _transition_to_step(
     return actions_from_new_step, context_after_new_step_execution
 
 
-def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
-    """
-    Updates a field on the Contact model (or its custom_fields JSONField) dynamically.
-    """
-    if not field_path:
-        logger.warning(f"_update_contact_data: Empty field_path for contact {contact.whatsapp_id} (ID: {contact.id}).")
-        return
-        
-    logger.debug(f"Attempting to update Contact {contact.whatsapp_id} (ID: {contact.id}) field/path '{field_path}' to value '{str(value_to_set)[:100]}'.")
-    parts = field_path.split('.')
-    
-    if len(parts) == 1: # Direct field on Contact model
-        field_name = parts[0]
-        # Protect common fields that should not be directly updated this way
-        protected_fields = ['id', 'pk', 'whatsapp_id', 'company', 'company_id', 'created_at', 'updated_at', 'customerprofile', 'messages', 'current_flow', 'current_flow_state', 'needs_human_intervention', 'intervention_requested_at']
-        if field_name.lower() in protected_fields:
-            logger.warning(f"Attempt to update protected or relational Contact field '{field_name}' denied for contact {contact.whatsapp_id}.")
-            return
-        if hasattr(contact, field_name):
-            try:
-                setattr(contact, field_name, value_to_set)
-                contact.save(update_fields=[field_name])
-                logger.info(f"Updated Contact {contact.whatsapp_id} field '{field_name}' to '{str(value_to_set)[:100]}'.")
-            except Exception as e:
-                logger.error(f"Error setting Contact field '{field_name}' for {contact.whatsapp_id}: {e}", exc_info=True)
-        else:
-            logger.warning(f"Contact field '{field_name}' not found on Contact model for contact {contact.whatsapp_id}.")
-    elif parts[0] == 'custom_fields': # Nested field within Contact.custom_fields (JSONField)
-        if not hasattr(contact, 'custom_fields') or contact.custom_fields is None:
-            contact.custom_fields = {}
-        elif not isinstance(contact.custom_fields, dict):
-            logger.error(f"Contact {contact.whatsapp_id} custom_fields is not a dict ({type(contact.custom_fields)}). Cannot update path '{field_path}'. Re-initializing.")
-            contact.custom_fields = {}
-
-        current_level = contact.custom_fields
-        for i, key in enumerate(parts[1:-1]): # Traverse all but the last part
-            if not isinstance(current_level, dict):
-                logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: '{key}' is not traversable (parent not a dict) for path '{field_path}'. Current part of path: {parts[1:i+1]}")
-                return
-            current_level = current_level.setdefault(key, {}) # Create dict if key doesn't exist
-            if not isinstance(current_level, dict): # Ensure setdefault didn't overwrite with non-dict
-                logger.error(f"Path error in Contact.custom_fields for {contact.whatsapp_id}: Could not ensure dict at '{key}' for path '{field_path}'.")
-                return
-            
-        final_key = parts[-1] # The last part is the field to set
-        if len(parts) > 1 : # Ensure there's at least one key after 'custom_fields'
-            if isinstance(current_level, dict):
-                current_level[final_key] = value_to_set
-                contact.save(update_fields=['custom_fields']) # Save the updated JSONField
-                logger.info(f"Updated Contact {contact.whatsapp_id} custom_fields path '{'.'.join(parts[1:])}' to '{str(value_to_set)[:100]}'.")
-            else:
-                logger.error(f"Error updating Contact {contact.whatsapp_id} custom_fields: Parent for final key '{final_key}' is not a dict for path '{field_path}'.")
-        else: # Case where field_path is just 'custom_fields' (no dot notation)
-            logger.warning(f"Ambiguous path '{field_path}' for updating Contact.custom_fields. Expecting 'custom_fields.some_key...'.")
-            if isinstance(value_to_set, dict):
-                contact.custom_fields = value_to_set # Replace entire custom_fields dict
-                contact.save(update_fields=['custom_fields'])
-                logger.info(f"Replaced entire Contact {contact.whatsapp_id} custom_fields with: {str(value_to_set)[:200]}")
-            else:
-                logger.warning(f"Cannot replace Contact.custom_fields for {contact.whatsapp_id} with a non-dictionary value for path '{field_path}'. Value type: {type(value_to_set)}")
-    else:
-        logger.warning(f"Unsupported field path structure '{field_path}' for updating Contact model for contact {contact.whatsapp_id}.")
-
-
-def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dict[str, Any], flow_context: dict):
-    """
-    Updates fields on the CustomerProfile model. Handles special mappings (e.g., gender, date_of_birth)
-    and assumes CustomerProfile has JSONFields named 'preferences' and 'custom_attributes' if used.
-    """
-    if not fields_to_update_config or not isinstance(fields_to_update_config, dict):
-        logger.warning(f"_update_customer_profile_data called for contact {contact.whatsapp_id} (ID: {contact.id}) with invalid fields_to_update_config: {fields_to_update_config}")
-        return
-
-    logger.debug(f"Attempting to update CustomerProfile for contact {contact.whatsapp_id} (ID: {contact.id}) with fields_to_update_config: {fields_to_update_config}")
-    
-    # Get or create CustomerProfile. Assumes 'customerprofile' related_name on Contact.
-    profile, created = CustomerProfile.objects.get_or_create(contact=contact)
-
-    if created:
-        logger.info(f"Created CustomerProfile (ID: {profile.id}) for contact {contact.whatsapp_id} (ID: {contact.id}).")
-    
-    changed_fields = []
-    for field_name, value_template in fields_to_update_config.items():
-        # Resolve value from template
-        resolved_value = _resolve_value(value_template, flow_context, contact)
-        
-        logger.debug(f"For CustomerProfile of {contact.whatsapp_id}, field '{field_name}', resolved value from template '{value_template}': '{str(resolved_value)[:100]}'.")
-
-        # Specific handling for 'skip' keyword and special fields
-        if isinstance(resolved_value, str) and resolved_value.lower() == 'skip':
-            # Try to find the model field to check if it's nullable
-            model_field = next((f for f in CustomerProfile._meta.fields if f.name == field_name), None)
-            if model_field and model_field.null:
-                resolved_value = None # Set to None if field is nullable
-                logger.debug(f"Field '{field_name}' was 'skip', resolved_value set to None as model field allows null.")
-            else:
-                logger.warning(f"Field '{field_name}' was 'skip'. If model field is not nullable, this might cause issues or save the string 'skip'.")
-                if model_field and not model_field.null and isinstance(model_field, (models.CharField, models.TextField)):
-                    resolved_value = "" # Set to empty string for Char/Text fields if not nullable
-                elif model_field and not model_field.null:
-                    logger.error(f"Field '{field_name}' is not nullable and was skipped. Skipping update for this field.")
-                    continue # Do not attempt to save this field
-
-        # Special handling for 'gender' mapping (example based on interactive reply IDs)
-        if field_name == 'gender':
-            gender_map = {
-                "gender_male": "M", # Map reply IDs to model choices
-                "gender_female": "F",
-                "gender_other": "O",
-                "gender_skip": None # If you have a 'prefer_not_to_say' choice, use that value, otherwise None
-            }
-            if resolved_value is not None:
-                original_gender_reply_id = str(resolved_value).lower()
-                resolved_value = gender_map.get(original_gender_reply_id, None)
-                if resolved_value is None and original_gender_reply_id not in gender_map:
-                    logger.warning(f"Unknown gender reply ID '{original_gender_reply_id}'. Setting gender to None.")
-            logger.debug(f"Field 'gender' (original reply_id: '{original_gender_reply_id if 'original_gender_reply_id' in locals() else 'N/A'}') mapped to model value: '{resolved_value}'.")
-            
-        # Special handling for 'date_of_birth' format (assuming YYYY-MM-DD string)
-        elif field_name == 'date_of_birth':
-            if isinstance(resolved_value, str) and resolved_value:
-                # Basic YYYY-MM-DD validation regex
-                if not re.match(r"^(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$", resolved_value):
-                    logger.warning(f"Invalid date format or range for date_of_birth '{resolved_value}' for contact {contact.id}. Setting to None.")
-                    resolved_value = None
-            elif not resolved_value: # If it's empty string or None
-                resolved_value = None
-            logger.debug(f"Field 'date_of_birth' processed value: '{resolved_value}'.")
-
-        # Handle direct model fields vs. JSONField updates (e.g., 'preferences', 'custom_attributes')
-        json_field_names = ['preferences', 'custom_attributes'] # Example JSONFields
-        
-        if field_name in json_field_names:
-            json_data = getattr(profile, field_name)
-            if json_data is None: json_data = {}
-            elif not isinstance(json_data, dict):
-                logger.error(f"CustomerProfile.{field_name} for contact {contact.id} is not a dict. Re-initializing.")
-                json_data = {}
-            
-            # For JSON fields, we assume `fields_to_update_config` provides the *final* dictionary value for that key.
-            # If you need to update *nested* paths within a JSONField (e.g., preferences.notifications),
-            # this logic would need to be expanded, potentially similar to _update_contact_data's custom_fields.
-            if isinstance(resolved_value, dict) or resolved_value is None: # Allow setting dict or None for JSONField
-                 if json_data != resolved_value: # Only update if value changed
-                    setattr(profile, field_name, resolved_value)
-                    if field_name not in changed_fields:
-                        changed_fields.append(field_name)
-                    logger.debug(f"CustomerProfile JSON field '{field_name}' set to '{str(resolved_value)[:100]}'.")
-            else:
-                logger.warning(f"CustomerProfile JSON field '{field_name}' expected dict or None, got '{type(resolved_value)}'. Skipping update.")
-        else: # Direct model fields (non-JSONFields)
-            try:
-                protected_fields = ['id', 'pk', 'contact', 'contact_id', 'created_at', 'updated_at', 'last_updated_from_conversation', 'user']
-                
-                if hasattr(profile, field_name) and field_name.lower() not in protected_fields:
-                    current_attr_val = getattr(profile, field_name)
-                    # Handle Decimal/float comparison for currency/number fields
-                    if isinstance(current_attr_val, Decimal) and isinstance(resolved_value, float):
-                        current_attr_val = float(current_attr_val)
-                    elif isinstance(resolved_value, Decimal) and isinstance(current_attr_val, float):
-                        resolved_value = float(resolved_value)
-
-                    if current_attr_val != resolved_value:
-                        setattr(profile, field_name, resolved_value)
-                        if field_name not in changed_fields:
-                            changed_fields.append(field_name)
-                        logger.debug(f"CustomerProfile field '{field_name}' set to '{str(resolved_value)[:100]}'. Old value was '{str(current_attr_val)[:100]}'")
-                    else:
-                        logger.debug(f"CustomerProfile field '{field_name}' value '{str(resolved_value)[:100]}' is same as current. No change.")
-                else:
-                    logger.warning(f"CustomerProfile field '{field_name}' not found on model or is protected for contact {contact.whatsapp_id}.")
-            except Exception as e:
-                logger.error(f"Error processing CustomerProfile field '{field_name}' for contact {contact.id}: {e}", exc_info=True)
-                
-    if changed_fields:
-        profile.last_updated_from_conversation = timezone.now() # Update timestamp for last conversation update
-        if 'last_updated_from_conversation' not in changed_fields:
-            changed_fields.append('last_updated_from_conversation')
-        
-        try:
-            profile.save(update_fields=changed_fields)
-            logger.info(f"CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}) updated. Changed fields: {changed_fields}.")
-        except Exception as e_save:
-            logger.error(f"Error saving CustomerProfile for {contact.whatsapp_id} (ID: {profile.id}): {e_save}", exc_info=True)
-    elif created: # If profile was just created but no specific fields were set in this config
-        profile.last_updated_from_conversation = timezone.now()
-        profile.save(update_fields=['last_updated_from_conversation'])
-        logger.debug(f"Saved newly created CustomerProfile for {contact.whatsapp_id} with initial last_updated_from_conversation timestamp.")
-    else:
-        logger.debug(f"No fields changed in CustomerProfile for {contact.whatsapp_id}. No save needed.")
-
-
 # --- Main Flow Processing Function ---
 @transaction.atomic
 def process_message_for_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
@@ -2220,11 +2015,6 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             # wasn't part of the new flow's entry point actions (to avoid sending old messages after a switch)
             if not processed_switch_command:
                 final_actions_for_meta_view.append(action)
-            # If a switch happened, and this message *was* from the new flow's entry point, it's already added
-            # in the block above (final_actions_for_meta_view = [act for act in switched_flow_actions...])
-            # So, for any other send_whatsapp_message, we just skip it.
-            # This logic might need fine-tuning depending on exact desired behavior for messages during/after a switch.
-            # The current implementation will correctly send only messages from the *new* flow's entry point.
             
         else:
             logger.warning(f"Unhandled action type '{action_type}' encountered during final action processing for contact {contact.whatsapp_id}. Action: {action}")
