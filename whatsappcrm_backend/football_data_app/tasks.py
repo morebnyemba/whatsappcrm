@@ -21,6 +21,9 @@ DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
+# NEW: Configurable duration after which a live game is assumed to be finished
+ASSUMED_COMPLETION_MINUTES = getattr(settings, 'THE_ODDS_API_ASSUMED_COMPLETION_MINUTES', 120)
+
 
 # --- Helper Function ---
 def _parse_outcome_details(outcome_name_api, market_key_api):
@@ -394,7 +397,6 @@ def fetch_scores_for_league_task(self, league_id):
         client = TheOddsAPIClient()
         scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_ids)
         
-        # NEW: Extensive logging to inspect the raw API response for debugging.
         logger.info(f"Task {task_id}: Received {len(scores_data)} score items from API for league {league.name}.")
         logger.info(f"Task {task_id}: RAW SCORES DATA for league {league.name}: {scores_data}")
         
@@ -404,23 +406,28 @@ def fetch_scores_for_league_task(self, league_id):
             fixture_api_id = score_item['id']
             fixture = fixtures_map.get(fixture_api_id)
             if not fixture:
-                logger.warning(f"Task {task_id}: Score received for unknown fixture API ID {fixture_api_id}, skipping. Fixture not in local DB or not targeted.")
+                logger.warning(f"Task {task_id}: Score received for unknown fixture API ID {fixture_api_id}, skipping.")
                 continue
 
             with transaction.atomic():
-                current_status = fixture.status # NEW: Get status before changes
+                current_status = fixture.status
                 logger.debug(f"Task {task_id}: Processing score for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Current status: {current_status}.")
                 logger.debug(f"Task {task_id}: API Score Item for fixture {fixture.id}: {score_item}")
-
 
                 commence_time = parser.isoparse(score_item['commence_time'])
                 if timezone.is_naive(commence_time):
                     commence_time = timezone.make_aware(commence_time, timezone.get_current_timezone())
 
-                # NEW: More robust status update logic with clearer logging
-                is_completed = score_item.get('completed', False)
+                is_completed_by_api = score_item.get('completed', False)
+                
+                # NEW: Time-based fallback check
+                time_since_commence = now - commence_time
+                is_assumed_finished = time_since_commence > timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
 
-                if is_completed:
+                if is_completed_by_api or is_assumed_finished:
+                    if is_assumed_finished and not is_completed_by_api:
+                        logger.warning(f"STATUS CHANGE (ASSUMED): Fixture {fixture.id} is being marked FINISHED based on time elapsed ({time_since_commence.total_seconds() / 60:.0f} mins), as 'completed' flag from API was False.")
+
                     home_s, away_s = None, None
                     if score_item.get('scores'):
                         for score in score_item['scores']:
@@ -433,7 +440,6 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.last_score_update = now
                     fixture.save()
                     
-                    # NEW: Clearer log message for status change to FINISHED
                     logger.info(f"STATUS CHANGE: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) changed from {current_status} to FINISHED. Score: {fixture.home_team_score}-{fixture.away_team_score}. Dispatching settlement chain.")
                     
                     chain(
@@ -442,7 +448,6 @@ def fetch_scores_for_league_task(self, league_id):
                         settle_tickets_for_fixture_task.s()
                     ).apply_async()
                 else:
-                    # This block handles games that are NOT completed
                     home_s, away_s = None, None
                     if score_item.get('scores'):
                         for score in score_item['scores']:
@@ -452,7 +457,6 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
                     fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
                     
-                    # NEW: Explicitly check and log status changes to LIVE
                     if current_status == FootballFixture.FixtureStatus.SCHEDULED and commence_time <= now:
                         fixture.status = FootballFixture.FixtureStatus.LIVE
                         logger.info(f"STATUS CHANGE: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) changed from {current_status} to LIVE.")
@@ -575,7 +579,6 @@ def settle_bets_for_fixture_task(self, fixture_id):
             status='PENDING'
         ).select_related('market_outcome')
         
-        # NEW: Improved logging
         found_bet_count = bets_to_settle.count()
         logger.debug(f"Task {task_id}: Found {found_bet_count} pending bets for fixture {fixture_id}.")
 
@@ -610,7 +613,6 @@ def settle_tickets_for_fixture_task(self, fixture_id):
             bets__market_outcome__market__fixture_display_id=fixture_id
         ).distinct().values_list('id', flat=True)
         
-        # NEW: Improved logging
         ticket_count = len(ticket_ids_to_check)
         logger.debug(f"Task {task_id}: Found {ticket_count} distinct tickets related to fixture {fixture_id}.")
 
@@ -631,5 +633,5 @@ def settle_tickets_for_fixture_task(self, fixture_id):
         
         logger.info(f"Task {task_id}: Settlement: Checked {ticket_count} tickets, {settled_count} were newly settled for fixture {fixture_id}.")
     except Exception as e:
-        logger.exception(f"Task {task_id}: Error settling tickets for fixture {fixture_id}. Retrying...")
+        logger.exception(f"Task {task_ed}: Error settling tickets for fixture {fixture_id}. Retrying...")
         raise self.retry(exc=e)
