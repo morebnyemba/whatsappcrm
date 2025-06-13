@@ -20,7 +20,6 @@ def process_bet_ticket_submission(
     whatsapp_id: str,
     market_outcome_ids: list[str],
     stake: float,
-    bet_type: str = BetTicket.ACCUMULATOR # Default to accumulator
 ) -> dict:
     """
     Parses the provided market outcome IDs, validates them, creates a bet ticket,
@@ -80,7 +79,7 @@ def process_bet_ticket_submission(
                 total_stake=Decimal(str(stake)),
                 potential_winnings=potential_winnings,
                 status=BetTicket.PLACED,
-                bet_type=bet_type
+                
             )
 
             # Create individual Bets for the ticket
