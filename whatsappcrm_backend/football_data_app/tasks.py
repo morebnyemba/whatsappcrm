@@ -393,7 +393,10 @@ def fetch_scores_for_league_task(self, league_id):
 
         client = TheOddsAPIClient()
         scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_ids)
-        logger.info(f"Task {task_id}: Received {len(scores_data)} scores from API for league {league.name}.")
+        
+        # NEW: Extensive logging to inspect the raw API response for debugging.
+        logger.info(f"Task {task_id}: Received {len(scores_data)} score items from API for league {league.name}.")
+        logger.info(f"Task {task_id}: RAW SCORES DATA for league {league.name}: {scores_data}")
         
         fixtures_map = {f.api_id: f for f in fixtures_to_check}
 
@@ -405,12 +408,19 @@ def fetch_scores_for_league_task(self, league_id):
                 continue
 
             with transaction.atomic():
-                logger.debug(f"Task {task_id}: Processing score for fixture {fixture.id} ({fixture_api_id}).")
+                current_status = fixture.status # NEW: Get status before changes
+                logger.debug(f"Task {task_id}: Processing score for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Current status: {current_status}.")
+                logger.debug(f"Task {task_id}: API Score Item for fixture {fixture.id}: {score_item}")
+
+
                 commence_time = parser.isoparse(score_item['commence_time'])
                 if timezone.is_naive(commence_time):
                     commence_time = timezone.make_aware(commence_time, timezone.get_current_timezone())
 
-                if score_item.get('completed', False):
+                # NEW: More robust status update logic with clearer logging
+                is_completed = score_item.get('completed', False)
+
+                if is_completed:
                     home_s, away_s = None, None
                     if score_item.get('scores'):
                         for score in score_item['scores']:
@@ -422,7 +432,9 @@ def fetch_scores_for_league_task(self, league_id):
                     fixture.status = FootballFixture.FixtureStatus.FINISHED
                     fixture.last_score_update = now
                     fixture.save()
-                    logger.info(f"Task {task_id}: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) completed. Score: {fixture.home_team_score}-{fixture.away_team_score}. Dispatching settlement chain.")
+                    
+                    # NEW: Clearer log message for status change to FINISHED
+                    logger.info(f"STATUS CHANGE: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) changed from {current_status} to FINISHED. Score: {fixture.home_team_score}-{fixture.away_team_score}. Dispatching settlement chain.")
                     
                     chain(
                         settle_outcomes_for_fixture_task.s(fixture.id),
@@ -430,23 +442,28 @@ def fetch_scores_for_league_task(self, league_id):
                         settle_tickets_for_fixture_task.s()
                     ).apply_async()
                 else:
-                    if fixture.status == FootballFixture.FixtureStatus.SCHEDULED and commence_time <= now:
-                         fixture.status = FootballFixture.FixtureStatus.LIVE
-                         logger.info(f"Task {task_id}: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) is now LIVE.")
-                    
+                    # This block handles games that are NOT completed
                     home_s, away_s = None, None
                     if score_item.get('scores'):
                         for score in score_item['scores']:
                             if score['name'] == fixture.home_team.name: home_s = score['score']
                             if score['name'] == fixture.away_team.name: away_s = score['score']
                     
-                    # Only update scores if they are provided, otherwise retain existing
                     fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
                     fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
+                    
+                    # NEW: Explicitly check and log status changes to LIVE
+                    if current_status == FootballFixture.FixtureStatus.SCHEDULED and commence_time <= now:
+                        fixture.status = FootballFixture.FixtureStatus.LIVE
+                        logger.info(f"STATUS CHANGE: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) changed from {current_status} to LIVE.")
+                    elif current_status == FootballFixture.FixtureStatus.LIVE:
+                        logger.info(f"STATUS RETAINED: Fixture {fixture.id} is still LIVE. Updating scores.")
+                    else:
+                        logger.warning(f"STATUS UNCHANGED: Fixture {fixture.id} has status {current_status} but was in score feed without being 'completed'. No status change applied.")
 
                     fixture.last_score_update = now
                     fixture.save()
-                    logger.debug(f"Task {task_id}: Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) status: {fixture.status}. Current scores: {fixture.home_team_score}-{fixture.away_team_score}.")
+                    logger.debug(f"Task {task_id}: Finished processing non-completed fixture {fixture.id}. Final status: {fixture.status}. Current scores: {fixture.home_team_score}-{fixture.away_team_score}.")
 
     except League.DoesNotExist:
         logger.warning(f"Task {task_id}: League with ID {league_id} not found for score fetching. Skipping.")
@@ -557,7 +574,10 @@ def settle_bets_for_fixture_task(self, fixture_id):
             market_outcome__market__fixture_display_id=fixture_id, 
             status='PENDING'
         ).select_related('market_outcome')
-        logger.debug(f"Task {task_id}: Found {bets_to_settle.count()} pending bets for fixture {fixture_id}.")
+        
+        # NEW: Improved logging
+        found_bet_count = bets_to_settle.count()
+        logger.debug(f"Task {task_id}: Found {found_bet_count} pending bets for fixture {fixture_id}.")
 
         updated_bets = []
         for bet in bets_to_settle:
@@ -569,7 +589,7 @@ def settle_bets_for_fixture_task(self, fixture_id):
         
         if updated_bets:
             Bet.objects.bulk_update(updated_bets, ['status'])
-            logger.info(f"Task {task_id}: Settlement: Settled {len(updated_bets)} bets for fixture {fixture_id}.")
+            logger.info(f"Task {task_id}: Settlement: Settled {len(updated_bets)} of {found_bet_count} pending bets for fixture {fixture_id}.")
         else:
             logger.info(f"Task {task_id}: Settlement: No bets needed status update for fixture {fixture_id}.")
         return fixture_id
@@ -589,19 +609,27 @@ def settle_tickets_for_fixture_task(self, fixture_id):
         ticket_ids_to_check = BetTicket.objects.filter(
             bets__market_outcome__market__fixture_display_id=fixture_id
         ).distinct().values_list('id', flat=True)
-        logger.debug(f"Task {task_id}: Found {len(ticket_ids_to_check)} distinct tickets related to fixture {fixture_id}.")
+        
+        # NEW: Improved logging
+        ticket_count = len(ticket_ids_to_check)
+        logger.debug(f"Task {task_id}: Found {ticket_count} distinct tickets related to fixture {fixture_id}.")
 
+        settled_count = 0
         for ticket_id in ticket_ids_to_check:
             ticket = BetTicket.objects.prefetch_related('bets__market_outcome').get(id=ticket_id)
             
             if all(b.status != 'PENDING' for b in ticket.bets.all()):
                 original_status = ticket.status
                 ticket.settle_ticket() # This method should contain the logic to set ticket status and potentially credit user
-                logger.info(f"Task {task_id}: Ticket {ticket_id} settled. Status changed from {original_status} to {ticket.status}. Customer: {ticket.customer.id}.")
+                if original_status != ticket.status:
+                    settled_count += 1
+                    logger.info(f"Task {task_id}: Ticket {ticket_id} settled. Status changed from {original_status} to {ticket.status}. Customer: {ticket.customer.id}.")
+                else:
+                    logger.debug(f"Task {task_id}: Ticket {ticket_id} was already settled. Status remains {ticket.status}.")
             else:
                 logger.info(f"Task {task_id}: Ticket {ticket_id} still has pending bets, not yet settled. Current status: {ticket.status}.")
-
-        logger.info(f"Task {task_id}: Settlement: Checked {len(ticket_ids_to_check)} tickets for fixture {fixture_id}.")
+        
+        logger.info(f"Task {task_id}: Settlement: Checked {ticket_count} tickets, {settled_count} were newly settled for fixture {fixture_id}.")
     except Exception as e:
         logger.exception(f"Task {task_id}: Error settling tickets for fixture {fixture_id}. Retrying...")
         raise self.retry(exc=e)
