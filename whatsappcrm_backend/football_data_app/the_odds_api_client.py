@@ -20,7 +20,6 @@ class TheOddsAPIException(Exception):
 class TheOddsAPIClient:
     """A robust client for making live requests to The Odds API."""
     def __init__(self, api_key: Optional[str] = None):
-        # Using os.getenv is common for containerized environments like Docker
         self.api_key = api_key or os.getenv('THE_ODDS_API_KEY')
         if not self.api_key:
             logger.critical("THE_ODDS_API_KEY environment variable not set. This will prevent API calls.")
@@ -71,13 +70,11 @@ class TheOddsAPIClient:
 
     def get_sports(self, all_sports: bool = False) -> List[dict]:
         """Fetches available sports."""
-        logger.debug(f"Calling get_sports with all_sports={all_sports}")
         params = {'all': 'true'} if all_sports else {}
         return self._request("GET", "/sports", params=params)
 
     def get_events(self, sport_key: str) -> List[dict]:
         """Fetches event IDs and basic details for a specific sport key."""
-        logger.debug(f"Calling get_events for sport_key={sport_key}")
         return self._request("GET", f"/sports/{sport_key}/events")
 
     def get_odds(self, sport_key: str, regions: str, markets: str, event_ids: List[str]) -> List[dict]:
