@@ -1,8 +1,8 @@
 # whatsappcrm_backend/football_data_app/flow_actions.py
 
-from ..conversations.models import Contact
-from ..customer_data.models import CustomerProfile, UserWallet
-from ..customer_data.ticket_processing import process_bet_ticket_submission
+from conversations.models import Contact
+from customer_data.models import CustomerProfile, UserWallet
+from customer_data.ticket_processing import process_bet_ticket_submission
 # IMPORTANT: Using 'FootballFixture' as the main fixture model name
 from .models import FootballFixture, MarketOutcome # Import FootballFixture directly
 from .football_engine import FootballEngine # Retained for other specific engine operations if any

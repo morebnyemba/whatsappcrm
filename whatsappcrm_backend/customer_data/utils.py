@@ -4,7 +4,7 @@ import secrets
 import string
 from django.db import transaction
 from django.contrib.auth import get_user_model
-from ..conversations.models import Contact
+from conversations.models import Contact
 from .models import CustomerProfile, UserWallet, WalletTransaction
 
 User = get_user_model()
