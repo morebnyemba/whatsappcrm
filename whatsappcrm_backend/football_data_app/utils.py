@@ -10,11 +10,7 @@ from decimal import Decimal
 from typing import Optional, Dict, List, Any
 from football_data_app.models import *
 # Lazy imports for models. Using `FootballFixture` as the main fixture model name.
-FootballFixture = apps.get_model('football_data_app', 'FootballFixture') # Correct model name
-MarketOutcome = apps.get_model('football_data_app', 'MarketOutcome')
-Market = apps.get_model('football_data_app', 'Market')
-League = apps.get_model('football_data_app', 'League')
-Team = apps.get_model('football_data_app', 'Team')
+
 
 
 logger = logging.getLogger(__name__)
