@@ -300,3 +300,7 @@ JAZZMIN_UI_TWEAKS = {
 THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', '4f000fd6ee4537818f8878e9f3869223') # Replace with your actual key or ensure env var is set
 
 # Operational Parameters for The Odds API tasks
+# In settings.py
+
+# A curated list of 10 major bookmakers for a balance of performance and coverage.
+THE_ODDS_API_TARGET_BOOKMAKER = 'pinnacle,unibet,draftkings,fanduel,betmgm,betrivers,lowvig,williamhill_us,mybookieag,bovada'
