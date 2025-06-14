@@ -228,8 +228,8 @@ class StepConfigSendMessage(BasePydanticConfig):
             if not interactive_payload or not getattr(interactive_payload, 'type', None):
                 raise ValueError("For 'interactive' messages, the 'interactive' payload object must exist and itself specify an interactive 'type' (e.g., 'button', 'list').")
             
-            interactive_internal_type = interactive_payload.get('type') # Access directly as dict key
-            interactive_action = interactive_payload.get('action') # Access directly as dict key
+            interactive_internal_type = interactive_payload.type
+            interactive_action = interactive_payload.action
             
             if interactive_internal_type == "button" and not isinstance(interactive_action, InteractiveButtonAction):
                 raise ValueError("For interactive message type 'button', the 'action' field must be a valid InteractiveButtonAction.")

@@ -7,7 +7,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
-DEFAULT_TIMEOUT = 30 # seconds
+DEFAULT_TIMEOUT = 30
 
 class TheOddsAPIException(Exception):
     """Custom exception for The Odds API client errors."""
@@ -45,7 +45,6 @@ class TheOddsAPIClient:
                 logger.info(f"The Odds API Rate Limit: Remaining: {remaining}, Used: {used}")
 
             response.raise_for_status()
-            logger.debug(f"API Response: Successful (Status: {response.status_code}) for {url}.")
             return response.json()
 
         except requests.exceptions.HTTPError as e:
@@ -69,18 +68,14 @@ class TheOddsAPIClient:
             raise TheOddsAPIException(f"Request failed: {e}") from e
 
     def get_sports(self, all_sports: bool = False) -> List[dict]:
-        """Fetches available sports."""
         params = {'all': 'true'} if all_sports else {}
         return self._request("GET", "/sports", params=params)
 
     def get_events(self, sport_key: str) -> List[dict]:
-        """Fetches event IDs and basic details for a specific sport key."""
         return self._request("GET", f"/sports/{sport_key}/events")
 
     def get_odds(self, sport_key: str, regions: str, markets: str, event_ids: List[str], bookmakers: Optional[str] = None) -> List[dict]:
-        """Fetches odds for FEATURED markets, which can be done in batches."""
-        if not event_ids:
-            return []
+        if not event_ids: return []
         params = {
             "regions": regions, "markets": markets,
             "oddsFormat": "decimal", "dateFormat": "iso",
@@ -91,7 +86,6 @@ class TheOddsAPIClient:
         return self._request("GET", f"/sports/{sport_key}/odds", params=params)
 
     def get_event_odds(self, event_id: str, regions: str, markets: str, bookmakers: Optional[str] = None) -> dict:
-        """Fetches odds for a SINGLE event, required for 'Additional Markets' like btts."""
         params = {
             "regions": regions, "markets": markets,
             "oddsFormat": "decimal", "dateFormat": "iso",
@@ -100,10 +94,8 @@ class TheOddsAPIClient:
             params['bookmakers'] = bookmakers
         return self._request("GET", f"/events/{event_id}/odds", params=params)
 
-    def get_scores(self, sport_key: str, event_ids: Optional[List[str]] = None, days_from_now: int = 3) -> List[dict]:
-        """Fetches scores for events."""
+    def get_scores(self, sport_key: str, event_ids: Optional[List[str]] = None) -> List[dict]:
+        params = {}
         if event_ids:
-            params = {"eventIds": ",".join(event_ids)}
-        else:
-            params = {'daysFrom': days_from_now}
+            params['eventIds'] = ','.join(event_ids)
         return self._request("GET", f"/sports/{sport_key}/scores", params=params)
