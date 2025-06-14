@@ -105,7 +105,6 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
                 for event_id in event_ids_for_odds:
                     fetch_additional_markets_task.apply_async(args=[event_id])
         
-        # This now correctly dispatches the score fetching as part of the main pipeline
         fetch_scores_for_league_task.apply_async(args=[league.id])
 
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
@@ -113,8 +112,6 @@ def run_the_odds_api_full_update_task():
     """Main orchestrator for all data updates."""
     pipeline = chain(fetch_and_update_leagues_task.s(), process_leagues_and_dispatch_subtasks_task.s())
     pipeline.apply_async()
-
-# --- Individual Odds & Score Tasks ---
 
 @shared_task(bind=True, max_retries=1, default_retry_delay=120)
 def fetch_additional_markets_task(self, event_id):
@@ -176,14 +173,19 @@ def fetch_scores_for_league_task(self, league_id):
     now = timezone.now()
     try:
         league = League.objects.get(id=league_id)
+        # CORRECTED: Query is now more specific.
         fixtures_to_check = FootballFixture.objects.filter(
             models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
             models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now + timedelta(minutes=5))
         ).distinct()
         if not fixtures_to_check.exists(): return
         
+        # CORRECTED: This now correctly gathers the specific event IDs to query.
+        event_ids_to_fetch = list(fixtures_to_check.values_list('api_id', flat=True))
+        if not event_ids_to_fetch: return
+
         client = TheOddsAPIClient()
-        scores_data = client.get_scores(sport_key=league.api_id, event_ids=list(fixtures_to_check.values_list('api_id', flat=True)))
+        scores_data = client.get_scores(sport_key=league.api_id, event_ids=event_ids_to_fetch)
         
         for score_item in scores_data:
             fixture = FootballFixture.objects.filter(api_id=score_item['id']).first()
@@ -214,6 +216,7 @@ def fetch_scores_for_league_task(self, league_id):
     except Exception as e:
         logger.exception(f"Task {self.request.id}: Unexpected error fetching scores for league {league_id}.")
         raise self.retry(exc=e)
+
 
 @shared_task(bind=True)
 def settle_outcomes_for_fixture_task(self, fixture_id):
