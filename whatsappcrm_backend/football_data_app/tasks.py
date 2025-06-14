@@ -45,7 +45,6 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    """Step 1: Fetches and updates football leagues from the API."""
     task_id = self.request.id
     logger.info(f"Task {task_id}: Starting league fetch task.")
     client = TheOddsAPIClient()
@@ -63,7 +62,6 @@ def fetch_and_update_leagues_task(self):
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id):
-    """(Sub-task) Fetches events for a specific league."""
     task_id = self.request.id
     logger.info(f"Task {task_id}: Starting event fetch for league ID: {league_id}.")
     client = TheOddsAPIClient()
@@ -89,7 +87,6 @@ def fetch_events_for_league_task(self, league_id):
 
 @shared_task(bind=True)
 def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
-    """Step 2: Iterates through leagues to dispatch odds and score updates."""
     now = timezone.now()
     for league in League.objects.filter(active=True):
         if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
@@ -117,14 +114,11 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
 
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
 def run_the_odds_api_full_update_task():
-    """Main orchestrator task."""
     pipeline = chain(fetch_and_update_leagues_task.s(), process_leagues_and_dispatch_subtasks_task.s())
     pipeline.apply_async()
 
-
 @shared_task(bind=True, max_retries=1, default_retry_delay=120)
 def fetch_additional_markets_task(self, event_id):
-    """Fetches 'Additional Markets' for a single event."""
     client = TheOddsAPIClient()
     try:
         fixture = FootballFixture.objects.get(api_id=event_id)
@@ -244,17 +238,14 @@ def fetch_scores_for_league_task(self, league_id):
                         fixture.home_team_score, fixture.away_team_score = (int(home_s) if home_s else None), (int(away_s) if away_s else None)
                         fixture.status = FootballFixture.FixtureStatus.FINISHED
                         fixture.save()
-                        logger.info(f"STATUS CHANGE: Fixture {fixture.id} from {current_status} to FINISHED.")
                         chain(settle_outcomes_for_fixture_task.s(fixture.id), settle_bets_for_fixture_task.s(), settle_tickets_for_fixture_task.s()).apply_async()
                 else:
                     if fixture.status == FootballFixture.FixtureStatus.SCHEDULED and commence_time <= now:
                         fixture.status = FootballFixture.FixtureStatus.LIVE
                         fixture.save()
-                        logger.info(f"STATUS CHANGE: Fixture {fixture.id} from {current_status} to LIVE.")
     except Exception as e:
         logger.exception(f"Task {self.request.id}: Unexpected error fetching scores for league {league_id}.")
         raise self.retry(exc=e)
-
 
 @shared_task(bind=True)
 def settle_outcomes_for_fixture_task(self, fixture_id):
