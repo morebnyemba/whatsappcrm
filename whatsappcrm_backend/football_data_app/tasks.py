@@ -44,8 +44,7 @@ def _parse_outcome_details(outcome_name_api, market_key_api):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self):
-    task_id = self.request.id
-    logger.info(f"Task {task_id}: Starting league fetch task.")
+    """Step 1: Fetches and updates football leagues from the API."""
     client = TheOddsAPIClient()
     try:
         sports_data = client.get_sports(all_sports=True)
@@ -56,13 +55,12 @@ def fetch_and_update_leagues_task(self):
                 defaults={'name': item.get('title', 'Unknown'), 'sport_key': 'soccer', 'active': True}
             )
     except Exception as e:
-        logger.exception(f"Task {task_id}: Critical error in league fetching task. Retrying...")
+        logger.exception(f"Task {self.request.id}: Critical error in league fetching. Retrying...")
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id):
-    task_id = self.request.id
-    logger.info(f"Task {task_id}: Starting event fetch for league ID: {league_id}.")
+    """(Sub-task) Fetches events for a specific league."""
     client = TheOddsAPIClient()
     try:
         league = League.objects.get(id=league_id)
@@ -78,14 +76,13 @@ def fetch_events_for_league_task(self, league_id):
                 )
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
-    except League.DoesNotExist:
-        logger.warning(f"Task {task_id}: League with ID {league_id} not found.")
     except Exception as e:
-        logger.exception(f"Task {task_id}: Unexpected error fetching events for league {league_id}. Retrying...")
+        logger.exception(f"Task {self.request.id}: Unexpected error fetching events for league {league_id}. Retrying...")
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
 def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
+    """Orchestrator for all data fetching (Events, Odds, Scores)."""
     now = timezone.now()
     for league in League.objects.filter(active=True):
         if not league.last_fetched_events or league.last_fetched_events < (now - timedelta(hours=EVENT_DISCOVERY_STALENESS_HOURS)):
@@ -108,12 +105,16 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
                 for event_id in event_ids_for_odds:
                     fetch_additional_markets_task.apply_async(args=[event_id])
         
+        # This now correctly dispatches the score fetching as part of the main pipeline
         fetch_scores_for_league_task.apply_async(args=[league.id])
 
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
 def run_the_odds_api_full_update_task():
+    """Main orchestrator for all data updates."""
     pipeline = chain(fetch_and_update_leagues_task.s(), process_leagues_and_dispatch_subtasks_task.s())
     pipeline.apply_async()
+
+# --- Individual Odds & Score Tasks ---
 
 @shared_task(bind=True, max_retries=1, default_retry_delay=120)
 def fetch_additional_markets_task(self, event_id):
@@ -134,11 +135,9 @@ def fetch_additional_markets_task(self, event_id):
                         MarketOutcome.objects.create(market=market_instance, outcome_name=name, odds=outcome_data['price'], point_value=point)
     except TheOddsAPIException as e:
         if e.status_code in [404, 422]:
-             logger.warning(f"Task {self.request.id}: API error {e.status_code} for event {event_id}. Markets not supported or event not found. Won't retry.")
+             logger.warning(f"Task {self.request.id}: API error {e.status_code} for event {event_id}. Won't retry.")
         else:
             raise self.retry(exc=e)
-    except FootballFixture.DoesNotExist:
-        logger.warning(f"Task {self.request.id}: Fixture with API ID {event_id} not found.")
     except Exception as e:
         logger.exception(f"Task {self.request.id}: Unexpected error fetching additional markets for event {event_id}. Retrying...")
         raise self.retry(exc=e)
