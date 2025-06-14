@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
 DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals")
-OUTRIGHTS_ODDS_API_MARKET = "outrights"
 ADDITIONAL_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_ADDITIONAL_MARKETS', "btts,alternate_totals,h2h_3way")
 TARGET_BOOKMAKER = getattr(settings, 'THE_ODDS_API_TARGET_BOOKMAKER', None)
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
@@ -109,7 +108,6 @@ def process_leagues_and_dispatch_subtasks_task(self, previous_task_result=None):
                 for event_id in event_ids_for_odds:
                     fetch_additional_markets_task.apply_async(args=[event_id])
         
-        fetch_outrights_for_league_task.apply_async(args=[league.id])
         fetch_scores_for_league_task.apply_async(args=[league.id])
 
 @shared_task(name="football_data_app.run_the_odds_api_full_update")
@@ -146,35 +144,7 @@ def fetch_additional_markets_task(self, event_id):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_outrights_for_league_task(self, league_id):
-    """Fetches 'outrights' (futures) odds for an entire league."""
-    client = TheOddsAPIClient()
-    try:
-        league = League.objects.get(id=league_id)
-        odds_data = client.get_odds(league.api_id, DEFAULT_ODDS_API_REGIONS, OUTRIGHTS_ODDS_API_MARKET, event_ids=None, bookmakers=TARGET_BOOKMAKER)
-        if not odds_data: return
-
-        with transaction.atomic():
-            fixture = FootballFixture.objects.filter(league=league).first()
-            if not fixture: return
-
-            Market.objects.filter(fixture_display__league=league, api_market_key=OUTRIGHTS_ODDS_API_MARKET).delete()
-            for event_data in odds_data:
-                for bookmaker_data in event_data.get('bookmakers', []):
-                    bookmaker, _ = Bookmaker.objects.get_or_create(api_bookmaker_key=bookmaker_data['key'], defaults={'name': bookmaker_data['title']})
-                    for market_data in bookmaker_data.get('markets', []):
-                        market_key, category_name = market_data['key'], market_data['key'].replace("_", " ").title()
-                        category, _ = MarketCategory.objects.get_or_create(name=category_name)
-                        market_instance = Market.objects.create(fixture_display=fixture, bookmaker=bookmaker, category=category, api_market_key=market_key, last_updated_odds_api=parser.isoparse(market_data['last_update']))
-                        for outcome_data in market_data.get('outcomes', []):
-                            MarketOutcome.objects.create(market=market_instance, outcome_name=outcome_data['name'], odds=outcome_data['price'])
-    except Exception as e:
-        logger.exception(f"Task {self.request.id}: Unexpected error fetching outrights for league {league_id}.")
-        raise self.retry(exc=e)
-
-@shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_event_batch_task(self, league_id, event_ids, markets=None, regions=None):
-    """Fetches 'Featured Markets' odds for a batch of events."""
     client = TheOddsAPIClient()
     markets_to_fetch = markets or DEFAULT_ODDS_API_MARKETS
     try:
@@ -204,7 +174,6 @@ def fetch_odds_for_event_batch_task(self, league_id, event_ids, markets=None, re
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id):
-    """Fetches scores for live/recent games and updates their status."""
     now = timezone.now()
     try:
         league = League.objects.get(id=league_id)
@@ -249,7 +218,6 @@ def fetch_scores_for_league_task(self, league_id):
 
 @shared_task(bind=True)
 def settle_outcomes_for_fixture_task(self, fixture_id):
-    """Settles all market outcomes for a finished fixture."""
     try:
         fixture = FootballFixture.objects.get(id=fixture_id, status=FootballFixture.FixtureStatus.FINISHED)
         if fixture.home_team_score is None or fixture.away_team_score is None: return
@@ -285,7 +253,6 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
 
 @shared_task(bind=True)
 def settle_bets_for_fixture_task(self, fixture_id):
-    """Settles all individual bets for a fixture."""
     if not fixture_id: return
     try:
         bets = Bet.objects.filter(market_outcome__market__fixture_display_id=fixture_id, status='PENDING').select_related('market_outcome')
@@ -300,7 +267,6 @@ def settle_bets_for_fixture_task(self, fixture_id):
 
 @shared_task(bind=True)
 def settle_tickets_for_fixture_task(self, fixture_id):
-    """Settles all bet tickets related to a fixture."""
     if not fixture_id: return
     try:
         ticket_ids = BetTicket.objects.filter(bets__market_outcome__market__fixture_display_id=fixture_id).distinct().values_list('id', flat=True)
