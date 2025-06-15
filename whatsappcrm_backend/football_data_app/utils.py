@@ -61,7 +61,7 @@ def get_formatted_football_data(
 
         message_lines.append(main_header)
         
-        num_fixtures_to_display = 30 
+        num_fixtures_to_display = 25 
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} scheduled fixtures.")
 
         for fixture in fixtures_qs[:num_fixtures_to_display]: 
@@ -98,9 +98,9 @@ def get_formatted_football_data(
                 draw_odds = aggregated_outcomes['h2h'].get('Draw-')
                 away_odds = aggregated_outcomes['h2h'].get(f"{fixture.away_team.name}-")
                 
-                if home_odds: compact_odds_parts.append(f"🏠H:*{home_odds.odds:.2f}*") 
-                if draw_odds: compact_odds_parts.append(f"🤝D:*{draw_odds.odds:.2f}*")
-                if away_odds: compact_odds_parts.append(f"✈️A:*{away_odds.odds:.2f}*")
+                if home_odds: compact_odds_parts.append(f"🏠Home:*{home_odds.odds:.2f}*") 
+                if draw_odds: compact_odds_parts.append(f"🤝Draw:*{draw_odds.odds:.2f}*")
+                if away_odds: compact_odds_parts.append(f"✈️Away:*{away_odds.odds:.2f}*")
 
             # Format Totals (Over/Under) odds
             if 'totals' in aggregated_outcomes:
