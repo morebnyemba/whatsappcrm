@@ -1,6 +1,6 @@
 import logging
 from datetime import timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from celery import shared_task, chain, group
 from django.db import transaction, models
@@ -31,11 +31,10 @@ STALENESS_MINUTES = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 300  # seconds
 
+# --- Utility Functions ---
 def _parse_outcome_details(outcome_name: str, market_key: str) -> tuple:
     """Parse outcome name and point value from API response."""
-    name_part = outcome_name
-    point_part = None
-    
+    name_part, point_part = outcome_name, None
     if market_key in ['totals', 'spreads', 'alternate_totals']:
         try:
             parts = outcome_name.split()
@@ -45,7 +44,6 @@ def _parse_outcome_details(outcome_name: str, market_key: str) -> tuple:
                 name_part = " ".join(parts[:-1]) or outcome_name
         except (ValueError, IndexError):
             logger.debug(f"Couldn't parse point from outcome: {outcome_name}")
-    
     return name_part, point_part
 
 def _get_active_fixtures(league: League) -> List[str]:
@@ -64,49 +62,45 @@ def _get_active_fixtures(league: League) -> List[str]:
 
 def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, market_types: List[str]):
     """Process and save bookmaker's market data."""
-    try:
-        bookmaker, _ = Bookmaker.objects.get_or_create(
-            api_id=bookmaker_data['key'],
-            defaults={'name': bookmaker_data['title']}
+    bookmaker, _ = Bookmaker.objects.get_or_create(
+        api_id=bookmaker_data['key'],
+        defaults={'name': bookmaker_data['title']}
+    )
+    
+    for market_data in bookmaker_data.get('markets', []):
+        market_key = market_data['key']
+        if market_key not in market_types:
+            continue
+            
+        # Delete existing before creating new
+        Market.objects.filter(
+            fixture=fixture,
+            bookmaker=bookmaker,
+            api_market_key=market_key
+        ).delete()
+        
+        category, _ = MarketCategory.objects.get_or_create(
+            name=market_key.replace("_", " ").title()
         )
         
-        for market_data in bookmaker_data.get('markets', []):
-            market_key = market_data['key']
-            if market_key not in market_types:
-                continue
-                
-            # Delete existing before creating new
-            Market.objects.filter(
-                fixture=fixture,
-                bookmaker=bookmaker,
-                api_market_key=market_key
-            ).delete()
-            
-            category, _ = MarketCategory.objects.get_or_create(
-                name=market_key.replace("_", " ").title()
+        market = Market.objects.create(
+            fixture=fixture,
+            bookmaker=bookmaker,
+            category=category,
+            api_market_key=market_key,
+            last_updated=parser.parse(market_data['last_update'])
+        )
+        
+        for outcome_data in market_data.get('outcomes', []):
+            name, point = _parse_outcome_details(outcome_data['name'], market_key)
+            MarketOutcome.objects.create(
+                market=market,
+                outcome_name=name,
+                odds=outcome_data['price'],
+                point_value=point
             )
-            
-            market = Market.objects.create(
-                fixture=fixture,
-                bookmaker=bookmaker,
-                category=category,
-                api_market_key=market_key,
-                last_updated=parser.parse(market_data['last_update'])
-            )
-            
-            for outcome_data in market_data.get('outcomes', []):
-                name, point = _parse_outcome_details(outcome_data['name'], market_key)
-                MarketOutcome.objects.create(
-                    market=market,
-                    outcome_name=name,
-                    odds=outcome_data['price'],
-                    point_value=point
-                )
-                
-    except Exception as e:
-        logger.error(f"Error processing bookmaker data: {str(e)}")
-        raise  # Re-raise to trigger task retry
 
+# --- Core Tasks ---
 @shared_task(bind=True, max_retries=MAX_RETRIES, default_retry_delay=RETRY_DELAY)
 def update_league_odds(self, league_id: int):
     """Main task to update all odds for a league."""
@@ -220,6 +214,7 @@ def fetch_additional_markets(self, event_id: str):
         logger.error(f"Failed event processing {event_id}: {str(e)}")
         raise self.retry(exc=e)
 
+# --- Orchestrator Tasks ---
 @shared_task
 def update_all_leagues_odds():
     """Orchestrate odds updates for all active leagues."""
@@ -337,3 +332,46 @@ def _determine_outcome_status(outcome: MarketOutcome, home_score: int, away_scor
         return 'WON' if home_score == 0 or away_score == 0 else 'LOST'
     
     return 'LOST'  # Default case
+
+# --- Maintenance Tasks ---
+@shared_task
+def cleanup_old_data(days_old: int = 90):
+    """Cleanup old data to maintain database performance."""
+    cutoff = timezone.now() - timedelta(days=days_old)
+    
+    with transaction.atomic():
+        # Delete old finished fixtures and related data
+        old_fixtures = FootballFixture.objects.filter(
+            status=FootballFixture.FixtureStatus.FINISHED,
+            start_time__lt=cutoff
+        )
+        count = old_fixtures.count()
+        old_fixtures.delete()
+        logger.info(f"Deleted {count} old fixtures")
+
+@shared_task
+def verify_data_consistency():
+    """Check and report data consistency issues."""
+    issues = []
+    
+    # Check for fixtures without markets
+    no_markets = FootballFixture.objects.filter(
+        status=FootballFixture.FixtureStatus.SCHEDULED,
+        start_time__gt=timezone.now(),
+        markets__isnull=True
+    ).count()
+    
+    if no_markets > 0:
+        issues.append(f"{no_markets} upcoming fixtures have no markets")
+    
+    # Check for markets without outcomes
+    no_outcomes = Market.objects.filter(outcomes__isnull=True).count()
+    if no_outcomes > 0:
+        issues.append(f"{no_outcomes} markets have no outcomes")
+    
+    if issues:
+        logger.warning("Data consistency issues found:\n" + "\n".join(issues))
+        return issues
+    
+    logger.info("Data consistency check passed")
+    return []
