@@ -60,7 +60,7 @@ def _get_active_fixtures(league: League) -> List[str]:
     ).filter(
         models.Q(last_odds_update__isnull=True) |
         models.Q(last_odds_update__lt=stale_cutoff)
-    ).values_list('api_id', flat=True)[:200]  # Safety limit
+    ).values_list('api_id', flat=True)[:200])  # Safety limit
 
 def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, market_types: List[str]):
     """Process and save bookmaker's market data."""
