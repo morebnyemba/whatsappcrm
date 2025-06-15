@@ -61,7 +61,7 @@ def get_formatted_football_data(
 
         message_lines.append(main_header)
         
-        num_fixtures_to_display = 10 
+        num_fixtures_to_display = 30 
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} scheduled fixtures.")
 
         for fixture in fixtures_qs[:num_fixtures_to_display]: 
