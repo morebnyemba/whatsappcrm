@@ -297,7 +297,7 @@ JAZZMIN_UI_TWEAKS = {
 # JWT_ACCESS_TOKEN_LIFETIME_MINUTES="60"
 # JWT_REFRESH_TOKEN_LIFETIME_DAYS="7"
 # API Key (ideally from environment variable)
-THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', '4f000fd6ee4537818f8878e9f3869223') # Replace with your actual key or ensure env var is set
+THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', 'f8aeb105b6d13a774e498b62b9b39a9f') # Replace with your actual key or ensure env var is set
 
 # Operational Parameters for The Odds API tasks
 # In settings.py
