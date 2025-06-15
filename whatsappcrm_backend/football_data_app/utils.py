@@ -114,11 +114,11 @@ def get_formatted_football_data(
                 if best_overall_over:
                     # Accessing point_value from MarketOutcome
                     over_point_str = f"{best_overall_over.point_value:.1f}" if best_overall_over.point_value is not None else ""
-                    compact_odds_parts.append(f"⬆️O{over_point_str}:*{best_overall_over.odds:.2f}*") 
+                    compact_odds_parts.append(f"⬆️Over{over_point_str}:*{best_overall_over.odds:.2f}*") 
                 if best_overall_under:
                     # Accessing point_value from MarketOutcome
                     under_point_str = f"{best_overall_under.point_value:.1f}" if best_overall_under.point_value is not None else ""
-                    compact_odds_parts.append(f"⬇️U{under_point_str}:*{best_overall_under.odds:.2f}*")
+                    compact_odds_parts.append(f"⬇️Under{under_point_str}:*{best_overall_under.odds:.2f}*")
 
             # Format Both Teams to Score (btts) odds
             if 'btts' in aggregated_outcomes:
