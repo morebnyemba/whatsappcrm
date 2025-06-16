@@ -1,244 +1,179 @@
+# football_data_app/the_odds_api_client.py
 import os
 import requests
 import logging
-import time
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Union
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
+DEFAULT_TIMEOUT = 30
+
 class TheOddsAPIException(Exception):
-    """Custom exception for API errors with detailed context."""
-    def __init__(self, message: str, status_code: Optional[int] = None, 
-                 response_text: Optional[str] = None, url: Optional[str] = None):
-        self.message = message
+    """Custom exception for The Odds API client errors."""
+    def __init__(self, message, status_code=None, response_text=None, response_json=None):
+        super().__init__(message)
         self.status_code = status_code
         self.response_text = response_text
-        self.url = url
-        super().__init__(self._format_message())
-
-    def _format_message(self) -> str:
-        msg = f"The Odds API Error: {self.message}"
-        if self.status_code:
-            msg += f" (Status: {self.status_code})"
-        if self.url:
-            msg += f" for URL: {self.url}"
-        if self.response_text:
-            msg += f" - Response: {self.response_text[:200]}"
-        return msg
+        self.response_json = response_json
 
 class TheOddsAPIClient:
-    """Production-ready client for The Odds API with complete error handling."""
-
-    BASE_URL = "https://api.the-odds-api.com/v4"
-    DEFAULT_TIMEOUT = 30
-    MAX_RETRIES = 3
-    BASE_RETRY_DELAY = 5  # seconds
-    QUOTA_EXHAUSTED_DELAY = 3600  # 1 hour
-
+    """A robust client for making live requests to The Odds API."""
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('THE_ODDS_API_KEY')
         if not self.api_key:
-            logger.critical("API key not configured")
-            raise ValueError("THE_ODDS_API_KEY must be set")
-        
-        self.session = requests.Session()
-        self.session.headers.update({
-            'Content-Type': 'application/json',
-            'User-Agent': 'SportsDataApp/1.0'
-        })
-        self._last_request_time = None
-        self._rate_limit_remaining = 100  # Conservative default
+            logger.critical("THE_ODDS_API_KEY environment variable not set. This will prevent API calls.")
+            raise ValueError("THE_ODDS_API_KEY must be set.")
+        logger.debug("TheOddsAPIClient initialized.")
 
-    def _make_request(
-        self,
-        method: str,
-        endpoint: str,
-        params: Optional[dict] = None,
-        attempt: int = 0
-    ) -> Union[dict, list]:
-        """Core request method with complete error handling."""
-        url = f"{self.BASE_URL}{endpoint}"
-        params = params or {}
-        params['apiKey'] = self.api_key
+    def _request(self, method: str, endpoint: str, params: Optional[dict] = None) -> Union[Dict, List]:
+        """Internal method to handle all live API requests."""
+        url = f"{THE_ODDS_API_BASE_URL}{endpoint}"
+        
+        request_params = params.copy() if params else {}
+        request_params['apiKey'] = self.api_key
 
         try:
-            self._enforce_rate_limit()
+            safe_params = {k: v for k, v in request_params.items() if k != 'apiKey'}
+            logger.debug(f"API Request: Method={method}, URL={url}, Params={safe_params}")
             
-            logger.debug(f"Request: {method} {url} with params {self._sanitize_params(params)}")
+            response = requests.request(method, url, params=request_params, timeout=DEFAULT_TIMEOUT)
             
-            response = self.session.request(
-                method,
-                url,
-                params=params,
-                timeout=self.DEFAULT_TIMEOUT
-            )
-            
-            self._update_rate_limit_metrics(response)
+            remaining = response.headers.get('x-requests-remaining')
+            used = response.headers.get('x-requests-used')
+            if remaining:
+                logger.info(f"The Odds API Rate Limit: Remaining: {remaining}, Used: {used}")
+
             response.raise_for_status()
             return response.json()
 
         except requests.exceptions.HTTPError as e:
-            return self._handle_http_error(e, method, url, params, attempt)
+            status_code = getattr(e.response, 'status_code', None)
+            response_text = getattr(e.response, 'text', "No response body")
+            try:
+                response_json = e.response.json() if e.response and e.response.text else None
+            except ValueError:
+                response_json = None
+            
+            log_message = (
+                f"The Odds API HTTPError for {method} {url}: {e}. Status: {status_code}. "
+                f"Response: '{response_text[:400]}...'"
+            )
+            logger.warning(log_message)
+            raise TheOddsAPIException(
+                f"HTTP error: {e}", status_code, response_text, response_json
+            ) from e
         except requests.exceptions.RequestException as e:
-            return self._handle_connection_error(e, method, url, params, attempt)
-
-    def _enforce_rate_limit(self):
-        """Ensure we don't exceed rate limits."""
-        if self._last_request_time and self._rate_limit_remaining < 5:
-            elapsed = (datetime.now() - self._last_request_time).total_seconds()
-            if elapsed < 1:
-                time.sleep(1 - elapsed)
-        self._last_request_time = datetime.now()
-
-    def _update_rate_limit_metrics(self, response: requests.Response):
-        """Track rate limit usage from headers."""
-        remaining = response.headers.get('x-requests-remaining')
-        if remaining:
-            self._rate_limit_remaining = int(remaining)
-            used = response.headers.get('x-requests-used', '?')
-            logger.info(f"Rate limits - Remaining: {remaining}, Used: {used}")
-
-    def _handle_http_error(self, e, method, url, params, attempt):
-        """Handle HTTP errors with proper retry logic."""
-        status_code = getattr(e.response, 'status_code', None)
-        response_text = getattr(e.response, 'text', '')
-        
-        # Special case: Quota exhausted
-        if status_code == 401 and 'OUT_OF_USAGE_CREDITS' in response_text:
-            if attempt < self.MAX_RETRIES:
-                logger.error("API quota exhausted - waiting before retry")
-                time.sleep(self.QUOTA_EXHAUSTED_DELAY)
-                return self._make_request(method, url, params, attempt + 1)
-            raise TheOddsAPIException(
-                "API quota exhausted after retries",
-                status_code,
-                response_text,
-                url
-            )
-            
-        # Not Found - don't retry
-        if status_code == 404:
-            raise TheOddsAPIException(
-                "Resource not found",
-                status_code,
-                response_text,
-                url
-            )
-            
-        # Rate limited - respect Retry-After header
-        if status_code == 429:
-            retry_after = int(e.response.headers.get('Retry-After', self.BASE_RETRY_DELAY))
-            if attempt < self.MAX_RETRIES:
-                logger.warning(f"Rate limited - retrying after {retry_after}s")
-                time.sleep(retry_after)
-                return self._make_request(method, url, params, attempt + 1)
-            raise TheOddsAPIException(
-                "Rate limited after max retries",
-                status_code,
-                response_text,
-                url
-            )
-            
-        # Server errors - retry with backoff
-        if status_code and 500 <= status_code < 600:
-            if attempt < self.MAX_RETRIES:
-                delay = self.BASE_RETRY_DELAY * (attempt + 1)
-                logger.warning(f"Server error {status_code} - retrying in {delay}s")
-                time.sleep(delay)
-                return self._make_request(method, url, params, attempt + 1)
-                
-        # All other HTTP errors
-        raise TheOddsAPIException(
-            f"HTTP request failed: {str(e)}",
-            status_code,
-            response_text,
-            url
-        )
-
-    def _handle_connection_error(self, e, method, url, params, attempt):
-        """Handle network issues with retries."""
-        if attempt < self.MAX_RETRIES:
-            delay = self.BASE_RETRY_DELAY * (attempt + 1)
-            logger.warning(f"Connection error - retrying in {delay}s: {str(e)}")
-            time.sleep(delay)
-            return self._make_request(method, url, params, attempt + 1)
-        raise TheOddsAPIException(
-            f"Connection failed after retries: {str(e)}",
-            None,
-            None,
-            url
-        )
-
-    def _sanitize_params(self, params: dict) -> dict:
-        """Remove sensitive info from logged params."""
-        return {k: v for k, v in params.items() if k != 'apiKey'}
-
-    # Public API Methods
+            logger.error(f"The Odds API RequestException for {method} {url}: {e}")
+            raise TheOddsAPIException(f"Request failed: {e}") from e
 
     def get_sports(self, all_sports: bool = False) -> List[dict]:
-        """Get all available sports."""
+        """Get list of available sports."""
         params = {'all': 'true'} if all_sports else {}
-        return self._make_request("GET", "/sports", params)
+        return self._request("GET", "/sports", params=params)
 
-    def get_odds_batch(
+    def get_events(self, sport_key: str, days_from_now: Optional[int] = None) -> List[dict]:
+        """Get events for a specific sport, optionally filtered by date range."""
+        params = {}
+        if days_from_now is not None:
+            date_from = datetime.utcnow()
+            date_to = date_from + timedelta(days=days_from_now)
+            params['commenceTimeFrom'] = date_from.isoformat() + 'Z'
+            params['commenceTimeTo'] = date_to.isoformat() + 'Z'
+        return self._request("GET", f"/sports/{sport_key}/events", params=params)
+
+    def get_odds(
         self,
         sport_key: str,
-        event_ids: List[str],
-        regions: str = "eu,uk,us",
-        markets: str = "h2h,totals",
-        bookmakers: Optional[str] = None
+        regions: str = 'uk,eu,us,au',
+        markets: str = 'h2h,totals',
+        event_ids: Optional[List[str]] = None,
+        bookmakers: Optional[str] = None,
+        odds_format: str = 'decimal',
+        date_format: str = 'iso',
+        commence_time_from: Optional[str] = None,
+        commence_time_to: Optional[str] = None
     ) -> List[dict]:
-        """Batch fetch odds for multiple events."""
-        if not event_ids:
-            return []
-            
+        """Get odds for specific events."""
         params = {
             "regions": regions,
             "markets": markets,
-            "eventIds": ",".join(event_ids),
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
+            "oddsFormat": odds_format,
+            "dateFormat": date_format,
         }
+        
+        if event_ids:
+            params['eventIds'] = ",".join(event_ids)
         if bookmakers:
-            params["bookmakers"] = bookmakers
+            params['bookmakers'] = bookmakers
+        if commence_time_from:
+            params['commenceTimeFrom'] = commence_time_from
+        if commence_time_to:
+            params['commenceTimeTo'] = commence_time_to
             
-        return self._make_request("GET", f"/sports/{sport_key}/odds", params) or []
+        return self._request("GET", f"/sports/{sport_key}/odds", params=params)
 
     def get_event_odds(
         self,
         event_id: str,
-        regions: str = "eu,uk,us",
-        markets: str = "h2h,totals",
-        bookmakers: Optional[str] = None
-    ) -> Optional[dict]:
-        """Get odds for specific event."""
+        regions: str = 'uk,eu,us,au',
+        markets: str = 'h2h,totals',
+        bookmakers: Optional[str] = None,
+        odds_format: str = 'decimal',
+        date_format: str = 'iso'
+    ) -> dict:
+        """Get odds for a specific event."""
         params = {
             "regions": regions,
             "markets": markets,
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
+            "oddsFormat": odds_format,
+            "dateFormat": date_format,
         }
         if bookmakers:
-            params["bookmakers"] = bookmakers
-            
-        try:
-            return self._make_request("GET", f"/events/{event_id}/odds", params)
-        except TheOddsAPIException as e:
-            if e.status_code == 404:
-                logger.warning(f"Event {event_id} not found")
-                return None
-            raise
+            params['bookmakers'] = bookmakers
+        return self._request("GET", f"/events/{event_id}/odds", params=params)
 
     def get_scores(
         self,
         sport_key: str,
-        days_ago: int = 1,
-        event_ids: Optional[List[str]] = None
+        event_ids: Optional[List[str]] = None,
+        days_from: Optional[int] = None
     ) -> List[dict]:
-        """Get completed event scores."""
-        date_from = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
-        params = {"date": date_from}
+        """Get scores for completed events."""
+        params = {}
         if event_ids:
-            params["eventIds"] = ",".join(event_ids)
-        return self._make_request("GET", f"/sports/{sport_key}/scores", params) or []
+            params['eventIds'] = ','.join(event_ids)
+        if days_from:
+            date_from = datetime.utcnow() - timedelta(days=days_from)
+            params['dateFrom'] = date_from.isoformat() + 'Z'
+        return self._request("GET", f"/sports/{sport_key}/scores", params=params)
+
+    def get_historical_odds(
+        self,
+        sport_key: str,
+        regions: str = 'uk,eu,us,au',
+        markets: str = 'h2h,totals',
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        event_ids: Optional[List[str]] = None,
+        bookmakers: Optional[str] = None,
+        odds_format: str = 'decimal'
+    ) -> List[dict]:
+        """Get historical odds data."""
+        params = {
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format,
+        }
+        
+        if date_from:
+            params['dateFrom'] = date_from
+        if date_to:
+            params['dateTo'] = date_to
+        if event_ids:
+            params['eventIds'] = ",".join(event_ids)
+        if bookmakers:
+            params['bookmakers'] = bookmakers
+            
+        return self._request("GET", f"/sports/{sport_key}/odds-history", params=params)
