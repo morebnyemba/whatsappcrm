@@ -23,8 +23,8 @@ ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
 ASSUMED_COMPLETION_MINUTES = getattr(settings, 'THE_ODDS_API_ASSUMED_COMPLETION_MINUTES', 120)
 MAX_EVENT_RETRIES = getattr(settings, 'THE_ODDS_API_MAX_EVENT_RETRIES', 3)
 EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
-ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'ODDS_UPCOMING_STALENESS_MINUTES, 15')
-TARGET_BOOKMAKER = getattr(settings,"TARGET_BOOKMAKER",'unibet')
+ODDS_UPCOMING_STALENESS_MINUTES =  15
+TARGET_BOOKMAKER ='unibet'
 # --- Helper Functions ---
 @transaction.atomic
 def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, market_keys: List[str]):
