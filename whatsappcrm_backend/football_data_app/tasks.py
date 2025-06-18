@@ -71,11 +71,13 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, mark
 def run_the_odds_api_full_update_task():
     """Main entry point for the data fetching pipeline."""
     logger.info("--- Starting Full Data Update Pipeline ---")
-    pipeline = chain(
-        fetch_and_update_leagues_task.s(),  # Step 1: Fetch leagues
-        create_event_fetch_group_task.s(),  # Step 2: This task will return a group signature
-        dispatch_odds_fetching_after_events_task.s() # Step 3: This task is the callback for the chord
-    )
+    # Chain:
+    # 1. Fetch leagues (returns league_ids)
+    # 2. Create event fetch group (receives league_ids, returns a group signature)
+    #    This group signature then becomes the header of an explicit chord.
+    # 3. The callback of the chord is dispatch_odds_fetching_after_events_task
+    pipeline = fetch_and_update_leagues_task.s() | create_event_fetch_group_task.s() | dispatch_odds_fetching_after_events_task.s(immutable=True)
+    # The `immutable=True` on the callback signature in a chord ensures it receives the list of results from the header.
     pipeline.apply_async()
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
@@ -133,7 +135,10 @@ def create_event_fetch_group_task(self, league_ids: List[int]):
         return group([]) # Return an empty group signature
     logger.info(f"Step 2: Creating event fetching group for {len(league_ids)} leagues.")
     tasks = [fetch_events_for_league_task.s(league_id) for league_id in league_ids]
-    return group(tasks) # Return the group signature, Celery chain will form a chord
+    # When this task's result is piped into a chord's callback,
+    # it should return the group signature. Celery's pipe/chain should handle it.
+    # The callback (dispatch_odds_fetching_after_events_task) needs to be marked immutable.
+    return group(tasks)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id: int):
