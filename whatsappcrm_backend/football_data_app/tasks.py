@@ -176,7 +176,11 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     """
     # results_from_event_fetches will be a list of return values from each task in the group.
     # We don't strictly need to use these results, but their presence confirms completion.
-    logger.info(f"Step 3: All event fetching tasks completed. Results count: {len(results_from_event_fetches)}. Dispatching odds fetching tasks.")
+    logger.info(
+        f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} results from event fetching group."
+    )
+    if results_from_event_fetches:
+        logger.debug(f"Step 3: Content of results_from_event_fetches: {results_from_event_fetches}")
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
     
