@@ -143,30 +143,44 @@ def fetch_events_for_league_task(self, league_id: int):
     try:
         league = League.objects.get(id=league_id)
         client = TheOddsAPIClient()
-        events_data = client.get_events(sport_key=league.api_id)
+        # Ensure league.api_id is used for the sport_key parameter
+        events_data = client.get_events(sport_key=league.api_id) 
         
-        logger.info(f"[EventFetch] API returned {len(events_data)} events for league ID: {league_id} (API Key: {league.api_id})")
-        with transaction.atomic():
-            for item in events_data:
-                home_team, _ = Team.objects.get_or_create(name=item['home_team'])
-                away_team, _ = Team.objects.get_or_create(name=item['away_team'])
-                FootballFixture.objects.update_or_create(
-                    api_id=item['id'],
-                    defaults={
-                        'league': league,
-                        'home_team': home_team,
-                        'away_team': away_team,
-                        'match_date': parser.isoparse(item['commence_time']),
-                    }
-                )
+        logger.info(f"[EventFetch] API returned {len(events_data) if events_data else 0} events for league ID: {league_id} (using API Key for league: {league.api_id})")
+        
+        if events_data: # Only proceed if there's data
+            with transaction.atomic():
+                for item in events_data:
+                    home_team, _ = Team.objects.get_or_create(name=item['home_team'])
+                    away_team, _ = Team.objects.get_or_create(name=item['away_team'])
+                    FootballFixture.objects.update_or_create(
+                        api_id=item['id'],
+                        defaults={
+                            'league': league,
+                            'home_team': home_team,
+                            'away_team': away_team,
+                            'match_date': parser.isoparse(item['commence_time']),
+                            # Ensure status is set, default is SCHEDULED in model
+                        }
+                    )
+                    events_processed_count += 1
+        
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
-        logger.info(f"Successfully fetched events for league ID: {league_id}")
+        logger.info(f"[EventFetch] SUCCESS - Processed {events_processed_count} events for league ID: {league_id}")
+        return {"league_id": league_id, "status": "success", "events_processed": events_processed_count}
     except League.DoesNotExist:
-        logger.error(f"League with ID {league_id} does not exist.")
+        logger.error(f"[EventFetch] FAILED - League with ID {league_id} does not exist.")
+        return {"league_id": league_id, "status": "error", "message": "League not found"}
     except TheOddsAPIException as e:
-        logger.exception(f"API error fetching events for league {league_id}: {e}")
-        raise self.retry(exc=e)
+        logger.error(f"[EventFetch] FAILED - API error fetching events for league {league_id} (API Key: {league.api_id if 'league' in locals() else 'N/A'}): {e}", exc_info=True)
+        # Let Celery handle retry based on task decorator
+        raise self.retry(exc=e) 
+    except Exception as e:
+        logger.error(f"[EventFetch] FAILED - Unexpected error fetching events for league {league_id}: {e}", exc_info=True)
+        # For unexpected errors, return an error status. 
+        # Consider if retry is appropriate or if it should fail fast.
+        return {"league_id": league_id, "status": "error", "message": str(e)}
 
 @shared_task(bind=True)
 def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
