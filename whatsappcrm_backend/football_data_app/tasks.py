@@ -1,6 +1,6 @@
 import logging
 from django.conf import settings
-from celery import chord, shared_task, chain, group
+from celery import shared_task, chain, group
 from django.db import transaction, models
 from django.utils import timezone
 from dateutil import parser
@@ -138,12 +138,14 @@ def create_event_fetch_group_task(self, league_ids: List[int]):
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id: int):
     """Fetches and updates events (fixtures) for a single league."""
-    logger.info(f"Fetching events for league ID: {league_id}")
+    logger.info(f"[EventFetch] START - Fetching events for league ID: {league_id}")
+    events_processed_count = 0
     try:
         league = League.objects.get(id=league_id)
         client = TheOddsAPIClient()
         events_data = client.get_events(sport_key=league.api_id)
         
+        logger.info(f"[EventFetch] API returned {len(events_data)} events for league ID: {league_id} (API Key: {league.api_id})")
         with transaction.atomic():
             for item in events_data:
                 home_team, _ = Team.objects.get_or_create(name=item['home_team'])

@@ -840,8 +840,28 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
                 resolved_body = _resolve_value(text_content.body, current_step_context, contact)
-                logger.debug(f"Step '{step.name}': Resolved text body: '{resolved_body[:100]}{'...' if len(resolved_body) > 100 else ''}'")
-                final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
+                logger.debug(f"Step '{step.name}': Resolved text body: '{str(resolved_body)[:100]}{'...' if len(str(resolved_body)) > 100 else ''}'")
+
+                # --- MODIFICATION START ---
+                # If the resolved body is a list (from split messages), create multiple send actions
+                if isinstance(resolved_body, list):
+                    logger.info(f"Step '{step.name}': Resolved text body is a list ({len(resolved_body)} parts). Generating multiple send actions.")
+                    for i, part_body in enumerate(resolved_body):
+                        # Ensure each part is a string, handle potential None/empty parts
+                        part_body_str = str(part_body).strip() if part_body is not None else ""
+                        if part_body_str:
+                             actions_to_perform.append({
+                                'type': 'send_whatsapp_message',
+                                'recipient_wa_id': contact.whatsapp_id,
+                                'message_type': 'text', # Always 'text' for these parts
+                                'data': {'body': part_body_str, 'preview_url': text_content.preview_url} # Apply preview_url to all parts
+                            })
+                             logger.debug(f"Step '{step.name}': Added send action for text part {i+1}.")
+                    final_api_data_structure = None # Indicate that actions were already added
+                else:
+                    # Original logic for single text message
+                    final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
+                # --- MODIFICATION END ---
 
             elif actual_message_type in ['image', 'document', 'audio', 'video', 'sticker']:
                 media_conf: MediaMessageContent = payload_field_value
@@ -909,7 +929,8 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             elif actual_message_type == "location":
                 location_obj: LocationMessageContent = payload_field_value
                 location_dict = location_obj.model_dump(exclude_none=True, by_alias=True)
-                resolved_location_dict = _resolve_value(location_dict, current_step_context, contact)
+                # Location data is typically fixed, but resolving allows for templates in name/address
+                resolved_location_dict = _resolve_value(location_dict, current_step_context, contact) 
                 logger.debug(f"Step '{step.name}': Resolved location payload: {json.dumps(resolved_location_dict, indent=2)}")
                 final_api_data_structure = resolved_location_dict
 
@@ -917,7 +938,8 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 logger.info(f"Step '{step.name}': Prepared '{actual_message_type}' message data. Snippet: {str(final_api_data_structure)[:250]}...")
                 actions_to_perform.append({
                     'type': 'send_whatsapp_message',
-                    'recipient_wa_id': contact.whatsapp_id,
+                    # recipient_wa_id is added by the caller of process_message_for_flow
+                    # 'recipient_wa_id': contact.whatsapp_id, 
                     'message_type': actual_message_type,
                     'data': final_api_data_structure
                 })
