@@ -21,11 +21,41 @@ class TheOddsAPIException(Exception):
 class TheOddsAPIClient:
     """A robust client for making live requests to The Odds API."""
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv('THE_ODDS_API_KEY')
-        if not self.api_key:
-            logger.critical("THE_ODDS_API_KEY environment variable not set. This will prevent API calls.")
-            raise ValueError("THE_ODDS_API_KEY must be set.")
-        logger.debug("TheOddsAPIClient initialized.")
+        _api_key_to_use = api_key
+
+        if not _api_key_to_use:
+            try:
+                # Local import to avoid issues if Django isn't fully configured when module is loaded
+                from football_data_app.models import Configuration
+                config = Configuration.objects.filter(provider_name="The Odds API").first()
+                if config and config.api_key:
+                    _api_key_to_use = config.api_key
+                    logger.info("API Key loaded from database Configuration for 'The Odds API'.")
+                else:
+                    logger.info(
+                        "No 'The Odds API' configuration found in database, or API key is missing in the config. "
+                        "Will try environment variable."
+                    )
+            except ImportError:
+                logger.warning(
+                    "Django models could not be imported (Django not configured or models not accessible). "
+                    "Cannot fetch API key from database. Will try environment variable."
+                )
+            except Exception as e: # Catch other potential DB errors (e.g., OperationalError if DB not ready)
+                logger.error(f"Error fetching API key from database: {e}. Will try environment variable.")
+        
+        if not _api_key_to_use:
+            _api_key_to_use = os.getenv('THE_ODDS_API_KEY')
+            if _api_key_to_use:
+                logger.info("API Key loaded from THE_ODDS_API_KEY environment variable (as fallback or if DB lookup failed/not configured).")
+
+        if not _api_key_to_use:
+            logger.critical("API Key for The Odds API is not configured. Please provide it to the client, "
+                            "set it in the database Configuration, or set the THE_ODDS_API_KEY environment variable.")
+            raise ValueError("API Key for The Odds API must be configured.")
+        
+        self.api_key = _api_key_to_use
+        logger.debug(f"TheOddsAPIClient initialized with API key ending in '...{self.api_key[-4:] if len(self.api_key) >=4 else self.api_key}'.")
 
     def _request(self, method: str, endpoint: str, params: Optional[dict] = None) -> Union[Dict, List]:
         """Internal method to handle all live API requests."""
@@ -116,23 +146,40 @@ class TheOddsAPIClient:
 
     def get_event_odds(
         self,
+        sport_key: str,
         event_id: str,
         regions: str = 'uk,eu,us,au',
         markets: str = 'h2h,totals',
         bookmakers: Optional[str] = None,
         odds_format: str = 'decimal',
         date_format: str = 'iso'
-    ) -> dict:
-        """Get odds for a specific event."""
+    ) -> Optional[dict]:
+        """
+        Get odds for a specific event using its sport_key and event_id.
+        Note: The Odds API v4 returns a list even when querying by eventIds.
+        This method extracts the specific event's odds from that list.
+        """
         params = {
             "regions": regions,
             "markets": markets,
             "oddsFormat": odds_format,
             "dateFormat": date_format,
+            "eventIds": event_id, # Specify the event ID
         }
         if bookmakers:
             params['bookmakers'] = bookmakers
-        return self._request("GET", f"/events/{event_id}/odds", params=params)
+
+        # Use the standard /sports/{sport_key}/odds endpoint
+        # The API docs state that if eventIds is specified, the sport_key in the path is ignored,
+        # but a sport_key is still needed for the path structure.
+        results = self._request("GET", f"/sports/{sport_key}/odds", params=params)
+        
+        if isinstance(results, list):
+            for item in results: # Iterate through the list (usually 0 or 1 item for a single eventId)
+                if item.get('id') == event_id:
+                    return item # Return the single event odds dictionary
+            logger.warning(f"Event ID {event_id} not found in results from /sports/{sport_key}/odds, though requested via eventIds. API returned: {results}")
+        return None # Event not found or API returned unexpected structure
 
     def get_scores(
         self,

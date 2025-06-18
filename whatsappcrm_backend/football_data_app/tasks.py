@@ -43,21 +43,27 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, mark
         category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
         
         market, created = Market.objects.update_or_create(
-            fixture_display=fixture,
+            fixture=fixture, # Updated field name
             bookmaker=bookmaker,
             api_market_key=market_key,
             category=category,
             defaults={'last_updated_odds_api': parser.isoparse(market_data['last_update'])}
         )
         
-        if not created:
+        if not created: # If market existed, clear old outcomes before adding new ones
             market.outcomes.all().delete()
             
         outcomes_to_create = [
-            MarketOutcome(market=market, outcome_name=o['name'], odds=Decimal(str(o['price'])))
+            MarketOutcome(
+                market=market, 
+                outcome_name=o['name'], 
+                odds=Decimal(str(o['price'])),
+                point_value=o.get('point') # Added point_value extraction
+            )
             for o in market_data.get('outcomes', [])
         ]
-        MarketOutcome.objects.bulk_create(outcomes_to_create)
+        if outcomes_to_create:
+            MarketOutcome.objects.bulk_create(outcomes_to_create)
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
@@ -82,7 +88,14 @@ def fetch_and_update_leagues_task(self, _=None):
         active_leagues = [
             League.objects.update_or_create(
                 api_id=item['key'],
-                defaults={'name': item.get('title'), 'sport_key': item.get('group'), 'active': True}
+                defaults={
+                    'name': item.get('description') or item.get('title') or item['key'],
+                    'sport_key': item.get('group'),
+                    'sport_group_name': item.get('group').title() if item.get('group') else None,
+                    'short_name': item.get('title'),
+                    'api_description': item.get('description'),
+                    'active': True # If it's in the API list, we consider it active for fetching
+                }
             )[0].id
             for item in sports_data if 'soccer' in item.get('group', '')
         ]
@@ -311,7 +324,7 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
     logger.info(f"Settling bets for fixture ID: {fixture_id}")
     try:
         bets = Bet.objects.filter(
-            market_outcome__market__fixture_display_id=fixture_id,
+            market_outcome__market__fixture_id=fixture_id, # Updated field name
             status='PENDING'
         ).select_related('market_outcome')
         
@@ -332,7 +345,7 @@ def settle_tickets_for_fixture_task(self, fixture_id: int):
     logger.info(f"Settling tickets for fixture ID: {fixture_id}")
     try:
         ticket_ids = BetTicket.objects.filter(
-            bets__market_outcome__market__fixture_display_id=fixture_id
+            bets__market_outcome__market__fixture_id=fixture_id # Updated field name
         ).distinct().values_list('id', flat=True)
         
         for ticket_id in ticket_ids:
