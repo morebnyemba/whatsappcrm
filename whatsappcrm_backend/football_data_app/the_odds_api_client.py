@@ -63,19 +63,26 @@ class TheOddsAPIClient:
         
         request_params = params.copy() if params else {}
         request_params['apiKey'] = self.api_key
+        full_url_with_key = f"{url}?{requests.compat.urlencode(request_params)}" # For potential full URL logging (key included)
 
         try:
-            safe_params = {k: v for k, v in request_params.items() if k != 'apiKey'}
-            logger.debug(f"API Request: Method={method}, URL={url}, Params={safe_params}")
+            # Log the request URL without the API key for security in general logs
+            # Create a temporary dict for logging params without the API key
+            logged_params = {k: v for k, v in request_params.items() if k != 'apiKey'}
+            log_url_display = f"{url}?{requests.compat.urlencode(logged_params)}" if logged_params else url
+            logger.info(f"TheOddsAPI Request: Method={method}, URL='{log_url_display}'")
+            # For more detailed debugging, one might log the full_url_with_key, but be cautious.
+            # logger.debug(f"TheOddsAPI Full Request URL (with key, for debugging only): {full_url_with_key}")
             
             response = requests.request(method, url, params=request_params, timeout=DEFAULT_TIMEOUT)
             
             remaining = response.headers.get('x-requests-remaining')
             used = response.headers.get('x-requests-used')
-            if remaining:
+            if remaining is not None and used is not None: # Check if headers are present
                 logger.info(f"The Odds API Rate Limit: Remaining: {remaining}, Used: {used}")
 
             response.raise_for_status()
+            logger.debug(f"TheOddsAPI Response: Status={response.status_code}, URL='{response.url}', Content (snippet)='{response.text[:200]}...'")
             return response.json()
 
         except requests.exceptions.HTTPError as e:
@@ -88,11 +95,11 @@ class TheOddsAPIClient:
             
             log_message = (
                 f"The Odds API HTTPError for {method} {url}: {e}. Status: {status_code}. "
-                f"Response: '{response_text[:400]}...'"
+                f"Response: '{response_text[:400]}{'...' if len(response_text) > 400 else ''}'"
             )
             logger.warning(log_message)
             raise TheOddsAPIException(
-                f"HTTP error: {e}", status_code, response_text, response_json
+                f"HTTP error for {method} {url}: {e}", status_code, response_text, response_json
             ) from e
         except requests.exceptions.RequestException as e:
             logger.error(f"The Odds API RequestException for {method} {url}: {e}")
