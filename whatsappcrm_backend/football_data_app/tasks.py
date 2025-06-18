@@ -162,10 +162,10 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
     
     fixtures_to_update = FootballFixture.objects.filter(
+        # Fetch for fixtures that have never had odds updated OR are stale (Q object first)
+        models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
-        match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS)),
-        # Fetch for fixtures that have never had odds updated OR are stale
-        models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff)
+        match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))
     ).values('league_id', 'api_id', 'league__api_id') # Include league.api_id for the client
  
     if not fixtures_to_update:
