@@ -84,23 +84,40 @@ def fetch_and_update_leagues_task(self, _=None):
     logger.info("Step 1: Starting league update task.")
     client = TheOddsAPIClient()
     try:
-        sports_data = client.get_sports(all_sports=True)
-        active_leagues = [
-            League.objects.update_or_create(
-                api_id=item['key'],
-                defaults={
-                    'name': item.get('description') or item.get('title') or item['key'],
-                    'sport_key': item.get('group'),
-                    'sport_group_name': item.get('group').title() if item.get('group') else None,
-                    'short_name': item.get('title'),
-                    'api_description': item.get('description'),
-                    'active': True # If it's in the API list, we consider it active for fetching
-                }
-            )[0].id
-            for item in sports_data if 'soccer' in item.get('group', '')
-        ]
-        logger.info(f"Step 1: Successfully updated {len(active_leagues)} leagues.")
-        return active_leagues
+        sports_data_from_api = client.get_sports(all_sports=True)
+        if not sports_data_from_api:
+            logger.warning("Step 1: No sports data received from The Odds API.")
+            return []
+
+        logger.info(f"Step 1: Received {len(sports_data_from_api)} items from /sports endpoint.")
+        
+        processed_league_ids = []
+        soccer_leagues_found_count = 0
+
+        for item in sports_data_from_api:
+            api_league_key = item.get('key')
+            api_group = item.get('group', '').lower() # Normalize to lowercase for comparison
+            api_title = item.get('title')
+            api_description = item.get('description')
+
+            # logger.debug(f"Processing item: key={api_league_key}, group={api_group}, title={api_title}")
+
+            if 'soccer' in api_group:
+                soccer_leagues_found_count += 1
+                league_obj, created = League.objects.update_or_create(
+                    api_id=api_league_key,
+                    defaults={
+                        'name': api_description or api_title or api_league_key,
+                        'sport_key': item.get('group'), # Store original casing if needed, or normalize
+                        'sport_group_name': item.get('group').title() if item.get('group') else None,
+                        'short_name': api_title,
+                        'api_description': api_description,
+                        'active': True
+                    })
+                processed_league_ids.append(league_obj.id)
+        
+        logger.info(f"Step 1: Found {soccer_leagues_found_count} soccer leagues from API data. Processed and returning {len(processed_league_ids)} league IDs.")
+        return processed_league_ids
     except TheOddsAPIException as e:
         logger.exception(f"API error during league update: {e}")
         raise self.retry(exc=e)
