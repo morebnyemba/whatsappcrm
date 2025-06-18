@@ -72,9 +72,9 @@ def run_the_odds_api_full_update_task():
     """Main entry point for the data fetching pipeline."""
     logger.info("--- Starting Full Data Update Pipeline ---")
     pipeline = chain(
-        fetch_and_update_leagues_task.s(),
-        dispatch_event_fetching_task.s(),
-        dispatch_odds_fetching_task.s(),
+        fetch_and_update_leagues_task.s(),  # Step 1: Fetch leagues
+        create_event_fetch_group_task.s(),  # Step 2: This task will return a group signature
+        dispatch_odds_fetching_after_events_task.s() # Step 3: This task is the callback for the chord
     )
     pipeline.apply_async()
 
@@ -106,14 +106,17 @@ def fetch_and_update_leagues_task(self, _=None):
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def dispatch_event_fetching_task(self, league_ids: List[int]):
-    """Step 2: Dispatches parallel tasks to fetch events for each active league."""
+def create_event_fetch_group_task(self, league_ids: List[int]):
+    """
+    Step 2: Creates and returns a group of event fetching tasks for each active league.
+    This group will be the header of a chord.
+    """
     if not league_ids:
-        logger.warning("Step 2: No league IDs provided to dispatch event fetching. Skipping.")
-        return
-    logger.info(f"Step 2: Dispatching event fetching for {len(league_ids)} leagues.")
+        logger.warning("Step 2: No league IDs provided to create event fetching group. Returning empty group.")
+        return group([]) # Return an empty group signature
+    logger.info(f"Step 2: Creating event fetching group for {len(league_ids)} leagues.")
     tasks = [fetch_events_for_league_task.s(league_id) for league_id in league_ids]
-    group(tasks).apply_async()
+    return group(tasks) # Return the group signature, Celery chain will form a chord
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id: int):
@@ -147,37 +150,57 @@ def fetch_events_for_league_task(self, league_id: int):
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def dispatch_odds_fetching_task(self, _=None):
+def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     """
-    Step 3: Dispatches parallel tasks to fetch odds for upcoming fixtures.
-    Accepts an argument from the preceding task in the chain but does not use it.
+    Step 3 (Chord Body): Dispatches parallel tasks to fetch odds for upcoming fixtures
+    after all event fetching tasks (from the chord header) have completed.
     """
-    logger.info("Step 3: Dispatching odds fetching tasks.")
+    # results_from_event_fetches will be a list of return values from each task in the group.
+    # We don't strictly need to use these results, but their presence confirms completion.
+    logger.info(f"Step 3: All event fetching tasks completed. Results count: {len(results_from_event_fetches)}. Dispatching odds fetching tasks.")
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
     
     fixtures_to_update = FootballFixture.objects.filter(
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS)),
-        last_odds_update__lt=stale_cutoff
-    ).values('league_id', 'api_id')
-
+        # Fetch for fixtures that have never had odds updated OR are stale
+        models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff)
+    ).values('league_id', 'api_id', 'league__api_id') # Include league.api_id for the client
+ 
     if not fixtures_to_update:
         logger.info("No fixtures require an odds update at this time.")
         return
 
-    tasks = [fetch_odds_for_event_batch_task.s(f['league_id'], [f['api_id']]) for f in fixtures_to_update]
-    group(tasks).apply_async()
-    logger.info(f"Dispatched {len(tasks)} odds fetching tasks.")
+    # Group fixtures by league's API ID (sport_key for the API) to batch API calls
+    fixtures_by_sport_key = {}
+    for item in fixtures_to_update:
+        fixtures_by_sport_key.setdefault(item['league__api_id'], []).append(item['api_id'])
+
+    tasks = []
+    for sport_key, event_ids_for_league in fixtures_by_sport_key.items():
+        # Batch event_ids further if needed, based on ODDS_FETCH_EVENT_BATCH_SIZE
+        for i in range(0, len(event_ids_for_league), ODDS_FETCH_EVENT_BATCH_SIZE):
+            batch_ids = event_ids_for_league[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
+            tasks.append(fetch_odds_for_event_batch_task.s(
+                sport_key=sport_key, # Pass the league's api_id as sport_key
+                event_ids=batch_ids
+            ))
+
+    if tasks:
+        group(tasks).apply_async()
+        logger.info(f"Dispatched {len(tasks)} odds fetching tasks in batches.")
+    else:
+        logger.info("No odds fetching tasks were dispatched (possibly all fixtures up-to-date or no upcoming).")
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_odds_for_event_batch_task(self, league_id: int, event_ids: List[str]):
+def fetch_odds_for_event_batch_task(self, sport_key: str, event_ids: List[str]):
     """Fetches default market odds for a batch of events."""
-    logger.info(f"Fetching odds for {len(event_ids)} events in league {league_id}.")
+    logger.info(f"Fetching odds for {len(event_ids)} events using sport_key: {sport_key}.")
     client = TheOddsAPIClient()
     try:
-        league = League.objects.get(id=league_id)
-        odds_data = client.get_odds(league.api_id, DEFAULT_ODDS_API_REGIONS, DEFAULT_ODDS_API_MARKETS, event_ids)
+        # league = League.objects.get(api_id=sport_key) # Not strictly needed if client uses sport_key directly
+        odds_data = client.get_odds(sport_key, DEFAULT_ODDS_API_REGIONS, DEFAULT_ODDS_API_MARKETS, event_ids)
         
         if not odds_data:
             return
@@ -191,8 +214,6 @@ def fetch_odds_for_event_batch_task(self, league_id: int, event_ids: List[str]):
                     fixture.last_odds_update = timezone.now()
                     fixture.save(update_fields=['last_odds_update'])
 
-    except League.DoesNotExist:
-        logger.error(f"League {league_id} not found for odds fetch.")
     except TheOddsAPIException as e:
         logger.exception(f"API error in odds fetch batch: {e}")
         raise self.retry(exc=e)
