@@ -296,6 +296,10 @@ def fetch_scores_for_league_task(self, league_id: int):
                 if fixture.status == FootballFixture.FixtureStatus.FINISHED:
                     continue
 
+                logger.info(f"Processing score for fixture {fixture.api_id}, current status: {fixture.status}")
+                logger.info(f"API commence_time: {score_item.get('commence_time')}, fixture match_date: {fixture.match_date}, now: {now}")
+
+
                 if score_item.get('completed', False):
                     home_s, away_s = None, None
                     if score_item.get('scores'):
