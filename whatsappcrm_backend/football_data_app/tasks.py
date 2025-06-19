@@ -76,7 +76,7 @@ def run_the_odds_api_full_update_task():
     # 2. Create event fetch group (receives league_ids, returns a group signature)
     #    This group signature then becomes the header of an explicit chord.
     # 3. The callback of the chord is dispatch_odds_fetching_after_events_task
-    pipeline = fetch_and_update_leagues_task.s() | create_event_fetch_group_task.s() | dispatch_odds_fetching_after_events_task.s(immutable=True)
+    pipeline = fetch_and_update_leagues_task.s() | create_event_fetch_group_task.s() | dispatch_odds_fetching_after_events_task.s()
     # The `immutable=True` on the callback signature in a chord ensures it receives the list of results from the header.
     pipeline.apply_async()
 
