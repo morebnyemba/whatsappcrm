@@ -180,8 +180,12 @@ class Message(models.Model):
         if self.message_type == 'text' and not self.text_content and isinstance(self.content_payload, dict):
             if self.direction == 'in': # Incoming message structure
                 self.text_content = self.content_payload.get('text', {}).get('body')
-            elif self.direction == 'out': # Outgoing message structure
-                self.text_content = self.content_payload.get('body') # Assuming 'body' is at the top level of the text object
+            elif self.direction == 'out': # Outgoing message structure, typically {'text': {'body': '...'}}
+                text_obj = self.content_payload.get('text')
+                if isinstance(text_obj, dict):
+                    self.text_content = text_obj.get('body')
+                elif isinstance(self.content_payload.get('body'), str) : # Fallback if 'body' is top-level
+                    self.text_content = self.content_payload.get('body')
 
         # Update contact's last_seen timestamp
         if self.contact_id: # Ensure contact is associated
