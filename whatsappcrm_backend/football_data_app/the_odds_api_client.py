@@ -116,8 +116,10 @@ class TheOddsAPIClient:
         if days_from_now is not None:
             date_from = datetime.utcnow()
             date_to = date_from + timedelta(days=days_from_now)
-            params['commenceTimeFrom'] = date_from.isoformat() + 'Z'
-            params['commenceTimeTo'] = date_to.isoformat() + 'Z'
+            # Format to YYYY-MM-DDTHH:MM:SSZ, excluding microseconds
+            params['commenceTimeFrom'] = date_from.strftime('%Y-%m-%dT%H:%M:%SZ')
+            params['commenceTimeTo'] = date_to.strftime('%Y-%m-%dT%H:%M:%SZ')
+            logger.debug(f"Calculated commenceTimeFrom: {params['commenceTimeFrom']}, commenceTimeTo: {params['commenceTimeTo']} for get_events")
         return self._request("GET", f"/sports/{sport_key}/events", params=params)
 
     def get_odds(
