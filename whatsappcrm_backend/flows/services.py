@@ -839,29 +839,39 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
-                resolved_body = _resolve_value(text_content.body, current_step_context, contact)
-                logger.debug(f"Step '{step.name}': Resolved text body: '{str(resolved_body)[:100]}{'...' if len(str(resolved_body)) > 100 else ''}'")
+                body_template_string = text_content.body # e.g., "{{ flow_context.my_list }}" or "Hello {{ name }}"
 
-                # --- MODIFICATION START ---
-                # If the resolved body is a list (from split messages), create multiple send actions
-                if isinstance(resolved_body, list):
-                    logger.info(f"Step '{step.name}': Resolved text body is a list ({len(resolved_body)} parts). Generating multiple send actions.")
-                    for i, part_body in enumerate(resolved_body):
-                        # Ensure each part is a string, handle potential None/empty parts
+                # Attempt to see if the body_template_string refers to a single context variable that might be a list
+                single_var_match = re.fullmatch(r"\s*\{\{\s*([\w.]+)\s*\}\}\s*", body_template_string)
+                
+                potential_list_value = None
+                if single_var_match:
+                    variable_path = single_var_match.group(1).strip()
+                    # Directly get the value of the variable from context/contact
+                    potential_list_value = _get_value_from_context_or_contact(variable_path, current_step_context, contact)
+
+                if isinstance(potential_list_value, list):
+                    # The template variable resolved directly to a list of strings (message parts)
+                    logger.info(f"Step '{step.name}': Template variable '{variable_path}' resolved to a list ({len(potential_list_value)} parts). Generating multiple send actions.")
+                    for i, part_body in enumerate(potential_list_value):
                         part_body_str = str(part_body).strip() if part_body is not None else ""
                         if part_body_str:
                              actions_to_perform.append({
                                 'type': 'send_whatsapp_message',
-                                'recipient_wa_id': contact.whatsapp_id,
-                                'message_type': 'text', # Always 'text' for these parts
-                                'data': {'body': part_body_str, 'preview_url': text_content.preview_url} # Apply preview_url to all parts
+                                'message_type': 'text', 
+                                'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
                             })
-                             logger.debug(f"Step '{step.name}': Added send action for text part {i+1}.")
+                              logger.debug(f"Step '{step.name}': Added send action for text part {i+1} from list variable.")
                     final_api_data_structure = None # Indicate that actions were already added
                 else:
-                    # Original logic for single text message
-                    final_api_data_structure = {'body': resolved_body, 'preview_url': text_content.preview_url}
-                # --- MODIFICATION END ---
+                    # Not a single variable resolving to a list, or not a single variable template at all.
+                    # Resolve the entire body string as a template, expecting a single string result.
+                    resolved_body_string = _resolve_value(body_template_string, current_step_context, contact)
+                    logger.debug(f"Step '{step.name}': Resolved text body string: '{str(resolved_body_string)[:100]}{'...' if len(str(resolved_body_string)) > 100 else ''}'")
+                    if resolved_body_string is not None: # Ensure there's a body to send
+                        final_api_data_structure = {'body': str(resolved_body_string), 'preview_url': text_content.preview_url}
+                    else:
+                        final_api_data_structure = None # No message to send if resolved body is None
 
             elif actual_message_type in ['image', 'document', 'audio', 'video', 'sticker']:
                 media_conf: MediaMessageContent = payload_field_value
