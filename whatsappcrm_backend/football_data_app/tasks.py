@@ -1,6 +1,6 @@
 import logging
 from django.conf import settings
-from celery import shared_task, chain, group
+from celery import chord, shared_task, chain, group
 from django.db import transaction, models
 from django.utils import timezone
 from dateutil import parser
