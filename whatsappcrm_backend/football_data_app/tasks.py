@@ -148,8 +148,7 @@ def fetch_events_for_league_task(self, league_id: int):
     try:
         league = League.objects.get(id=league_id)
         client = TheOddsAPIClient()
-        # Ensure league.api_id is used for the sport_key parameter
-        events_data = client.get_events(sport_key=league.api_id) 
+        events_data = client.get_events(sport_key=league.api_id, days_from_now=ODDS_LEAD_TIME_DAYS)
         
         logger.info(f"[EventFetch] API returned {len(events_data) if events_data else 0} events for league ID: {league_id} (using API Key for league: {league.api_id})")
         
