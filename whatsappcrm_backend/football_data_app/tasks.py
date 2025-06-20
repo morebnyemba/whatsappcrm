@@ -146,8 +146,8 @@ def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
 
     # This is the "body" or callback of the chord. It will only run after all tasks
     # in event_fetch_tasks_group have completed.
-    # immutable=True ensures it receives the list of results from the header tasks.
-    odds_dispatch_callback = dispatch_odds_fetching_after_events_task.s(immutable=True)
+    # It automatically receives the list of results from the header tasks as its first argument.
+    odds_dispatch_callback = dispatch_odds_fetching_after_events_task.s()
 
     # Create and apply the chord
     # chord(header)(body)
