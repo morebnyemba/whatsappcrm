@@ -858,10 +858,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         if part_body_str:
                              actions_to_perform.append({
                                 'type': 'send_whatsapp_message',
-                                'message_type': 'text', 
-                                'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
-                            })
-                              logger.debug(f"Step '{step.name}': Added send action for text part {i+1} from list variable.")
+                                    'message_type': 'text',
+                                    'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
+                                })
+                    logger.debug(f"Step '{step.name}': Added send action for text part {i+1} from list variable.")
                     final_api_data_structure = None # Indicate that actions were already added
                 else:
                     # Not a single variable resolving to a list, or not a single variable template at all.
@@ -1430,6 +1430,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             if variable_to_save_name:
                 flow_context[variable_to_save_name] = value_to_save
                 logger.info(f"Saved valid reply for var '{variable_to_save_name}' in Q-step '{current_step.name}'. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
+                flow_context.pop('_general_invalid_action_count', None) # Reset general invalid counter on valid question reply
             else:
                 logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
             flow_context.pop('_fallback_count', None) # Clear fallback count on valid reply
@@ -1540,11 +1541,31 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                     actions_to_perform.append({'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id, 'message_type': 'text', 'data': {'body': resolved_end_msg}})
             else:
                 if not actions_to_perform: # If no explicit fallback message/action and nothing else generated
-                    logger.info(f"Step '{current_step.name}': No specific general fallback action. Sending default 'did not understand' message.")
-                    actions_to_perform.append({
-                        'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
-                        'message_type': 'text', 'data': {'body': "Sorry, I could not process that. Please try 'menu' or rephrase your request."}
-                    })
+                    general_invalid_count = flow_context.get('_general_invalid_action_count', 0) + 1
+                    flow_context['_general_invalid_action_count'] = general_invalid_count
+
+                    if general_invalid_count < 3:
+                        logger.info(f"Step '{current_step.name}': General invalid action (Attempt {general_invalid_count} of 2). Sending gentle notification.")
+                        actions_to_perform.append({
+                            'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
+                            'message_type': 'text', 'data': {'body': "Sorry, that's not a valid option for the current step. Please try something else or type 'menu' for main options."}
+                        })
+                        # Save the updated context with the incremented counter
+                        contact_flow_state.flow_context_data = flow_context
+                        contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
+                    else:
+                        logger.info(f"Step '{current_step.name}': General invalid action (Attempt {general_invalid_count}). Max attempts reached. Resetting flow state.")
+                        actions_to_perform.append({
+                            'type': 'send_whatsapp_message', 'recipient_wa_id': contact.whatsapp_id,
+                            'message_type': 'text', 'data': {'body': "It seems we're having trouble. Your current session has been reset. You can try keywords like 'menu', 'fixtures', or 'help' to start over."}
+                        })
+                        flow_context.pop('_general_invalid_action_count', None) # Clear the counter
+                        # The actual clearing of flow state is handled by the internal command processor
+                        actions_to_perform.append({'type': '_internal_command_clear_flow_state', 'reason': f'Max general invalid actions at step {current_step.name}'})
+                        # No need to save context here if it's about to be cleared by the command.
+                        # If the command doesn't clear context immediately, save it:
+                        # contact_flow_state.flow_context_data = flow_context
+                        # contact_flow_state.save(update_fields=['flow_context_data', 'last_updated_at'])
     return actions_to_perform
 
 
@@ -1845,6 +1866,7 @@ def _transition_to_step(
 
     # Copy context to pass to the next step's execution
     context_for_next_step = context_of_leaving_step.copy()
+    context_for_next_step.pop('_general_invalid_action_count', None) # Reset general invalid counter on successful transition
 
     # Clean up question-specific context variables if leaving a question step
     if previous_step.step_type == 'question':
