@@ -6,7 +6,7 @@ from django.utils import timezone
 from dateutil import parser
 from datetime import timedelta
 from decimal import Decimal
-from typing import List
+from typing import List, Dict, Any
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
@@ -73,11 +73,13 @@ def run_the_odds_api_full_update_task():
     logger.info("--- Starting Full Data Update Pipeline ---")
     # Chain:
     # 1. Fetch leagues (returns league_ids)
-    # 2. Create event fetch group (receives league_ids, returns a group signature)
-    #    This group signature then becomes the header of an explicit chord.
-    # 3. The callback of the chord is dispatch_odds_fetching_after_events_task
-    pipeline = fetch_and_update_leagues_task.s() | create_event_fetch_group_task.s() | dispatch_odds_fetching_after_events_task.s()
-    # The `immutable=True` on the callback signature in a chord ensures it receives the list of results from the header.
+    # 2. Prepare and launch a chord:
+    #    - Header: A group of fetch_events_for_league_task instances.
+    #    - Body (Callback): dispatch_odds_fetching_after_events_task.
+    pipeline = (
+        fetch_and_update_leagues_task.s() |
+        _prepare_and_launch_event_odds_chord.s() # New intermediate task
+    )
     pipeline.apply_async()
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
@@ -124,21 +126,35 @@ def fetch_and_update_leagues_task(self, _=None):
         logger.exception(f"API error during league update: {e}")
         raise self.retry(exc=e)
 
-@shared_task(bind=True)
-def create_event_fetch_group_task(self, league_ids: List[int]):
+@shared_task(name="football_data_app.tasks._prepare_and_launch_event_odds_chord")
+def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
     """
-    Step 2: Creates and returns a group of event fetching tasks for each active league.
-    This group will be the header of a chord.
+    Intermediate task: Receives league_ids, creates the event fetching group (chord header),
+    and launches the chord with dispatch_odds_fetching_after_events_task as the callback.
     """
     if not league_ids:
-        logger.warning("Step 2: No league IDs provided to create event fetching group. Returning empty group.")
-        return group([]) # Return an empty group signature
-    logger.info(f"Step 2: Creating event fetching group for {len(league_ids)} leagues.")
-    tasks = [fetch_events_for_league_task.s(league_id) for league_id in league_ids]
-    # When this task's result is piped into a chord's callback,
-    # it should return the group signature. Celery's pipe/chain should handle it.
-    # The callback (dispatch_odds_fetching_after_events_task) needs to be marked immutable.
-    return group(tasks)
+        logger.warning("Chord Prep: No league IDs received. Skipping event/odds processing.")
+        return
+
+    logger.info(f"Chord Prep: Received {len(league_ids)} league IDs. Preparing event fetch group.")
+
+    # This group of tasks will form the "header" of the chord.
+    # Each task in this group will fetch events for one league.
+    event_fetch_tasks_group = group([
+        fetch_events_for_league_task.s(league_id) for league_id in league_ids
+    ])
+
+    # This is the "body" or callback of the chord. It will only run after all tasks
+    # in event_fetch_tasks_group have completed.
+    # immutable=True ensures it receives the list of results from the header tasks.
+    odds_dispatch_callback = dispatch_odds_fetching_after_events_task.s(immutable=True)
+
+    # Create and apply the chord
+    # chord(header)(body)
+    task_chord = chord(event_fetch_tasks_group)(odds_dispatch_callback)
+    task_chord.apply_async()
+
+    logger.info(f"Chord Prep: Chord for event fetching and odds dispatch has been applied for {len(league_ids)} leagues.")
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id: int):
@@ -146,9 +162,10 @@ def fetch_events_for_league_task(self, league_id: int):
     logger.info(f"[EventFetch] START - Fetching events for league ID: {league_id}")
     events_processed_count = 0
     try:
-        league = League.objects.get(id=league_id)
+        league = League.objects.get(id=league_id) # Ensure league exists
         client = TheOddsAPIClient()
-        events_data = client.get_events(sport_key=league.api_id, days_from_now=ODDS_LEAD_TIME_DAYS)
+        # Fetch events for the configured lead time to align with odds fetching
+        events_data = client.get_events(sport_key=league.api_id, days_from_now=ODDS_LEAD_TIME_DAYS) 
         
         logger.info(f"[EventFetch] API returned {len(events_data) if events_data else 0} events for league ID: {league_id} (using API Key for league: {league.api_id})")
         
@@ -192,13 +209,14 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     Step 3 (Chord Body): Dispatches parallel tasks to fetch odds for upcoming fixtures
     after all event fetching tasks (from the chord header) have completed.
     """
-    # results_from_event_fetches will be a list of return values from each task in the group.
-    # We don't strictly need to use these results, but their presence confirms completion.
+    # results_from_event_fetches will be a list of return values from each fetch_events_for_league_task.
+    # Example: [{'league_id': 1, 'status': 'success', 'events_processed': 5}, {'league_id': 2, ...}]
     logger.info(
-        f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} results from event fetching group."
+        f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} result(s) from the event fetching group."
     )
     if results_from_event_fetches:
-        logger.debug(f"Step 3: Content of results_from_event_fetches: {results_from_event_fetches}")
+        # Log a summary or sample of the results, not the whole thing if it's huge
+        logger.debug(f"Step 3: Sample of results_from_event_fetches: {str(results_from_event_fetches)[:500]}")
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
     
