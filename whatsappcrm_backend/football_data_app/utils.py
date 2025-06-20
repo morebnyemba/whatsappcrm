@@ -61,7 +61,7 @@ def get_formatted_football_data(
             logger.info(f"No {data_type_label.lower()} found{league_info} for the specified criteria. Returning None.")
             return None
 
-        num_fixtures_to_display = 20
+        num_fixtures_to_display = 40
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} scheduled fixtures.")
 
         for fixture in fixtures_qs[:num_fixtures_to_display]:
