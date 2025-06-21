@@ -22,6 +22,7 @@ EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVER
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
 ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
 ASSUMED_COMPLETION_MINUTES = getattr(settings, 'THE_ODDS_API_ASSUMED_COMPLETION_MINUTES', 120)
+SCORE_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_SCORE_BATCH_SIZE', 20)
 MAX_EVENT_RETRIES = getattr(settings, 'THE_ODDS_API_MAX_EVENT_RETRIES', 3)
 EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
 
@@ -412,8 +413,7 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
         for bet in Bet.objects.filter(
             market_outcome__market__fixture_id=fixture_id, # Updated field name
             status='PENDING'
-        ).select_related('market_outcome')
-        :
+        ).select_related('market_outcome'):
             # Only update if the outcome has been settled (not PENDING)
             if bet.market_outcome.result_status != 'PENDING':
                 bet.status = bet.market_outcome.result_status
