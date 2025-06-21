@@ -19,7 +19,11 @@ class CustomerProfile(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.user.username}'s Profile"
+        if self.user and self.user.username:
+            return f"{self.user.username}'s Profile"
+        if self.contact and self.contact.name:
+            return f"Profile for {self.contact.name}"
+        return f"Profile {self.pk}"
 
     class Meta:
         verbose_name = "Customer Profile"
@@ -112,7 +116,8 @@ class BetTicket(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Ticket #{self.id} - {self.user.username} - ${self.total_stake}"
+        user_display = self.user.username if self.user else "Anonymous"
+        return f"Ticket #{self.id} - {user_display} - ${self.total_stake}"
 
     def calculate_total_odds(self):
         """Calculate total odds for the ticket based on bet type"""
@@ -153,6 +158,9 @@ class BetTicket(models.Model):
         if self.status != 'PENDING':
             raise ValueError("Ticket has already been placed")
         
+        if not self.user:
+            raise ValueError("A ticket must have a user to be placed.")
+
         self.user.wallet.deduct_funds(self.total_stake)
         
         WalletTransaction.objects.create(
@@ -173,6 +181,9 @@ class BetTicket(models.Model):
         if self.status != 'PENDING':
             raise ValueError("Ticket has already been settled")
         
+        if not self.user:
+            raise ValueError("A ticket must have a user to be settled.")
+
         bets = self.bets.all()
         if not bets:
             raise ValueError("No bets found in ticket")
@@ -256,7 +267,8 @@ class Bet(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.ticket.user.username}'s bet on {self.market_outcome} - ${self.amount}"
+        user_display = self.ticket.user.username if self.ticket and self.ticket.user else "Anonymous"
+        return f"{user_display}'s bet on {self.market_outcome} - ${self.amount}"
 
     def place_bet(self):
         """Place a bet"""
