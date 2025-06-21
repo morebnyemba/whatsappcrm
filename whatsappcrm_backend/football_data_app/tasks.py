@@ -412,8 +412,7 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
         for bet in Bet.objects.filter(
             market_outcome__market__fixture_id=fixture_id, # Updated field name
             status='PENDING'
-        ).select_related('market_outcome')
-        :
+        ).select_related('market_outcome'):
             # Only update if the outcome has been settled (not PENDING)
             if bet.market_outcome.result_status != 'PENDING':
                 bet.status = bet.market_outcome.result_status
