@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app/
 
 # Create directories that might be needed for volumes or collectstatic
+# and change ownership to the new user
 RUN mkdir -p /app/staticfiles
 RUN mkdir -p /app/whatsapp_media_assets # Assuming this is your MEDIA_ROOT
 

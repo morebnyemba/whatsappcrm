@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
@@ -10,7 +8,7 @@ services:
       POSTGRES_DB: ${DB_NAME:-whatsapp_crm_dev}
       POSTGRES_USER: ${DB_USER:-crm_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Please set DB_PASSWORD in .env file}
-    ports:
+    ports: # In production, you can comment this out for security if the DB is only accessed by other containers.
       - "5432:5432" # Consider using ${DB_PORT_LOCAL:-5432}:5432 for flexibility
     healthcheck: # Added healthcheck for robustness
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-crm_user} -d $${POSTGRES_DB:-whatsapp_crm_dev}"]
@@ -24,7 +22,7 @@ services:
     container_name: whatsappcrm_redis
     volumes:
       - redis_data:/data
-    ports:
+    ports: # In production, you can comment this out for security if Redis is only accessed by other containers.
       - "6379:6379" # Consider using ${REDIS_PORT_LOCAL:-6379}:6379
     healthcheck: # Added healthcheck
       test: ["CMD", "redis-cli", "ping"]
@@ -37,7 +35,7 @@ services:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_backend_app
     # command: implicitly uses CMD from Dockerfile (which should use entrypoint.sh web)
-    volumes:
+    volumes: # For production, it's best practice to remove the code bind mount ('./whatsappcrm_backend:/app').
       - ./whatsappcrm_backend:/app
       - staticfiles_volume:/app/staticfiles # Ensure this matches STATIC_ROOT
       - media_volume:/app/mediafiles      # Ensure this matches MEDIA_ROOT
@@ -49,7 +47,8 @@ services:
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      # CRITICAL FIX: The line below is removed. It was overriding the password-protected URL from the .env file.
+      # - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy # Wait for DB to be healthy
@@ -60,7 +59,7 @@ services:
   frontend:
     build: ./whatsapp-crm-frontend
     container_name: whatsappcrm_frontend_app
-    # command: (depends on your frontend setup, e.g., npm run dev or serve static files)
+    # command: (For production, this should serve static files, not run a dev server)
     # ports: (e.g. "3000:3000" if dev server runs on 3000)
     volumes:
       - ./whatsapp-crm-frontend:/app
@@ -81,10 +80,10 @@ services:
         echo 'Celery Worker: Waiting for Redis (redis:6379)...' &&
         while ! nc -z redis 6379; do sleep 1; done;
         echo 'Celery Worker: Redis is up.' &&
-        echo 'Starting Celery worker with Pool: $${CELERY_WORKER_POOL_TYPE:-gevent} and Concurrency: $${CELERY_WORKER_CONCURRENCY_VALUE:-100}' &&
+        echo 'Starting Celery worker with Pool: $${CELERY_WORKER_POOL_TYPE:-gevent} and Concurrency: $${CELERY_WORKER_CONCURRENCY:-100}' &&
         celery -A whatsappcrm_backend.celery worker -l INFO \
           -P $${CELERY_WORKER_POOL_TYPE:-gevent} \
-          -c $${CELERY_WORKER_CONCURRENCY_VALUE:-100} \
+          -c $${CELERY_WORKER_CONCURRENCY:-100} \
           --without-gossip --without-mingle --without-heartbeat -E
       "
     volumes:
@@ -94,13 +93,14 @@ services:
     environment:
       # These are for the command above and for Celery app running inside container.
       # Define these in a root .env file (next to docker-compose.yml) or set defaults here.
-      - CELERY_WORKER_POOL_TYPE=${CELERY_WORKER_POOL_TYPE:-gevent}
-      - CELERY_WORKER_CONCURRENCY_VALUE=${CELERY_WORKER_CONCURRENCY_VALUE:-100}
+      - CELERY_WORKER_POOL_TYPE=${CELERY_WORKER_POOL_TYPE:-gevent} # Example: gevent or prefork
+      - CELERY_WORKER_CONCURRENCY=${CELERY_WORKER_CONCURRENCY:-100} # This is read from .env
       # Ensure Celery can find Django settings and connect to services
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      # CRITICAL FIX: The line below is removed to use the password-protected URL from the .env file.
+      # - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on: # Updated for robustness
       db:
         condition: service_healthy
@@ -122,7 +122,8 @@ services:
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      # CRITICAL FIX: The line below is removed to use the password-protected URL from the .env file.
+      # - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on: # Updated for robustness
       db:
         condition: service_healthy
@@ -158,4 +159,4 @@ volumes:
   postgres_data:
   redis_data:
   staticfiles_volume:
-  media_volume:
+  media_volume: # This volume is shared between 'backend' and 'nginx_proxy'
