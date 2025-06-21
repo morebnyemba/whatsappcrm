@@ -407,15 +407,20 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
     if not fixture_id: return
     logger.info(f"Settling bets for fixture ID: {fixture_id}")
     try:
-        bets = Bet.objects.filter(
+        bets_to_update = []
+        # Iterate over bets that are pending and related to this fixture
+        for bet in Bet.objects.filter(
             market_outcome__market__fixture_id=fixture_id, # Updated field name
             status='PENDING'
         ).select_related('market_outcome')
-        
-        for bet in bets:
+        :
+            # Only update if the outcome has been settled (not PENDING)
             if bet.market_outcome.result_status != 'PENDING':
                 bet.status = bet.market_outcome.result_status
-                bet.save()
+                bets_to_update.append(bet)
+        if bets_to_update:
+            Bet.objects.bulk_update(bets_to_update, ['status'])
+            logger.info(f"Settled {len(bets_to_update)} bets for fixture {fixture_id}.")
                 
         return fixture_id
     except Exception as e:
