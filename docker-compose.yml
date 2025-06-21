@@ -44,7 +44,7 @@ services:
     ports: # Added port mapping for direct access if Nginx is not always used or for dev
       - "${DJANGO_PORT_LOCAL:-8000}:8000"
     env_file:
-      - ./whatsappcrm_backend/.env
+      - ./.env # Load variables from the root .env file
     environment: # Ensure Django settings can find services
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
-      - ./whatsappcrm_backend/.env # For Django app settings used by Celery tasks
+      - ./.env # Load variables from the root .env file
     environment:
       # These are for the command above and for Celery app running inside container.
       # Define these in a root .env file (next to docker-compose.yml) or set defaults here.
@@ -119,7 +119,7 @@ services:
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
-      - ./whatsappcrm_backend/.env
+      - ./.env # Load variables from the root .env file
     environment: # Added for consistency and explicitness
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
