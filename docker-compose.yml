@@ -20,12 +20,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: whatsappcrm_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:?Please set REDIS_PASSWORD in .env file}
     volumes:
       - redis_data:/data
     ports: # In production, you can comment this out for security if Redis is only accessed by other containers.
       - "6379:6379" # Consider using ${REDIS_PORT_LOCAL:-6379}:6379
     healthcheck: # Added healthcheck
-      test: ["CMD", "redis-cli", "ping"]
+      # The healthcheck must now use the password to ping the server.
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
