@@ -376,7 +376,7 @@ def create_registration_flow() -> Dict[str, Any]:
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "✅ Registration successful! Your account and wallet have been created.\n\n*Username:* {{ flow_context.user.username }}\n*Password:* {{ flow_context.generated_password }}\n\n_Please save these details securely. You can now start betting. Type 'menu' to see options._"
+                        "body": "✅ Registration successful! Your account and wallet have been created.\n\n*Username:* {{ flow_context.user_username }}\n*Password:* {{ flow_context.generated_password }}\n\n_Please save these details securely. You can now start betting. Type 'menu' to see options._"
                     }
                 },
                 "transitions": [

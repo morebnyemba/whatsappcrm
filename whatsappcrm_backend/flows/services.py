@@ -1087,9 +1087,9 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     current_step_context['account_creation_status'] = result['success']
                     current_step_context['account_creation_message'] = result['message']
                     current_step_context['user_created'] = result.get('created_user', False) # For transition conditions
-                    if result['success']:
-                        # Add user object and generated password to context for use in subsequent message templates
-                        current_step_context['user'] = result.get('user')
+                    if result['success'] and result.get('user'):
+                        # Add user's username and generated password to context for use in subsequent message templates
+                        current_step_context['user_username'] = result['user'].username
                         current_step_context['generated_password'] = result.get('generated_password')
                         logger.info(f"Account creation/link successful for {contact.whatsapp_id}. User created: {result.get('created_user', False)}")
                     else:
