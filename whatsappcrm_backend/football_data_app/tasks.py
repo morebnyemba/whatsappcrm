@@ -422,7 +422,13 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
     try:
         fixture = FootballFixture.objects.get(id=fixture_id, status=FootballFixture.FixtureStatus.FINISHED)
         if fixture.home_team_score is None or fixture.away_team_score is None:
-            return fixture_id
+            logger.error(
+                f"Cannot settle outcomes for fixture ID {fixture_id} ({fixture}) because it is marked as FINISHED "
+                f"but is missing score data (Home: {fixture.home_team_score}, Away: {fixture.away_team_score}). "
+                "This indicates a problem during the score fetching phase. Aborting settlement pipeline for this fixture."
+            )
+            # Abort the chain for this fixture. The error is logged for visibility.
+            return
             
         home_score, away_score = fixture.home_team_score, fixture.away_team_score
         outcomes_to_update = []
