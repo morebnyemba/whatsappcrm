@@ -58,7 +58,7 @@ class FootballFixture(models.Model):
     home_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='home_fixtures')
     away_team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='away_fixtures')
     api_id = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="The unique event ID from The Odds API.")
-    match_date = models.DateTimeField(help_text="The scheduled start time of the fixture.")
+    match_date = models.DateTimeField(null=True, blank=True, help_text="The scheduled start time of the fixture.")
     status = models.CharField(max_length=20, choices=FixtureStatus.choices, default=FixtureStatus.SCHEDULED)
     home_team_score = models.IntegerField(null=True, blank=True)
     away_team_score = models.IntegerField(null=True, blank=True)
