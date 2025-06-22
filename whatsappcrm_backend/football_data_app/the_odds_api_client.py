@@ -158,37 +158,46 @@ class TheOddsAPIClient:
         sport_key: str,
         event_id: str,
         regions: str = 'uk,eu,us,au',
-        markets: str = 'h2h,totals',
+        markets: str = 'h2h,totals', # Can be 'all' for this endpoint
         bookmakers: Optional[str] = None,
         odds_format: str = 'decimal',
         date_format: str = 'iso'
     ) -> Optional[dict]:
         """
         Get odds for a specific event using its sport_key and event_id.
-        Note: The Odds API v4 returns a list even when querying by eventIds.
-        This method extracts the specific event's odds from that list.
+        This method uses the dedicated single-event odds endpoint.
         """
         params = {
             "regions": regions,
             "markets": markets,
             "oddsFormat": odds_format,
             "dateFormat": date_format,
-            "eventIds": event_id, # Specify the event ID
         }
         if bookmakers:
             params['bookmakers'] = bookmakers
 
-        # Use the standard /sports/{sport_key}/odds endpoint
-        # The API docs state that if eventIds is specified, the sport_key in the path is ignored,
-        # but a sport_key is still needed for the path structure.
-        results = self._request("GET", f"/sports/{sport_key}/odds", params=params)
+        # Use the dedicated /sports/{sport_key}/events/{event_id}/odds endpoint
+        endpoint = f"/sports/{sport_key}/events/{event_id}/odds"
         
-        if isinstance(results, list):
-            for item in results: # Iterate through the list (usually 0 or 1 item for a single eventId)
-                if item.get('id') == event_id:
-                    return item # Return the single event odds dictionary
-            logger.warning(f"Event ID {event_id} not found in results from /sports/{sport_key}/odds, though requested via eventIds. API returned: {results}")
-        return None # Event not found or API returned unexpected structure
+        try:
+            # This endpoint returns a single event object, not a list.
+            result = self._request("GET", endpoint, params=params)
+            
+            if isinstance(result, dict) and result.get('id') == event_id:
+                return result
+            else:
+                logger.warning(
+                    f"API call to {endpoint} returned unexpected data structure or mismatched event ID. "
+                    f"Expected ID: {event_id}, Received data (snippet): {str(result)[:200]}"
+                )
+                return None
+        except TheOddsAPIException as e:
+            # A 404 Not Found is a possible and non-critical error if an event has no odds.
+            if e.status_code == 404:
+                logger.info(f"No odds found for event {event_id} (404 Not Found). This can be normal.")
+                return None
+            # Re-raise other exceptions
+            raise e
 
     def get_scores(
         self,

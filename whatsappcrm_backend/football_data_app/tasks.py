@@ -18,9 +18,11 @@ logger = logging.getLogger(__name__)
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
 DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals")
+# List of additional markets to fetch alongside the default ones.
+ADDITIONAL_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_ADDITIONAL_MARKETS', "alternate_totals,h2h_3way,btts")
+PREFERRED_ODDS_API_BOOKMAKERS = getattr(settings, 'THE_ODDS_API_PREFERRED_BOOKMAKERS', "bet365,pinnacle,unibet,williamhill,betfair")
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
-ODDS_FETCH_EVENT_BATCH_SIZE = getattr(settings, 'THE_ODDS_API_BATCH_SIZE', 10)
 ASSUMED_COMPLETION_MINUTES = getattr(settings, 'THE_ODDS_API_ASSUMED_COMPLETION_MINUTES', 120)
 MAX_EVENT_RETRIES = getattr(settings, 'THE_ODDS_API_MAX_EVENT_RETRIES', 3)
 EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
@@ -28,8 +30,11 @@ EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
 
 # --- Helper Functions ---
 @transaction.atomic
-def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, market_keys: List[str]):
-    """Processes and saves market and outcome data for a given fixture and bookmaker."""
+def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
+    """
+    Processes and saves market and outcome data for a given fixture and bookmaker.
+    Assumes that old markets for this bookmaker/fixture have been cleared by the calling task.
+    """
     bookmaker, _ = Bookmaker.objects.get_or_create(
         api_bookmaker_key=bookmaker_data['key'],
         defaults={'name': bookmaker_data['title']}
@@ -37,28 +42,23 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict, mark
     
     for market_data in bookmaker_data.get('markets', []):
         market_key = market_data['key']
-        if market_key not in market_keys:
-            continue
-            
         category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
         
-        market, created = Market.objects.update_or_create(
-            fixture=fixture, # Updated field name
+        # Since old markets are cleared by the calling task, we can simply create new ones.
+        market = Market.objects.create(
+            fixture=fixture,
             bookmaker=bookmaker,
             api_market_key=market_key,
             category=category,
-            defaults={'last_updated_odds_api': parser.isoparse(market_data['last_update'])}
+            last_updated_odds_api=parser.isoparse(market_data['last_update'])
         )
-        
-        if not created: # If market existed, clear old outcomes before adding new ones
-            market.outcomes.all().delete()
             
         outcomes_to_create = [
             MarketOutcome(
                 market=market, 
                 outcome_name=o['name'], 
                 odds=Decimal(str(o['price'])),
-                point_value=o.get('point') # Added point_value extraction
+                point_value=o.get('point')
             )
             for o in market_data.get('outcomes', [])
         ]
@@ -206,75 +206,108 @@ def fetch_events_for_league_task(self, league_id: int):
 @shared_task(bind=True)
 def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     """
-    Step 3 (Chord Body): Dispatches parallel tasks to fetch odds for upcoming fixtures
+    Step 3 (Chord Body): Dispatches individual tasks to fetch odds for each upcoming fixture
     after all event fetching tasks (from the chord header) have completed.
     """
-    # results_from_event_fetches will be a list of return values from each fetch_events_for_league_task.
-    # Example: [{'league_id': 1, 'status': 'success', 'events_processed': 5}, {'league_id': 2, ...}]
     logger.info(
         f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} result(s) from the event fetching group."
     )
     if results_from_event_fetches:
-        # Log a summary or sample of the results, not the whole thing if it's huge
         logger.debug(f"Step 3: Sample of results_from_event_fetches: {str(results_from_event_fetches)[:500]}")
+    
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
     
-    fixtures_to_update = FootballFixture.objects.filter(
-        # Fetch for fixtures that have never had odds updated OR are stale (Q object first)
+    # Get a list of fixture IDs that need an odds update.
+    fixture_ids_to_update = FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))
-    ).values('league_id', 'api_id', 'league__api_id') # Include league.api_id for the client
+    ).values_list('id', flat=True)
  
-    if not fixtures_to_update:
+    if not fixture_ids_to_update:
         logger.info("No fixtures require an odds update at this time.")
         return
 
-    # Group fixtures by league's API ID (sport_key for the API) to batch API calls
-    fixtures_by_sport_key = {}
-    for item in fixtures_to_update:
-        fixtures_by_sport_key.setdefault(item['league__api_id'], []).append(item['api_id'])
-
-    tasks = []
-    for sport_key, event_ids_for_league in fixtures_by_sport_key.items():
-        # Batch event_ids further if needed, based on ODDS_FETCH_EVENT_BATCH_SIZE
-        for i in range(0, len(event_ids_for_league), ODDS_FETCH_EVENT_BATCH_SIZE):
-            batch_ids = event_ids_for_league[i:i + ODDS_FETCH_EVENT_BATCH_SIZE]
-            tasks.append(fetch_odds_for_event_batch_task.s(
-                sport_key=sport_key, # Pass the league's api_id as sport_key
-                event_ids=batch_ids
-            ))
+    # Create a group of tasks, one for each fixture.
+    tasks = [fetch_odds_for_single_event_task.s(fixture_id) for fixture_id in fixture_ids_to_update]
 
     if tasks:
         group(tasks).apply_async()
-        logger.info(f"Dispatched {len(tasks)} odds fetching tasks in batches.")
+        logger.info(f"Dispatched {len(tasks)} individual odds fetching tasks for fixtures.")
     else:
         logger.info("No odds fetching tasks were dispatched (possibly all fixtures up-to-date or no upcoming).")
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
-def fetch_odds_for_event_batch_task(self, sport_key: str, event_ids: List[str]):
-    """Fetches default market odds for a batch of events."""
-    logger.info(f"Fetching odds for {len(event_ids)} events using sport_key: {sport_key}.")
-    client = TheOddsAPIClient()
+def fetch_odds_for_single_event_task(self, fixture_id: int):
+    """Fetches all available markets for a single fixture using the dedicated event odds endpoint."""
     try:
-        # league = League.objects.get(api_id=sport_key) # Not strictly needed if client uses sport_key directly
-        odds_data = client.get_odds(sport_key, DEFAULT_ODDS_API_REGIONS, DEFAULT_ODDS_API_MARKETS, event_ids)
-        
+        fixture = FootballFixture.objects.select_related('league').get(id=fixture_id)
+        logger.info(f"[SingleEventOdds] START - Fetching odds for fixture ID: {fixture.id} (API Event ID: {fixture.api_id})")
+
+        client = TheOddsAPIClient()
+
+        # Combine default and additional markets into a single comma-separated string for the API
+        markets_to_fetch = f"{DEFAULT_ODDS_API_MARKETS},{ADDITIONAL_ODDS_API_MARKETS}".strip(',')
+
+        logger.debug(
+            f"[SingleEventOdds] Calling get_event_odds for fixture {fixture.id} "
+            f"with sport_key='{fixture.league.api_id}', event_id='{fixture.api_id}', markets='{markets_to_fetch}'"
+        )
+
+        # Use the updated client method for single event odds
+        odds_data = client.get_event_odds(
+            sport_key=fixture.league.api_id,
+            event_id=fixture.api_id,
+            regions=DEFAULT_ODDS_API_REGIONS,
+            markets=markets_to_fetch,
+            bookmakers=PREFERRED_ODDS_API_BOOKMAKERS
+        )
+
         if not odds_data:
-            return
+            logger.info(f"[SingleEventOdds] No odds data returned from API for fixture {fixture.id}. This may be normal if no odds are available.")
+            # We can still update the timestamp to avoid re-checking immediately
+            fixture.last_odds_update = timezone.now()
+            fixture.save(update_fields=['last_odds_update'])
+            return {"fixture_id": fixture.id, "status": "no_odds_data"}
 
-        fixtures_map = {item.api_id: item for item in FootballFixture.objects.filter(api_id__in=event_ids)}
-        for event_data in odds_data:
-            if fixture := fixtures_map.get(event_data['id']):
-                with transaction.atomic():
-                    for bookmaker_data in event_data.get('bookmakers', []):
-                        _process_bookmaker_data(fixture, bookmaker_data, DEFAULT_ODDS_API_MARKETS.split(','))
-                    fixture.last_odds_update = timezone.now()
-                    fixture.save(update_fields=['last_odds_update'])
+        # The data structure is a single event object
+        with transaction.atomic():
+            # Re-fetch fixture with lock to prevent race conditions during update
+            fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
+            
+            # Get a list of bookmaker keys present in the new API data
+            bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
+            
+            # Delete markets for this fixture from bookmakers that are in the API response.
+            # This ensures we are replacing their data with the latest, without touching
+            # data from other bookmakers not in this specific API response.
+            if bookmaker_keys_in_response:
+                deleted_count, _ = Market.objects.filter(
+                    fixture=fixture_for_update, 
+                    bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response
+                ).delete()
+                logger.debug(
+                    f"[SingleEventOdds] Cleared {deleted_count} existing market(s) for fixture {fixture.id} "
+                    f"from bookmakers: {bookmaker_keys_in_response}."
+                )
 
+            for bookmaker_data in odds_data.get('bookmakers', []):
+                _process_bookmaker_data(fixture_for_update, bookmaker_data)
+            
+            fixture_for_update.last_odds_update = timezone.now()
+            fixture_for_update.save(update_fields=['last_odds_update'])
+            logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}.")
+            return {"fixture_id": fixture.id, "status": "success"}
+
+    except FootballFixture.DoesNotExist:
+        logger.error(f"[SingleEventOdds] FAILED - Fixture with ID {fixture_id} not found.")
+        return {"fixture_id": fixture_id, "status": "error", "message": "Fixture not found"}
     except TheOddsAPIException as e:
-        logger.exception(f"API error in odds fetch batch: {e}")
+        logger.exception(f"[SingleEventOdds] FAILED - API error fetching odds for fixture {fixture_id}: {e}")
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception(f"[SingleEventOdds] FAILED - Unexpected error for fixture {fixture_id}: {e}")
         raise self.retry(exc=e)
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
@@ -294,18 +327,34 @@ def fetch_scores_for_league_task(self, league_id: int):
     """Fetches scores for a league and updates fixture statuses (Live/Finished)."""
     logger.info(f"Fetching scores for league ID: {league_id}")
     now = timezone.now()
+    # We only check for scores on scheduled matches that started recently
+    # to avoid checking very old, stuck fixtures.
+    assumed_end_time_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
     try:
         league = League.objects.get(id=league_id)
         fixtures_to_check = FootballFixture.objects.filter(
-            models.Q(league=league, status=FootballFixture.FixtureStatus.LIVE) |
-            models.Q(league=league, status=FootballFixture.FixtureStatus.SCHEDULED, match_date__lt=now)
+            league=league
+        ).filter(
+            # Condition 1: The fixture is already marked as LIVE.
+            models.Q(status=FootballFixture.FixtureStatus.LIVE) |
+            # Condition 2: The fixture is SCHEDULED, its start time is in the past,
+            # but not so far in the past that it's definitely over.
+            models.Q(
+                status=FootballFixture.FixtureStatus.SCHEDULED,
+                match_date__lt=now, # It should have started
+                match_date__gt=assumed_end_time_cutoff # But it started recently enough to still be in-play
+            )
         ).values_list('api_id', flat=True)
 
         if not fixtures_to_check.exists():
+            logger.info(f"No fixtures need a score update for league ID: {league_id}.")
             return
 
         client = TheOddsAPIClient()
         scores_data = client.get_scores(sport_key=league.api_id, event_ids=list(fixtures_to_check))
+        if not scores_data:
+            logger.info(f"The Odds API returned no score data for the {fixtures_to_check.count()} fixtures checked in league {league_id}.")
+            return
         
         for score_item in scores_data:
             with transaction.atomic():
@@ -318,12 +367,23 @@ def fetch_scores_for_league_task(self, league_id: int):
 
 
                 if score_item.get('completed', False):
+                    # Use the team names from the score item itself for robust matching
                     home_s, away_s = None, None
-                    if score_item.get('scores'):
+                    api_home_team_name = score_item.get('home_team')
+                    api_away_team_name = score_item.get('away_team')
+
+                    if score_item.get('scores') and api_home_team_name and api_away_team_name:
                         for score in score_item['scores']:
-                            if score['name'] == fixture.home_team.name: home_s = score['score']
-                            elif score['name'] == fixture.away_team.name: away_s = score['score']
-                    
+                            if score['name'] == api_home_team_name:
+                                home_s = score['score']
+                            elif score['name'] == api_away_team_name:
+                                away_s = score['score']
+                    else:
+                        logger.warning(
+                            f"Score data for fixture {fixture.api_id} is missing 'scores' array or team names. "
+                            f"API Response (snippet): {str(score_item)[:200]}"
+                        )
+
                     fixture.home_team_score = int(home_s) if home_s is not None else None
                     fixture.away_team_score = int(away_s) if away_s is not None else None
                     fixture.status = FootballFixture.FixtureStatus.FINISHED
