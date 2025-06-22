@@ -263,7 +263,7 @@ def parse_betting_string(betting_string: str) -> dict:
                 found_outcome = None
                 
                 outcomes_for_fixture = MarketOutcome.objects.filter(
-                    market__fixture_display=matched_fixture,
+                    market__fixture_id=matched_fixture.id,
                     is_active=True
                 ).select_related('market')
 

@@ -104,12 +104,12 @@ def handle_football_betting_action(
 
             try:
                 # Direct lookup for outcome details based on its UUID
-                outcome_obj = MarketOutcome.objects.get(uuid=market_outcome_id)
-                # Access fixture details via market__fixture_display
+                outcome_obj = MarketOutcome.objects.select_related('market__fixture__home_team', 'market__fixture__away_team').get(uuid=market_outcome_id)
+                # Access fixture details via market__fixture
                 bet_data = {
-                    'fixture_id': outcome_obj.market.fixture_display.id, # Accessing id from FootballFixture
-                    'home_team': outcome_obj.market.fixture_display.home_team.name,
-                    'away_team': outcome_obj.market.fixture_display.away_team.name,
+                    'fixture_id': outcome_obj.market.fixture.id, # Accessing id from FootballFixture
+                    'home_team': outcome_obj.market.fixture.home_team.name,
+                    'away_team': outcome_obj.market.fixture.away_team.name,
                     'outcome_name': outcome_obj.outcome_name,
                     'odds': float(outcome_obj.odds)
                 }
