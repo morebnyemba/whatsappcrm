@@ -364,7 +364,7 @@ class ActionItem(BaseModel):
 
 
 class StepConfigAction(BasePydanticConfig):
-    actions_to_run: List[ActionItem] = Field(default_factory=list, min_items=1)
+    actions_to_run: List[ActionItem] = Field(default_factory=list) # Changed min_items to 0 (or removed)
 
 class StepConfigHumanHandover(BasePydanticConfig):
     pre_handover_message_text: Optional[str] = None
@@ -791,8 +791,7 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                 
     if changed_fields:
         profile.last_updated_from_conversation = timezone.now() # Update timestamp for last conversation update
-        if 'last_updated_from_conversation' not in changed_fields:
-            changed_fields.append('last_updated_from_conversation')
+        # No need to append 'last_updated_from_conversation' to changed_fields if it's not a direct model field
         
         try:
             profile.save(update_fields=changed_fields)

@@ -223,8 +223,8 @@ def create_registration_flow() -> Dict[str, Any]:
                     "message_config": {
                         "message_type": "interactive",
                         "interactive": {
-                            "type": "button",
-                            "body": {"text": "What is your gender?"},
+                            "type": "button", # Max 3 buttons
+                            "body": {"text": "What is your gender? (Select one)"},
                             "action": {
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "gender_male", "title": "Male"}},
@@ -236,7 +236,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "flow_context.provided_gender_id",
+                        "save_to_variable": "provided_gender_id", # Removed "flow_context." prefix
                         "expected_type": "interactive_id"
                     },
                     "fallback_config": {
@@ -293,7 +293,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "flow_context.provided_dob",
+                        "save_to_variable": "provided_dob", # Removed "flow_context." prefix
                         "expected_type": "text",
                         "validation_regex": r"^\d{4}-\d{2}-\d{2}$" # Basic YYYY-MM-DD regex
                     },

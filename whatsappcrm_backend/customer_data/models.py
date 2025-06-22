@@ -12,11 +12,21 @@ class CustomerProfile(models.Model):
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_profile',null=True,blank=True)
     contact = models.OneToOneField('conversations.Contact', on_delete=models.SET_NULL, null=True, blank=True, related_name='customerprofile')
-    phone_number = models.CharField(max_length=20, unique=True)
+    
+    # New fields for registration flow
+    first_name = models.CharField(max_length=100, blank=True, null=True)
+    last_name = models.CharField(max_length=100, blank=True, null=True)
+    email = models.EmailField(max_length=255, unique=True, blank=True, null=True)
+    gender = models.CharField(max_length=1, choices=[('M', 'Male'), ('F', 'Female'), ('O', 'Other')], blank=True, null=True)
     date_of_birth = models.DateField(null=True, blank=True)
-    address = models.TextField(null=True, blank=True)
+    acquisition_source = models.CharField(max_length=100, blank=True, null=True, default='whatsapp_flow')
+
+    # Existing fields (ensure they are still relevant or adjust as needed)
+    phone_number = models.CharField(max_length=20, unique=True, blank=True, null=True) # Made nullable as contact has it
+    address = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_updated_from_conversation = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last update from a conversation flow.")
 
     def __str__(self):
         if self.user and self.user.username:

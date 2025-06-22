@@ -54,22 +54,23 @@ def create_or_get_customer_account(
                 contact.save()
 
             # 2. Get or Create CustomerProfile
-            customer_profile, created_profile = CustomerProfile.objects.get_or_create(
-                contact=contact,
-                defaults={
-                    'first_name': first_name or '',
-                    'last_name': last_name or '',
-                    'acquisition_source': acquisition_source or 'whatsapp_flow'
-                }
-            )
-            # Update profile if it exists and fields are provided
-            if not created_profile:
-                if first_name and customer_profile.first_name != first_name:
-                    customer_profile.first_name = first_name
-                if last_name and customer_profile.last_name != last_name:
-                    customer_profile.last_name = last_name
-                if acquisition_source and customer_profile.acquisition_source != acquisition_source:
-                    customer_profile.acquisition_source = acquisition_source
+            customer_profile, created_profile = CustomerProfile.objects.get_or_create(contact=contact)
+
+            # Update profile fields if provided and different
+            profile_updated = False
+            if first_name is not None and customer_profile.first_name != first_name:
+                customer_profile.first_name = first_name
+                profile_updated = True
+            if last_name is not None and customer_profile.last_name != last_name:
+                customer_profile.last_name = last_name
+                profile_updated = True
+            if acquisition_source is not None and customer_profile.acquisition_source != acquisition_source:
+                customer_profile.acquisition_source = acquisition_source
+                profile_updated = True
+            if email is not None and customer_profile.email != email:
+                customer_profile.email = email
+                profile_updated = True
+            if profile_updated:
                 customer_profile.save()
 
             # 3. Ensure Django User is linked or created
