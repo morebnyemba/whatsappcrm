@@ -83,55 +83,65 @@ def get_formatted_football_data(
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
 
-            compact_odds_parts: List[str] = []
+            market_lines: List[str] = []
+
+            # 1. Format H2H (Match Winner)
             if 'h2h' in aggregated_outcomes:
-                home_odds = aggregated_outcomes['h2h'].get(f"{fixture.home_team.name}-")
-                draw_odds = aggregated_outcomes['h2h'].get('Draw-')
-                away_odds = aggregated_outcomes['h2h'].get(f"{fixture.away_team.name}-")
-                if home_odds: compact_odds_parts.append(f"🏠Home:*{home_odds.odds:.2f}*")
-                if draw_odds: compact_odds_parts.append(f"🤝Draw:*{draw_odds.odds:.2f}*")
-                if away_odds: compact_odds_parts.append(f"✈️Away:*{away_odds.odds:.2f}*")
-
-            if 'totals' in aggregated_outcomes:
-                best_overall_over = None; best_overall_under = None
-                for outcome_obj in aggregated_outcomes['totals'].values():
-                    if 'over' in outcome_obj.outcome_name.lower():
-                        if best_overall_over is None or outcome_obj.odds > best_overall_over.odds: best_overall_over = outcome_obj
-                    elif 'under' in outcome_obj.outcome_name.lower():
-                        if best_overall_under is None or outcome_obj.odds > best_overall_under.odds: best_overall_under = outcome_obj
+                h2h_outcomes = aggregated_outcomes['h2h']
+                home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-")
+                draw_odds = h2h_outcomes.get('Draw-')
+                away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-")
                 
-                if best_overall_over:
-                    over_point_str = f"{best_overall_over.point_value:.1f}" if best_overall_over.point_value is not None else ""
-                    compact_odds_parts.append(f"⬆️Over{over_point_str}:*{best_overall_over.odds:.2f}*")
-                if best_overall_under:
-                    under_point_str = f"{best_overall_under.point_value:.1f}" if best_overall_under.point_value is not None else ""
-                    compact_odds_parts.append(f"⬇️Under{under_point_str}:*{best_overall_under.odds:.2f}*")
+                h2h_parts = []
+                if home_odds: h2h_parts.append(f"  - {fixture.home_team.name}: *{home_odds.odds:.2f}*")
+                if draw_odds: h2h_parts.append(f"  - Draw: *{draw_odds.odds:.2f}*")
+                if away_odds: h2h_parts.append(f"  - {fixture.away_team.name}: *{away_odds.odds:.2f}*")
+                
+                if h2h_parts:
+                    market_lines.append("\n*Match Winner (H2H):*\n" + "\n".join(h2h_parts))
 
+            # 2. Format Totals (Over/Under), combining 'totals' and 'alternate_totals'
+            all_totals_outcomes = {**aggregated_outcomes.get('totals', {}), **aggregated_outcomes.get('alternate_totals', {})}
+            if all_totals_outcomes:
+                totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+                for outcome in all_totals_outcomes.values():
+                    if outcome.point_value is not None:
+                        if outcome.point_value not in totals_by_point:
+                            totals_by_point[outcome.point_value] = {}
+                        if 'over' in outcome.outcome_name.lower():
+                            totals_by_point[outcome.point_value]['over'] = outcome
+                        elif 'under' in outcome.outcome_name.lower():
+                            totals_by_point[outcome.point_value]['under'] = outcome
+
+                sorted_points = sorted(totals_by_point.keys())
+                totals_parts = []
+                for point in sorted_points:
+                    over_outcome = totals_by_point[point].get('over')
+                    under_outcome = totals_by_point[point].get('under')
+                    over_str = f"Over {point:.1f}: *{over_outcome.odds:.2f}*" if over_outcome else ""
+                    under_str = f"Under {point:.1f}: *{under_outcome.odds:.2f}*" if under_outcome else ""
+                    point_line = " | ".join(filter(None, [over_str, under_str]))
+                    if point_line:
+                        totals_parts.append(f"  - {point_line}")
+
+                if totals_parts:
+                    market_lines.append("\n*Total Goals (Over/Under):*\n" + "\n".join(totals_parts))
+
+            # 3. Format BTTS
             if 'btts' in aggregated_outcomes:
-                yes_odds = aggregated_outcomes['btts'].get('Yes-')
-                no_odds = aggregated_outcomes['btts'].get('No-')
-                if yes_odds: compact_odds_parts.append(f"✅BTTS Y:*{yes_odds.odds:.2f}*")
-                if no_odds: compact_odds_parts.append(f"❌BTTS N:*{no_odds.odds:.2f}*")
-
-            if 'spreads' in aggregated_outcomes:
-                best_home_spread = None; best_away_spread = None
-                for outcome_obj in aggregated_outcomes['spreads'].values():
-                    if outcome_obj.outcome_name == fixture.home_team.name:
-                        if best_home_spread is None or outcome_obj.odds > best_home_spread.odds: best_home_spread = outcome_obj
-                    elif outcome_obj.outcome_name == fixture.away_team.name:
-                        if best_away_spread is None or outcome_obj.odds > best_away_spread.odds: best_away_spread = outcome_obj
-                
-                if best_home_spread:
-                    home_spread_point_str = f"{best_home_spread.point_value:.1f}" if best_home_spread.point_value is not None else ""
-                    compact_odds_parts.append(f"📊 S {fixture.home_team.name}({home_spread_point_str}):*{best_home_spread.odds:.2f}*")
-                if best_away_spread:
-                    away_spread_point_str = f"({best_away_spread.point_value:.1f})" if best_away_spread.point_value is not None else ""
-                    compact_odds_parts.append(f"📊 S {fixture.away_team.name}{away_spread_point_str}:*{best_away_spread.odds:.2f}*")
+                btts_outcomes = aggregated_outcomes['btts']
+                yes_odds = btts_outcomes.get('Yes-')
+                no_odds = btts_outcomes.get('No-')
+                btts_parts = []
+                if yes_odds: btts_parts.append(f"  - Yes: *{yes_odds.odds:.2f}*")
+                if no_odds: btts_parts.append(f"  - No: *{no_odds.odds:.2f}*")
+                if btts_parts:
+                    market_lines.append("\n*Both Teams To Score:*\n" + "\n".join(btts_parts))
             
-            if compact_odds_parts:
-                line += "\nOdds: " + " | ".join(compact_odds_parts)
+            if market_lines:
+                line += "\n" + "\n".join(market_lines)
             else:
-                line += "\n_No odds available_"
+                line += "\n\n_No odds available_"
             individual_item_strings.append(line.strip())
 
     elif data_type == "finished_results":
