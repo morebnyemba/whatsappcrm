@@ -50,7 +50,8 @@ def create_registration_flow() -> Dict[str, Any]:
                     "message_type": "text",
                     "text": {
                         "body": "✅ Registration successful! Your account and wallet have been created. You can now start betting. Type 'menu' to see options."
-                    }
+                    },
+                    # Could add more details here if needed
                 },
                 "transitions": [
                     {
