@@ -23,6 +23,7 @@ urlpatterns = [
     # API endpoints for 'conversations' application
     # This includes DRF APIs for Contacts and Messages (e.g., /crm-api/conversations/contacts/)
     path('crm-api/conversations/', include('conversations.urls', namespace='conversations_api')),
+    path('crm-api/paynow-integration/', include('paynow_integration.urls', namespace='paynow_integration_api')),
 path('crm-api/customer-data/', include('customer_data.urls', namespace='customer_data_api')),
 path('crm-api/stats/', include('stats.urls', namespace='stats_api')),
     # API endpoints for 'flows' application

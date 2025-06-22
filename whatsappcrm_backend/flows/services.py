@@ -311,6 +311,8 @@ class CreateAccountConfig(BasePydanticConfig):
 class PerformDepositConfig(BasePydanticConfig):
     action_type: Literal["perform_deposit"] = "perform_deposit"
     amount_template: Union[float, str] # Can be a direct float or a template string
+    payment_method: Literal["paynow_mobile", "stripe", "manual"] = "manual" # New field
+    phone_number_template: Optional[str] = None # New field for mobile payments
     description_template: Optional[str] = "Deposit via bot flow"
 
 class PerformWithdrawalConfig(BasePydanticConfig):
