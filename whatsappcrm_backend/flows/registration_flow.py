@@ -27,7 +27,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "priority": 1,
                         "condition_config": {
                             "type": "variable_exists",
-                            "variable_name": "contact.email"
+                            "variable_name": "customer_profile.email"
                         }
                     },
                     {
@@ -78,15 +78,201 @@ def create_registration_flow() -> Dict[str, Any]:
                 "config": {
                     "actions_to_run": [
                         {
-                            "action_type": "update_contact_field",
-                            "field_path": "email",
-                            "value_template": "{{ flow_context.provided_email }}"
+                            "action_type": "update_customer_profile",
+                            "fields_to_update": {
+                                "email": "{{ flow_context.provided_email }}"
+                            }
                         }
                     ]
                 },
                 "transitions": [
                     {
                         "to_step": "create_account_step",
+                        "priority": 1,
+                        "condition_config": { # If email is the only thing needed, go straight to create_account
+                            "type": "variable_exists",
+                            "variable_name": "customer_profile.first_name" # Check if first_name already exists
+                        }
+                    },
+                    {
+                        "to_step": "ask_for_first_name",
+                        "priority": 2,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 4. Ask for First Name
+            {
+                "name": "ask_for_first_name",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {
+                            "body": "What is your first name?"
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "flow_context.provided_first_name",
+                        "expected_type": "text"
+                    },
+                    "fallback_config": {
+                        "max_retries": 2,
+                        "re_prompt_message_text": "Please provide a valid first name.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "We couldn't get your first name. Please type 'register' to try again later."
+                    }
+                },
+                "transitions": [
+                    {
+                        "to_step": "save_first_name_step",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 5. Save First Name
+            {
+                "name": "save_first_name_step",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "update_customer_profile",
+                            "fields_to_update": {
+                                "first_name": "{{ flow_context.provided_first_name }}"
+                            }
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "ask_for_last_name",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 6. Ask for Last Name
+            {
+                "name": "ask_for_last_name",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {
+                            "body": "What is your last name?"
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "flow_context.provided_last_name",
+                        "expected_type": "text"
+                    },
+                    "fallback_config": {
+                        "max_retries": 2,
+                        "re_prompt_message_text": "Please provide a valid last name.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "We couldn't get your last name. Please type 'register' to try again later."
+                    }
+                },
+                "transitions": [
+                    {
+                        "to_step": "save_last_name_step",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 7. Save Last Name
+            {
+                "name": "save_last_name_step",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "update_customer_profile",
+                            "fields_to_update": {
+                                "last_name": "{{ flow_context.provided_last_name }}"
+                            }
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "ask_for_gender",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 8. Ask for Gender
+            {
+                "name": "ask_for_gender",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "What is your gender?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "gender_male", "title": "Male"}},
+                                    {"type": "reply", "reply": {"id": "gender_female", "title": "Female"}},
+                                    {"type": "reply", "reply": {"id": "gender_other", "title": "Other"}},
+                                    {"type": "reply", "reply": {"id": "gender_skip", "title": "Prefer not to say"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "flow_context.provided_gender_id",
+                        "expected_type": "interactive_id"
+                    },
+                    "fallback_config": {
+                        "max_retries": 2,
+                        "re_prompt_message_text": "Please select one of the options for your gender.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "We couldn't get your gender. Please type 'register' to try again later."
+                    }
+                },
+                "transitions": [
+                    {
+                        "to_step": "save_gender_step",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 9. Save Gender
+            {
+                "name": "save_gender_step",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "update_customer_profile",
+                            "fields_to_update": {
+                                "gender": "{{ flow_context.provided_gender_id }}"
+                            }
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "ask_for_dob",
                         "priority": 1,
                         "condition_config": {
                             "type": "always_true"
@@ -95,6 +281,62 @@ def create_registration_flow() -> Dict[str, Any]:
                 ]
             },
             # 4. Create the account (convergence point)
+            # 10. Ask for Date of Birth
+            {
+                "name": "ask_for_dob",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {
+                            "body": "What is your date of birth? (YYYY-MM-DD, e.g., 1990-01-15)"
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "flow_context.provided_dob",
+                        "expected_type": "text",
+                        "validation_regex": r"^\d{4}-\d{2}-\d{2}$" # Basic YYYY-MM-DD regex
+                    },
+                    "fallback_config": {
+                        "max_retries": 2,
+                        "re_prompt_message_text": "That doesn't look like a valid date format (YYYY-MM-DD). Please try again.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "We couldn't validate your date of birth. Please type 'register' to try again later."
+                    }
+                },
+                "transitions": [
+                    {
+                        "to_step": "save_dob_step",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "always_true"
+                        }
+                    }
+                ]
+            },
+            # 11. Save Date of Birth
+            {
+                "name": "save_dob_step",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "update_customer_profile",
+                            "fields_to_update": {
+                                "date_of_birth": "{{ flow_context.provided_dob }}"
+                            }
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "create_account_step",
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # 12. Create the account (convergence point)
             {
                 "name": "create_account_step",
                 "step_type": "action",
@@ -102,8 +344,9 @@ def create_registration_flow() -> Dict[str, Any]:
                     "actions_to_run": [
                         {
                             "action_type": "create_account",
-                            "first_name_template": "{{ contact.name }}",
-                            "email_template": "{{ contact.email }}"
+                            "email_template": "{{ customer_profile.email }}",
+                            "first_name_template": "{{ customer_profile.first_name }}",
+                            "last_name_template": "{{ customer_profile.last_name }}"
                         }
                     ]
                 },
@@ -126,7 +369,7 @@ def create_registration_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 5. Success message
+            # 13. Success message
             {
                 "name": "registration_success",
                 "step_type": "send_message",
@@ -144,7 +387,7 @@ def create_registration_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 6. Already registered message
+            # 14. Already registered message
             {
                 "name": "already_registered",
                 "step_type": "send_message",
@@ -162,7 +405,7 @@ def create_registration_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 7. End flow
+            # 15. End flow
             {
                 "name": "end_flow_after_registration",
                 "step_type": "end_flow",
