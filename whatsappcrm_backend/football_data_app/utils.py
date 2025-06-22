@@ -41,8 +41,8 @@ def get_formatted_football_data(
         main_header = f"⚽ *{data_type_label}*"
         start_date = now
         end_date = now + timedelta(days=days_ahead)
-
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
+        # Use FootballFixture.FixtureStatus.SCHEDULED and match_date
         fixtures_qs = FootballFixture.objects.filter(
             status=FootballFixture.FixtureStatus.SCHEDULED,
             match_date__gte=start_date,
@@ -65,12 +65,12 @@ def get_formatted_football_data(
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} scheduled fixtures.")
 
         for fixture in fixtures_qs[:num_fixtures_to_display]:
-            match_time_local = timezone.localtime(fixture.match_date)
+            match_time_local = timezone.localtime(fixture.match_date) # Use match_date
             time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
 
             line = f"\n🏆 *{fixture.league.name}* (ID: {fixture.id})"
             line += f"\n🗓️ {time_str}"
-            line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}"
+            line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}" # Access name from related Team objects
 
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             for market in fixture.markets.all():
