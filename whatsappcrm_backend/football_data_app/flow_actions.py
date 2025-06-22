@@ -47,7 +47,7 @@ def handle_football_betting_action(
     Returns:
         dict: A dictionary containing success status, message, and updated context data.
     """
-    engine = FootballEngine() # The engine does not take any arguments on initialization
+    engine = FootballEngine()
     result = {"success": False, "message": "Unknown betting action.", "data": {}}
 
     try:
@@ -176,7 +176,7 @@ def handle_football_betting_action(
                 }
 
         elif action_type == 'view_my_tickets':
-            tickets = engine.get_user_tickets(customer_profile.user.id)
+            tickets = engine.get_user_tickets(customer_profile.user.id) # Corrected method name
             
             MAX_CHARS_PER_PART_ACTION = 4000
             ITEM_SEPARATOR_ACTION = "\n---\n" # Separator between tickets in a part

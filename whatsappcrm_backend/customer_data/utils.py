@@ -1,5 +1,6 @@
 # whatsappcrm_backend/customer_data/utils.py
 
+from decimal import Decimal
 import secrets
 import string
 from django.db import transaction
@@ -179,7 +180,7 @@ def perform_deposit(whatsapp_id: str, amount: float, description: str = "Deposit
                 return {"success": False, "message": "No linked user account found for this contact. Cannot deposit.", "new_balance": None}
 
             wallet = UserWallet.objects.get(user=customer_profile.user)
-            wallet.add_funds(Decimal(str(amount)), description, 'DEPOSIT')
+            wallet.add_funds(Decimal(str(amount)), description, 'DEPOSIT') # Pass Decimal
             return {"success": True, "message": f"Successfully deposited {amount:.2f}.", "new_balance": float(wallet.balance)}
     except Contact.DoesNotExist:
         return {"success": False, "message": "Contact not found.", "new_balance": None}
@@ -217,7 +218,7 @@ def perform_withdrawal(whatsapp_id: str, amount: float, description: str = "With
             if wallet.balance < amount:
                 return {"success": False, "message": "Insufficient funds for withdrawal.", "new_balance": float(wallet.balance)}
 
-            wallet.deduct_funds(Decimal(str(amount)), description, 'WITHDRAWAL')
+            wallet.deduct_funds(Decimal(str(amount)), description, 'WITHDRAWAL') # Pass Decimal
             return {"success": True, "message": f"Successfully withdrew {amount:.2f}.", "new_balance": float(wallet.balance)}
     except Contact.DoesNotExist:
         return {"success": False, "message": "Contact not found.", "new_balance": None}

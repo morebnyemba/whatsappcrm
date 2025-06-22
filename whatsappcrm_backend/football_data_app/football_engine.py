@@ -11,15 +11,19 @@ from customer_data.models import UserWallet, WalletTransaction, Bet, BetTicket
 
 class FootballEngine:
     def __init__(self):
-        self.default_bookmaker = Bookmaker.objects.get(api_bookmaker_key='default')
+        # Use get_or_create to ensure the default bookmaker exists
+        self.default_bookmaker, _ = Bookmaker.objects.get_or_create(
+            api_bookmaker_key='default',
+            defaults={'name': 'Default Bookmaker'} # Provide default name if creating
+        )
 
     def get_upcoming_matches(self, days_ahead: int = 7) -> List[Dict]:
         """Get upcoming matches with their odds for WhatsApp display"""
         end_date = timezone.now() + timedelta(days=days_ahead)
         fixtures = FootballFixture.objects.filter(
-            commence_time__gte=timezone.now(),
-            commence_time__lte=end_date,
-            status='PENDING'
+            match_date__gte=timezone.now(), # Use match_date
+            match_date__lte=end_date, # Use match_date
+            status=FootballFixture.FixtureStatus.SCHEDULED # Use the correct enum for status
         ).select_related('league', 'home_team', 'away_team')
 
         matches_data = []
@@ -27,9 +31,9 @@ class FootballEngine:
             match_data = {
                 'id': fixture.id,
                 'league': fixture.league.name,
-                'home_team': fixture.home_team_name,
-                'away_team': fixture.away_team_name,
-                'start_time': fixture.commence_time.strftime('%Y-%m-%d %H:%M'),
+                'home_team': fixture.home_team.name, # Access name from related Team object
+                'away_team': fixture.away_team.name, # Access name from related Team object
+                'start_time': fixture.match_date.strftime('%Y-%m-%d %H:%M'), # Use match_date
                 'markets': self._get_markets_for_fixture(fixture)
             }
             matches_data.append(match_data)
@@ -38,7 +42,7 @@ class FootballEngine:
     def _get_markets_for_fixture(self, fixture: FootballFixture) -> List[Dict]:
         """Get available betting markets for a fixture"""
         markets = Market.objects.filter(
-            fixture_display=fixture,
+            fixture=fixture, # Use 'fixture' field
             bookmaker=self.default_bookmaker
         ).select_related('category').prefetch_related('outcomes')
 
@@ -93,7 +97,7 @@ class FootballEngine:
             ticket = BetTicket.objects.get(id=ticket_id, status='PENDING')
             fixture = FootballFixture.objects.get(id=match_id)
             market = Market.objects.get(
-                fixture_display=fixture,
+                fixture=fixture, # Use 'fixture' field
                 category__name=market_category,
                 bookmaker=self.default_bookmaker
             )
@@ -161,7 +165,7 @@ class FootballEngine:
         tickets = BetTicket.objects.filter(
             user_id=user_id
         ).prefetch_related(
-            'bets__market_outcome__market__fixture_display',
+            'bets__market_outcome__market__fixture', # Use 'fixture' field
             'bets__market_outcome__market__category'
         ).order_by('-created_at')
 
@@ -172,7 +176,7 @@ class FootballEngine:
             'status': ticket.status,
             'created_at': ticket.created_at.strftime('%Y-%m-%d %H:%M'),
             'bets': [{
-                'match': bet.market_outcome.market.fixture_display.__str__(),
+                'match': bet.market_outcome.market.fixture.__str__(), # Use 'fixture' field
                 'market': bet.market_outcome.market.category.name,
                 'outcome': bet.market_outcome.outcome_name,
                 'amount': float(bet.amount),

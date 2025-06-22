@@ -19,7 +19,7 @@ ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)
 DEFAULT_ODDS_API_REGIONS = getattr(settings, 'THE_ODDS_API_DEFAULT_REGIONS', "uk,eu,us,au")
 DEFAULT_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_DEFAULT_MARKETS', "h2h,totals")
 # List of additional markets to fetch alongside the default ones.
-ADDITIONAL_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_ADDITIONAL_MARKETS', "alternate_totals,h2h_3way,btts")
+ADDITIONAL_ODDS_API_MARKETS = getattr(settings, 'THE_ODDS_API_ADDITIONAL_MARKETS', "alternate_totals,btts")
 PREFERRED_ODDS_API_BOOKMAKERS = getattr(settings, 'THE_ODDS_API_PREFERRED_BOOKMAKERS', "bet365,pinnacle,unibet,williamhill,betfair")
 EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS', 6)
 ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'THE_ODDS_API_UPCOMING_STALENESS_MINUTES', 60)
@@ -315,7 +315,7 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 @shared_task(name="football_data_app.run_score_and_settlement_task")
 def run_score_and_settlement_task():
     """Dedicated entry point for fetching scores and updating statuses."""
-    logger.info("--- Starting Score & Settlement Pipeline ---")
+    logger.info("--- Starting Score & Settlement Pipeline ---") # Log message for clarity
     active_leagues = League.objects.filter(active=True).values_list('id', flat=True)
     tasks = [fetch_scores_for_league_task.s(league_id) for league_id in active_leagues]
     if tasks:
