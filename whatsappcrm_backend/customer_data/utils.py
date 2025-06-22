@@ -74,6 +74,8 @@ def create_or_get_customer_account(
 
             # 3. Ensure Django User is linked or created
             user = customer_profile.user
+            generated_password = None # Initialize to None
+            user_was_created_in_this_call = False
             if not user:
                 # Determine username for the new User account
                 username = email if email else whatsapp_id # Prefer email, fall back to whatsapp_id
@@ -86,8 +88,9 @@ def create_or_get_customer_account(
                         username = f"{original_username}_{suffix}"
                         suffix += 1
 
-                password = generate_strong_password()
-                user = User.objects.create_user(username=username, email=email, password=password)
+                generated_password = generate_strong_password() # Store the generated password
+                user = User.objects.create_user(username=username, email=email, password=generated_password)
+                user_was_created_in_this_call = True
                 customer_profile.user = user
                 customer_profile.save()
                 print(f"Automated User account created for {whatsapp_id} with username: {username}")
@@ -116,7 +119,8 @@ def create_or_get_customer_account(
                 "wallet": wallet,
                 "created_contact": created_contact,
                 "created_profile": created_profile,
-                "created_user": (user is not None and created_profile) # Indicates if user was newly created in this call
+                "created_user": user_was_created_in_this_call,
+                "generated_password": generated_password # Include the generated password if a new user was created
             }
     except Exception as e:
         import traceback

@@ -61,7 +61,7 @@ def process_bet_ticket_submission(
             total_odds = Decimal('1.0')
             for outcome_id in market_outcome_ids:
                 try:
-                    outcome = MarketOutcome.objects.get(uuid=outcome_id)
+                    outcome = MarketOutcome.objects.get(id=int(outcome_id))
                     valid_outcomes.append(outcome)
                     total_odds *= outcome.odds
                 except MarketOutcome.DoesNotExist:

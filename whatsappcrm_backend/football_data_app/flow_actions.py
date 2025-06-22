@@ -1,6 +1,8 @@
 # whatsappcrm_backend/football_data_app/flow_actions.py
 
 from conversations.models import Contact
+from django.contrib.auth.models import User
+import logging
 from customer_data.models import CustomerProfile, UserWallet
 from customer_data.ticket_processing import process_bet_ticket_submission
 # IMPORTANT: Using 'FootballFixture' as the main fixture model name
@@ -9,6 +11,12 @@ from .football_engine import FootballEngine # Retained for other specific engine
 from .utils import get_formatted_football_data, parse_betting_string
 from typing import Optional, List
 from django.utils import timezone # For footer timestamp in view_my_tickets
+
+
+logger = logging.getLogger(__name__)
+
+def generate_strong_password():
+    return User.objects.make_random_password()
 
 
 def handle_football_betting_action(
@@ -51,10 +59,22 @@ def handle_football_betting_action(
     result = {"success": False, "message": "Unknown betting action.", "data": {}}
 
     try:
-        customer_profile = CustomerProfile.objects.get(contact=contact)
-        if not customer_profile.user:
-            return {"success": False, "message": "No linked user account found for this contact. Cannot perform betting actions.", "data": {}}
-        user_wallet = UserWallet.objects.get(user=customer_profile.user)
+        customer_profile, _ = CustomerProfile.objects.get_or_create(contact=contact)
+        user = customer_profile.user
+        if not user:
+            # Determine username for the new User account
+            whatsapp_id = contact.whatsapp_id
+            email = getattr(contact, 'email', None)
+            username = email if email else whatsapp_id # Prefer email, fall back to whatsapp_id
+            if User.objects.filter(username=username).exists():
+                username = f"{username}_{contact.id}"
+
+            password = generate_strong_password()
+            user = User.objects.create_user(username=username, email=email, password=password)
+            customer_profile.user = user
+            customer_profile.save()
+            logger.info(f"Automated User account created for {whatsapp_id} with username: {username}")
+        user_wallet, _ = UserWallet.objects.get_or_create(user=customer_profile.user)
 
         if action_type == 'view_matches':
             formatted_matches_parts = get_formatted_football_data(
@@ -103,8 +123,8 @@ def handle_football_betting_action(
                 flow_context['bets_in_progress'] = []
 
             try:
-                # Direct lookup for outcome details based on its UUID
-                outcome_obj = MarketOutcome.objects.select_related('market__fixture__home_team', 'market__fixture__away_team').get(uuid=market_outcome_id)
+                # Direct lookup for outcome details based on its integer ID
+                outcome_obj = MarketOutcome.objects.select_related('market__fixture__home_team', 'market__fixture__away_team').get(id=int(market_outcome_id))
                 # Access fixture details via market__fixture
                 bet_data = {
                     'fixture_id': outcome_obj.market.fixture.id, # Accessing id from FootballFixture
