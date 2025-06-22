@@ -11,7 +11,7 @@ class CustomerProfile(models.Model):
     Extended user profile for betting customers
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_profile',null=True,blank=True)
-    contact = models.OneToOneField('conversations.Contact', on_delete=models.SET_NULL, null=True, blank=True, related_name='customer_profile')
+    contact = models.OneToOneField('conversations.Contact', on_delete=models.SET_NULL, null=True, blank=True, related_name='customerprofile')
     phone_number = models.CharField(max_length=20, unique=True)
     date_of_birth = models.DateField(null=True, blank=True)
     address = models.TextField(null=True, blank=True)
@@ -42,21 +42,33 @@ class UserWallet(models.Model):
     def __str__(self):
         return f"{self.user.username}'s Wallet - ${self.balance}"
 
-    def add_funds(self, amount):
+    def add_funds(self, amount: Decimal, description: str, transaction_type: str = 'DEPOSIT'):
         """Add funds to wallet"""
         if amount <= 0:
             raise ValueError("Amount must be positive")
         self.balance += Decimal(str(amount))
+        WalletTransaction.objects.create(
+            wallet=self,
+            amount=amount,
+            transaction_type=transaction_type,
+            description=description
+        )
         self.save()
         return self.balance
 
-    def deduct_funds(self, amount):
+    def deduct_funds(self, amount: Decimal, description: str, transaction_type: str = 'WITHDRAWAL'):
         """Deduct funds from wallet"""
         if amount <= 0:
             raise ValueError("Amount must be positive")
         if self.balance < amount:
             raise ValueError("Insufficient funds")
         self.balance -= Decimal(str(amount))
+        WalletTransaction.objects.create(
+            wallet=self,
+            amount=-amount, # Store deductions as negative amounts for easier accounting
+            transaction_type=transaction_type,
+            description=description
+        )
         self.save()
         return self.balance
 
@@ -93,6 +105,7 @@ class BetTicket(models.Model):
     BetTicket model to group multiple bets together.
     """
     TICKET_STATUS = [
+        ('PLACED', 'Placed'),
         ('PENDING', 'Pending'),
         ('WON', 'Won'),
         ('LOST', 'Lost'),
@@ -108,7 +121,7 @@ class BetTicket(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bet_tickets',null=True,blank=True	)
     total_stake = models.DecimalField(max_digits=10, decimal_places=2)
-    potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
+    potential_winnings = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     status = models.CharField(max_length=20, choices=TICKET_STATUS, default='PENDING')
     bet_type = models.CharField(max_length=20, choices=BET_TYPES, default='SINGLE')
     total_odds = models.DecimalField(max_digits=10, decimal_places=3, default=Decimal('1.000'))
@@ -155,24 +168,17 @@ class BetTicket(models.Model):
 
     def place_ticket(self):
         """Place all bets in the ticket"""
-        if self.status != 'PENDING':
+        if self.status != 'PENDING': # Can only place a pending ticket
             raise ValueError("Ticket has already been placed")
         
         if not self.user:
             raise ValueError("A ticket must have a user to be placed.")
 
-        self.user.wallet.deduct_funds(self.total_stake)
-        
-        WalletTransaction.objects.create(
-            wallet=self.user.wallet,
-            amount=self.total_stake,
-            transaction_type='BET_PLACED',
-            description=f"Bet ticket #{self.id} placed"
-        )
+        self.user.wallet.deduct_funds(self.total_stake, f"Bet ticket #{self.id} placed", 'BET_PLACED')
         
         for bet in self.bets.all():
             bet.place_bet()
-        
+        self.status = 'PLACED' # Update status after placing
         self.save()
         return self
 
@@ -180,11 +186,11 @@ class BetTicket(models.Model):
         """Settle all bets in the ticket and update status"""
         if self.status != 'PENDING':
             raise ValueError("Ticket has already been settled")
-        
+
         if not self.user:
             raise ValueError("A ticket must have a user to be settled.")
 
-        bets = self.bets.all()
+        bets = self.bets.select_related('market_outcome').all()
         if not bets:
             raise ValueError("No bets found in ticket")
         
@@ -193,20 +199,14 @@ class BetTicket(models.Model):
         
         if all(bet.status == 'WON' for bet in bets):
             self.status = 'WON'
-            self.user.wallet.add_funds(self.potential_winnings)
-            WalletTransaction.objects.create(
-                wallet=self.user.wallet,
-                amount=self.potential_winnings,
-                transaction_type='BET_WON',
-                description=f"Won bet ticket #{self.id}"
-            )
+            self.user.wallet.add_funds(self.potential_winnings, f"Won bet ticket #{self.id}", 'BET_WON')
         elif all(bet.status == 'LOST' for bet in bets):
             self.status = 'LOST'
         elif any(bet.status == 'WON' for bet in bets):
             self.status = 'PARTIAL_WIN'
             if self.bet_type == 'SINGLE':
                 winning_bet = next(bet for bet in bets if bet.status == 'WON')
-                partial_winnings = winning_bet.amount * winning_bet.market_outcome.odds
+                partial_winnings = winning_bet.potential_winnings
             elif self.bet_type == 'MULTIPLE':
                 winning_bets = [bet for bet in bets if bet.status == 'WON']
                 partial_odds = Decimal('1.000')
@@ -224,23 +224,10 @@ class BetTicket(models.Model):
                             combo_odds *= bet.market_outcome.odds
                         partial_winnings += (self.total_stake / len(bets)) * combo_odds
 
-            self.user.wallet.add_funds(partial_winnings)
-            WalletTransaction.objects.create(
-                wallet=self.user.wallet,
-                amount=partial_winnings,
-                transaction_type='BET_WON',
-                description=f"Partial win on bet ticket #{self.id}"
-            )
+            self.user.wallet.add_funds(partial_winnings, f"Partial win on bet ticket #{self.id}", 'BET_WON')
         elif any(bet.status == 'REFUNDED' for bet in bets):
             self.status = 'REFUNDED'
-            self.user.wallet.add_funds(self.total_stake)
-            WalletTransaction.objects.create(
-                wallet=self.user.wallet,
-                amount=self.total_stake,
-                transaction_type='BET_REFUNDED',
-                description=f"Refunded bet ticket #{self.id}"
-            )
-        
+            self.user.wallet.add_funds(self.total_stake, f"Refunded bet ticket #{self.id}", 'BET_REFUNDED')
         self.save()
         return self
 

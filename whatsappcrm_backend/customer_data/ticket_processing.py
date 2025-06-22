@@ -78,7 +78,7 @@ def process_bet_ticket_submission(
                 user=customer_profile.user,
                 total_stake=Decimal(str(stake)),
                 potential_winnings=potential_winnings,
-                status=BetTicket.PLACED,
+                status='PLACED', # Set status to PLACED
                 
             )
 
@@ -88,12 +88,13 @@ def process_bet_ticket_submission(
                     ticket=bet_ticket,
                     market_outcome_id=outcome.uuid,
                     odds_at_placement=outcome.odds,
-                    stake_per_bet=Decimal(str(stake)) if len(valid_outcomes) == 1 else Decimal(str(stake)) / len(valid_outcomes),
-                    status=Bet.PENDING
+                    # The field on the Bet model is 'amount', not 'stake_per_bet'
+                    amount=Decimal(str(stake)) if len(valid_outcomes) == 1 else Decimal(str(stake)) / len(valid_outcomes),
+                    status='PENDING'
                 )
 
             # Deduct stake from wallet
-            user_wallet.deduct_funds(Decimal(str(stake)), f"Bet placed on ticket {bet_ticket.id}", WalletTransaction.BET_PLACED)
+            user_wallet.deduct_funds(Decimal(str(stake)), f"Bet placed on ticket {bet_ticket.id}", 'BET_PLACED')
 
             return {
                 "success": True,
