@@ -3,7 +3,7 @@ import django
 
 # --- Django Setup ---
 # This allows the script to be run from the command line.
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'whatsappcrm_backend.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings') # Assuming WORKDIR is the project root
 django.setup()
 # --- End Django Setup ---
 
