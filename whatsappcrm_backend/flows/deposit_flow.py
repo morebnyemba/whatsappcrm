@@ -11,9 +11,30 @@ def create_deposit_flow():
         "is_active": True,
         "steps": [
             {
+                "name": "ensure_customer_account",
+                "step_type": "action",
+                "is_entry_point": True, # This becomes the new entry point
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "create_account",
+                            # Optionally, you can pass templates for email, first_name, etc.
+                            # For now, let's rely on the utility's defaults or what it can infer.
+                            # The utility will use contact.whatsapp_id as username if no email.
+                            # "email_template": "{{ contact.email }}", # If contact has an email field
+                            # "first_name_template": "{{ contact.name }}" # If you want to parse name
+                        }
+                    ]
+                },
+                "transitions": [
+                    {"to_step": "start_deposit", "priority": 1, "condition_config": {"type": "variable_equals", "variable_name": "account_creation_status", "value": True}},
+                    {"to_step": "account_creation_failed", "priority": 99, "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
                 "name": "start_deposit",
                 "step_type": "question", # Changed from send_message to question
-                "is_entry_point": True,
+                "is_entry_point": False, # No longer the entry point
                 "config": {
                     "message_config": { # Wrapped interactive message config
                         "message_type": "interactive",
