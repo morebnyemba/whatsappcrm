@@ -102,14 +102,3 @@ class BetAdmin(admin.ModelAdmin):
     search_fields = ('ticket__user__username', 'ticket__id', 'market_outcome__market__fixture__home_team__name', 'market_outcome__market__fixture__away_team__name')
     raw_id_fields = ('ticket', 'market_outcome')
     readonly_fields = ('created_at', 'updated_at', 'potential_winnings')
-
-@admin.register(Bet)
-class BetAdmin(admin.ModelAdmin):
-    """
-    Admin interface for individual Bets.
-    """
-    list_display = ('id', 'ticket', 'market_outcome', 'amount', 'status', 'created_at')
-    list_filter = ('status',)
-    search_fields = ('ticket__user__username', 'ticket__id', 'market_outcome__market__fixture__home_team__name', 'market_outcome__market__fixture__away_team__name')
-    raw_id_fields = ('ticket', 'market_outcome')
-    readonly_fields = ('created_at', 'updated_at', 'potential_winnings')
