@@ -235,12 +235,14 @@ def create_deposit_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "paynow_instructions",
-                        "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True}
+                        "to_step": "payment_initiated_message",
+                        "priority": 0, # Higher priority for success, now points to the new message step
+                        "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True} # Check for success
                     },
                     {
                         "to_step": "deposit_failed",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Lower priority for fallback
+                        "condition_config": {"type": "always_true"} # Fallback if not successful
                     }
                 ]
             },
@@ -324,11 +326,13 @@ def create_deposit_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "paynow_instructions",
+                        "to_step": "payment_initiated_message",
+                        "priority": 0, # Higher priority for success
                         "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True}
                     },
                     {
                         "to_step": "deposit_failed",
+                        "priority": 1, # Lower priority for fallback
                         "condition_config": {"type": "always_true"}
                     }
                 ]
@@ -413,7 +417,7 @@ def create_deposit_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "paynow_instructions",
+                        "to_step": "payment_initiated_message",
                         "priority": 0, # Higher priority for success
                         "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True} # Check for success
                     },
@@ -424,18 +428,12 @@ def create_deposit_flow():
                     }
                 ]
             },
-            # --- Common Steps ---
             {
-                "name": "paynow_instructions",
+                "name": "payment_initiated_message",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {
-                        "body": "Your PayNow deposit has been initiated. Please follow these instructions to complete the payment:\n\n"
-                                "{{ flow_context.paynow_instructions }}\n\n"
-                                "You can check the payment status here: {{ flow_context.paynow_poll_url }}\n\n"
-                                "We will notify you once the deposit is confirmed."
-                    }
+                    "text": {"body": "{{ flow_context.deposit_message }}"}
                 },
                 "transitions": [
                     {"to_step": "end_deposit_flow", "condition_config": {"type": "always_true"}}

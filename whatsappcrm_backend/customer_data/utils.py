@@ -3,6 +3,7 @@
 from .tasks import send_deposit_confirmation_whatsapp # Import the new Celery task
 from decimal import Decimal
 import secrets
+from paynow_integration.tasks import initiate_paynow_express_checkout_task
 import string
 from django.db import transaction
 from django.utils import timezone
@@ -304,7 +305,8 @@ def initiate_deposit_process(
                 status='PENDING',
                 reference=transaction_reference,
                 payment_method=payment_method,
-                description=f"Pending Paynow deposit for {amount}. Ref: {transaction_reference}"
+                description=f"Pending Paynow deposit for {amount}. Ref: {transaction_reference}",
+                payment_details={'phone_number': payment_details.get('phone_number'), 'paynow_method_type': paynow_method_type}
             )
         except UserWallet.DoesNotExist:
             return {"success": False, "message": "User wallet not found."}
@@ -312,54 +314,13 @@ def initiate_deposit_process(
             logger.error(f"Failed to create pending transaction record for {whatsapp_id}: {e}", exc_info=True)
             return {"success": False, "message": "Internal error while preparing deposit."}
 
-        paynow_service = PaynowService()
-        phone_number = payment_details.get('phone_number')
-        email = profile.user.email if profile.user and profile.user.email else f"{whatsapp_id}@example.com" # Fallback email
-
-        if not paynow_method_type:
-            logger.error(f"Paynow mobile deposit initiated without a specific Paynow method type (e.g., 'ecocash') for {whatsapp_id}.")
-            return {"success": False, "message": "Specific Paynow method type (e.g., EcoCash, OneMoney) is required."}
-
-        if not phone_number:
-            logger.error(f"Paynow mobile deposit initiated without phone number for {whatsapp_id}.")
-            return {"success": False, "message": "Phone number is required for Paynow mobile deposit."}
-
-        paynow_response = paynow_service.initiate_express_checkout_payment(
-            amount=Decimal(str(amount)), # Ensure Decimal type
-            reference=transaction_reference,
-            phone_number=phone_number,
-            email=email,
-            paynow_method_type=paynow_method_type,
-            description=description
+        # Asynchronously initiate the payment via Celery to avoid timeouts
+        initiate_paynow_express_checkout_task.delay(
+            transaction_reference=transaction_reference
         )
-        if paynow_response['success']:
-            # Update the pending transaction with the external reference from Paynow
-            try:
-                pending_tx = WalletTransaction.objects.get(reference=transaction_reference)
-                pending_tx.external_reference = paynow_response.get('paynow_reference')
-                pending_tx.save(update_fields=['external_reference'])
-            except WalletTransaction.DoesNotExist:
-                logger.error(f"Could not find pending transaction with ref {transaction_reference} to update external_reference.")
-                return {"success": False, "message": "Internal error: could not link payment gateway transaction."}
-
-            return {
-                "success": True,
-                "message": "Paynow mobile payment initiated.",
-                "paynow_reference": paynow_response.get('paynow_reference'),
-                "poll_url": paynow_response.get('poll_url'),
-                "instructions": paynow_response.get('instructions'),
-                "transaction_reference": transaction_reference # Our internal reference
-            }
-        else:
-            # If Paynow initiation fails, mark our pending transaction as FAILED.
-            try:
-                pending_tx = WalletTransaction.objects.get(reference=transaction_reference)
-                pending_tx.status = 'FAILED'
-                pending_tx.description = f"Paynow initiation failed: {paynow_response.get('message', 'Unknown error')}"
-                pending_tx.save(update_fields=['status', 'description'])
-            except WalletTransaction.DoesNotExist:
-                logger.error(f"Could not find pending transaction with ref {transaction_reference} to mark as failed.")
-            return paynow_response
+        
+        # Return an immediate success message to the flow
+        return {"success": True, "message": "Your payment is being processed. You will receive a prompt on your phone shortly."}
     else:
         return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
 
