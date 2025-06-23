@@ -121,7 +121,7 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "perform_manual_deposit",
-                        "priority": 1, # Set a higher priority (lower number)
+                        "priority": 0, # Explicitly set highest priority for valid reply
                         "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
@@ -147,10 +147,12 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "deposit_success",
+                        "priority": 0, # Explicitly set highest priority for success
                         "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True}
                     },
                     {
                         "to_step": "deposit_failed",
+                        "priority": 1, # Explicitly set lower priority for fallback
                         "condition_config": {"type": "always_true"}
                     }
                 ]
@@ -179,11 +181,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_ecocash_phone",
-                        "priority": 0, "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -210,11 +212,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_ecocash_deposit",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -270,11 +272,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_innbucks_phone",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -301,11 +303,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_innbucks_deposit",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -361,11 +363,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_omari_phone",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -392,11 +394,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_omari_deposit",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, # Explicitly set highest priority for valid reply
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Explicitly set lower priority for fallback
                     }
                 ]
             },
@@ -435,7 +437,7 @@ def create_deposit_flow():
                     "message_type": "text",
                     "text": {"body": "{{ flow_context.deposit_message }}"}
                 },
-                "transitions": [
+                "transitions": [ # This transition is correct as the polling task sends the final message
                     {"to_step": "end_deposit_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
@@ -452,7 +454,7 @@ def create_deposit_flow():
                                 "{% endif %}"
                     }
                 },
-                "transitions": [
+                "transitions": [ # Explicitly set priority
                     {"to_step": "end_deposit_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
@@ -465,7 +467,7 @@ def create_deposit_flow():
                         "body": "❌ Deposit failed: {{ flow_context.deposit_message | default:'An unknown error occurred.' }}\n\nPlease try again or contact support."
                     }
                 },
-                "transitions": [
+                "transitions": [ # Explicitly set priority
                     {"to_step": "end_deposit_flow", "condition_config": {"type": "always_true"}}
                 ]
             },

@@ -33,11 +33,11 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     """
     Admin interface for Wallet Transactions.
     """
-    list_display = ('id', 'wallet', 'transaction_type', 'amount', 'status', 'payment_method', 'reference', 'created_at')
+    list_display = ('id', 'wallet', 'transaction_type', 'amount', 'status', 'payment_method', 'reference', 'external_reference', 'payment_details', 'created_at')
     list_filter = ('transaction_type', 'status', 'payment_method')
     search_fields = ('wallet__user__username', 'reference', 'external_reference', 'description')
     raw_id_fields = ('wallet',)
-    readonly_fields = ('created_at',)
+    readonly_fields = ('created_at', 'external_reference', 'payment_details')
     date_hierarchy = 'created_at'
     actions = ['approve_selected_manual_deposits'] # Add the new action
 
@@ -91,6 +91,17 @@ class BetTicketAdmin(admin.ModelAdmin):
     raw_id_fields = ('user',)
     inlines = [BetInline]
     readonly_fields = ('created_at', 'updated_at', 'potential_winnings', 'total_odds')
+
+@admin.register(Bet)
+class BetAdmin(admin.ModelAdmin):
+    """
+    Admin interface for individual Bets.
+    """
+    list_display = ('id', 'ticket', 'market_outcome', 'amount', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('ticket__user__username', 'ticket__id', 'market_outcome__market__fixture__home_team__name', 'market_outcome__market__fixture__away_team__name')
+    raw_id_fields = ('ticket', 'market_outcome')
+    readonly_fields = ('created_at', 'updated_at', 'potential_winnings')
 
 @admin.register(Bet)
 class BetAdmin(admin.ModelAdmin):
