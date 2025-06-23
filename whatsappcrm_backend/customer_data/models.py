@@ -121,6 +121,7 @@ class WalletTransaction(models.Model):
     payment_method = models.CharField(max_length=50, null=True, blank=True)
     reference = models.CharField(max_length=255, unique=True, null=True, blank=True, db_index=True, help_text="Our internal unique reference for the transaction.")
     external_reference = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="Reference from the external payment gateway (e.g., Paynow).")
+    payment_details = models.JSONField(default=dict, blank=True, help_text="Stores details for the payment method, e.g., phone number for mobile money.")
 
     def __str__(self):
         return f"{self.transaction_type} - ${self.amount} - {self.created_at}"
