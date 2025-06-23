@@ -51,7 +51,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "flow_context.provided_email",
+                        "save_to_variable": "provided_email",
                         "expected_type": "email"
                     },
                     "fallback_config": {
@@ -115,7 +115,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "flow_context.provided_first_name",
+                        "save_to_variable": "provided_first_name",
                         "expected_type": "text"
                     },
                     "fallback_config": {
@@ -171,7 +171,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "flow_context.provided_last_name",
+                        "save_to_variable": "provided_last_name",
                         "expected_type": "text"
                     },
                     "fallback_config": {
@@ -229,8 +229,7 @@ def create_registration_flow() -> Dict[str, Any]:
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "gender_male", "title": "Male"}},
                                     {"type": "reply", "reply": {"id": "gender_female", "title": "Female"}},
-                                    {"type": "reply", "reply": {"id": "gender_other", "title": "Other"}},
-                                    {"type": "reply", "reply": {"id": "gender_skip", "title": "Prefer not to say"}}
+                                    {"type": "reply", "reply": {"id": "gender_other", "title": "Other"}}
                                 ]
                             }
                         }
@@ -344,9 +343,9 @@ def create_registration_flow() -> Dict[str, Any]:
                     "actions_to_run": [
                         {
                             "action_type": "create_account",
-                            "email_template": "{{ customer_profile.email }}",
-                            "first_name_template": "{{ customer_profile.first_name }}",
-                            "last_name_template": "{{ customer_profile.last_name }}"
+                            "email_template": "{{ flow_context.provided_email }}",
+                            "first_name_template": "{{ flow_context.provided_first_name }}",
+                            "last_name_template": "{{ flow_context.provided_last_name }}"
                         }
                     ]
                 },
