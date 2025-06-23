@@ -243,6 +243,18 @@ class ContactFlowState(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     last_updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        # Ensure flow_context_data is JSON serializable before saving
+        if self.flow_context_data:
+            from customer_data.utils import _recursively_clean_json_data # Import here to avoid circular dependency
+            try:
+                self.flow_context_data = _recursively_clean_json_data(self.flow_context_data)
+            except Exception as e:
+                logger.error(f"Error cleaning flow_context_data for ContactFlowState {self.pk}: {e}", exc_info=True)
+                # Optionally, re-raise or set to empty dict if cleaning fails
+                raise
+        super().save(*args, **kwargs)
+
     def __str__(self) -> str:
         contact_str = str(self.contact) if self.contact else "Unknown Contact"
         step_name = self.current_step.name if self.current_step else "Unknown Step"

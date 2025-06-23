@@ -531,3 +531,30 @@ def perform_withdrawal(whatsapp_id: str, amount: float, description: str = "With
     except Exception as e:
         logger.error(f"Error during withdrawal for {whatsapp_id}: {e}", exc_info=True)
         return {"success": False, "message": f"Error during withdrawal: {str(e)}", "new_balance": None}
+
+
+# Helper functions for JSONField serialization robustness
+def _json_serializable_value(obj: Any) -> Any:
+    """
+    Converts specific non-JSON-serializable Python objects to a serializable form.
+    Currently handles 'type' objects. Extend as needed for other types.
+    """
+    if isinstance(obj, type):
+        return str(obj)  # Convert Python type objects (e.g., <class 'str'>) to their string representation
+    # Add other custom types that might appear and are not directly JSON serializable
+    # For example, if you ever store Django model instances directly:
+    # if isinstance(obj, models.Model):
+    #     return obj.pk # Or obj.id, or a dict representation
+    return obj
+
+def _recursively_clean_json_data(data: Any) -> Any:
+    """
+    Recursively traverses a dictionary or list and applies _json_serializable_value
+    to all non-container elements.
+    """
+    if isinstance(data, dict):
+        return {k: _recursively_clean_json_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_recursively_clean_json_data(elem) for elem in data]
+    else:
+        return _json_serializable_value(data)
