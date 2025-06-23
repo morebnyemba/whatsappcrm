@@ -51,7 +51,7 @@ INSTALLED_APPS = [
     'django_celery_results',
     'django_celery_beat',
     'media_manager.apps.MediaManagerConfig',
-    'django_extensins',
+    'django_extensions',
 
     # Our apps
     "stats",
