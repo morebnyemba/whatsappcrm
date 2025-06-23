@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from conversations.models import Contact
 from .models import CustomerProfile, UserWallet, WalletTransaction
+import json # Added import for json module
 import logging
 from typing import Optional, Dict, Any
 
