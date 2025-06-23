@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError # Fo
 
 from .models import Flow, FlowStep, FlowTransition
 from .serializers import FlowSerializer, FlowStepSerializer, FlowTransitionSerializer
-import serializers
+
 import logging
 
 
