@@ -4,9 +4,10 @@ import time
 from celery import shared_task
 from decimal import Decimal
 import requests
+from django.db import transaction
 
 from .services import PaynowService
-from customer_data.models import WalletTransaction
+from customer_data.models import WalletTransaction, UserWallet
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +79,20 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
             logger.info(f"Paynow status for {transaction_reference}: {status}")
 
             if status.lower() == 'paid':
+                # --- BUG FIX: Update existing transaction instead of creating a new one ---
                 wallet = pending_tx.wallet
-                wallet.add_funds(pending_tx.amount, f"Paynow deposit successful. Paynow Ref: {pending_tx.external_reference}", 'DEPOSIT', 'paynow_mobile', reference=pending_tx.reference, external_reference=pending_tx.external_reference)
+                with transaction.atomic():
+                    # Lock the wallet row to prevent race conditions while updating balance
+                    wallet_to_update = UserWallet.objects.select_for_update().get(pk=wallet.pk)
+                    wallet_to_update.balance += pending_tx.amount
+                    wallet_to_update.save(update_fields=['balance', 'updated_at'])
+
+                    # Now, update the original transaction to completed
+                    pending_tx.status = 'COMPLETED'
+                    pending_tx.description = f"Paynow deposit successful. Paynow Ref: {pending_tx.external_reference}"
+                    pending_tx.save(update_fields=['status', 'description'])
                 logger.info(f"Successfully processed deposit for Ref {transaction_reference}. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
+                wallet.refresh_from_db() # Refresh the wallet object to get the latest balance for the notification
                 
                 # Send success notification
                 send_deposit_confirmation_whatsapp.delay(
