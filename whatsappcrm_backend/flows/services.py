@@ -1144,6 +1144,9 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     if result.get('instructions'):
                         current_step_context['paynow_instructions'] = result.get('instructions')
 
+                    # Add the payment_method to the context for conditional messages later
+                    current_step_context['payment_method'] = action_item_root.payment_method
+
                     if result['success']:
                         logger.info(f"Deposit action for {contact.whatsapp_id} processed successfully. Message: {result['message']}")
                     else:

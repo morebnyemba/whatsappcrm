@@ -39,6 +39,36 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     raw_id_fields = ('wallet',)
     readonly_fields = ('created_at',)
     date_hierarchy = 'created_at'
+    actions = ['approve_selected_manual_deposits'] # Add the new action
+
+    def approve_selected_manual_deposits(self, request, queryset):
+        """
+        Admin action to approve selected PENDING manual deposit transactions.
+        """
+        from django.contrib import messages
+        from customer_data.utils import process_manual_deposit_approval # Import the utility function
+
+        approved_count = 0
+        failed_count = 0
+        
+        for transaction_obj in queryset:
+            if transaction_obj.status == 'PENDING' and transaction_obj.payment_method == 'manual' and transaction_obj.transaction_type == 'DEPOSIT':
+                result = process_manual_deposit_approval(transaction_obj.reference)
+                if result['success']:
+                    approved_count += 1
+                else:
+                    failed_count += 1
+                    self.message_user(request, f"Failed to approve transaction {transaction_obj.reference}: {result['message']}", level=messages.ERROR)
+            else:
+                failed_count += 1
+                self.message_user(request, f"Transaction {transaction_obj.reference} is not a PENDING manual deposit and was skipped.", level=messages.WARNING)
+
+        if approved_count > 0:
+            self.message_user(request, f"Successfully approved {approved_count} manual deposit(s).", level=messages.SUCCESS)
+        if failed_count > 0:
+            self.message_user(request, f"Failed to approve {failed_count} transaction(s). Check logs for details.", level=messages.WARNING)
+
+    approve_selected_manual_deposits.short_description = "Approve selected PENDING manual deposits"
 
 class BetInline(admin.TabularInline):
     """
