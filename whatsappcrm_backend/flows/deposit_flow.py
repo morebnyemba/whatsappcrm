@@ -414,11 +414,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "paynow_instructions",
-                        "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True}
+                        "priority": 0, # Higher priority for success
+                        "condition_config": {"type": "variable_equals", "variable_name": "deposit_status", "value": True} # Check for success
                     },
                     {
                         "to_step": "deposit_failed",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, # Lower priority for fallback
+                        "condition_config": {"type": "always_true"} # Fallback if not successful
                     }
                 ]
             },
