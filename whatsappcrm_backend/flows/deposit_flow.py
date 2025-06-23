@@ -12,27 +12,39 @@ def create_deposit_flow():
         "steps": [
             {
                 "name": "start_deposit",
-                "step_type": "send_message",
+                "step_type": "question", # Changed from send_message to question
                 "is_entry_point": True,
                 "config": {
-                    "message_type": "interactive",
-                    "interactive": {
-                        "type": "list", # Changed from "button" to "list"
-                        "body": {"text": "How would you like to deposit funds into your wallet?"},
-                        "action": {
-                            "button": "Menu", # Button text for the list message (shortened to fit 20 char limit)
-                            "sections": [
-                                {
-                                    "title": "Available Methods", # Optional section title
-                                    "rows": [
-                                        {"id": "deposit_manual", "title": "Manual Deposit", "description": "Deposit with admin approval"},
-                                        {"id": "deposit_ecocash", "title": "EcoCash", "description": "Pay via EcoCash mobile money"},
-                                        {"id": "deposit_innbucks", "title": "Innbucks", "description": "Pay via Innbucks mobile money"},
-                                        {"id": "deposit_omari", "title": "Omari", "description": "Pay via Omari mobile money"},
-                                    ]
-                                }
-                            ]
+                    "message_config": { # Wrapped interactive message config
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "list",
+                            "body": {"text": "How would you like to deposit funds into your wallet?"},
+                            "action": {
+                                "button": "Menu",
+                                "sections": [
+                                    {
+                                        "title": "Available Methods",
+                                        "rows": [
+                                            {"id": "deposit_manual", "title": "Manual Deposit", "description": "Deposit with admin approval"},
+                                            {"id": "deposit_ecocash", "title": "EcoCash", "description": "Pay via EcoCash mobile money"},
+                                            {"id": "deposit_innbucks", "title": "Innbucks", "description": "Pay via Innbucks mobile money"},
+                                            {"id": "deposit_omari", "title": "Omari", "description": "Pay via Omari mobile money"},
+                                        ]
+                                    }
+                                ]
+                            }
                         }
+                    },
+                    "reply_config": { # Added reply_config
+                        "save_to_variable": "selected_deposit_method_id", # Save the selected ID to context
+                        "expected_type": "interactive_id" # Expect an interactive reply ID
+                    },
+                    "fallback_config": { # Added fallback_config for question step
+                        "max_retries": 2,
+                        "re_prompt_message_text": "Please select a valid deposit method from the list.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "You've entered an invalid option too many times. Please try again later."
                     }
                 },
                 "transitions": [
