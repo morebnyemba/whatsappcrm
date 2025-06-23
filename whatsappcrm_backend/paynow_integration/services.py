@@ -25,9 +25,9 @@ class PaynowService:
             else:
                 # Initialize the PaynowSDK with configuration details
                 # The SDK constructor requires result_url and return_url
-                base_url = getattr(settings, 'SITE_URL', 'http://localhost:8000')
-                result_url = f"{base_url}{reverse('paynow_result')}" # IPN callback
-                return_url = f"{base_url}{reverse('paynow_return')}"
+                base_url = getattr(settings, 'SITE_URL', 'https://betblitz.co.zw') # Ensure SITE_URL is configured in settings or .env
+                result_url = f"{base_url}{reverse('customer_data_api:paynow-ipn-webhook')}" # IPN callback, defined in customer_data.urls
+                return_url = f"{base_url}{reverse('paynow_integration_api:paynow-return')}" # Return URL, defined in paynow_integration.urls
 
                 self.paynow_sdk = PaynowSDK(
                     integration_id=self.config.integration_id,
