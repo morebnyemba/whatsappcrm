@@ -443,10 +443,10 @@ def create_deposit_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "{% if flow_context.payment_method == 'manual' %}"
-                                "✅ Your manual deposit request for ${{ flow_context.deposit_amount | default:'N/A' :.2f }} has been received and is pending approval. You will be notified once it's processed."
-                                "{% else %}"
-                                "🎉 Deposit successful! Your new balance is: ${{ flow_context.current_balance | default:'N/A' :.2f }}\n\nThank you for topping up!"
+                        "body": "{% if flow_context.payment_method == 'manual' %}\n"
+                                "✅ Your manual deposit request for ${{ flow_context.deposit_amount|floatformat:2 }} has been received and is pending approval. You will be notified once it's processed.\n"
+                                "{% else %}\n"
+                                "🎉 Deposit successful! Your new balance is: ${{ flow_context.current_balance|floatformat:2 }}\n\nThank you for topping up!\n"
                                 "{% endif %}"
                     }
                 },

@@ -115,7 +115,7 @@ def create_or_get_customer_account(
                 user_was_created_in_this_call = True
                 customer_profile.user = user
                 customer_profile.save()
-                print(f"Automated User account created for {whatsapp_id} with username: {username}")
+                logger.info(f"Automated User account created for {whatsapp_id} with username: {username}")
                 # In a real system, you might securely store this password or email it to the user.
                 # For a WhatsApp bot, you might just rely on the linked user for internal operations.
 
@@ -142,7 +142,7 @@ def create_or_get_customer_account(
                 "created_contact": created_contact,
                 "created_profile": created_profile,
                 "created_user": user_was_created_in_this_call,
-                "generated_password": generated_password # Include the generated password if a new user was created
+                # "generated_password": generated_password # Removed for security: Do not return plain-text passwords
             }
     except Exception as e:
         import traceback
@@ -209,7 +209,7 @@ def perform_deposit(
             if payment_method == 'manual':
                 # Directly credit the wallet using the model's method
                 # Generate a reference for manual deposits
-                manual_ref = f"MANUAL-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                manual_ref = f"MANUAL-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}" # Added %f for microseconds
                 
                 # Create a PENDING transaction. Wallet balance is NOT updated yet.
                 WalletTransaction.objects.create(
