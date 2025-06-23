@@ -100,6 +100,17 @@ def create_or_get_customer_account(
             user_was_created_in_this_call = False
             if not user:
                 # Determine username for the new User account
+                # Check if email is already in use by another user
+                if email and User.objects.filter(email__iexact=email).exists():
+                    existing_user = User.objects.get(email__iexact=email)
+                    logger.warning(f"Email '{email}' already exists for user '{existing_user.username}'. Cannot create new user with this email.")
+                    return {
+                        "success": False,
+                        "message": f"An account with the email '{email}' already exists. Please use a different email or contact support.",
+                        "contact": contact, "customer_profile": customer_profile, "user": None, "wallet": None,
+                        "created_contact": created_contact, "created_profile": created_profile, "created_user": False
+                    }
+
                 username = email if email else whatsapp_id # Prefer email, fall back to whatsapp_id
                 # Ensure username is unique
                 if User.objects.filter(username=username).exists():
