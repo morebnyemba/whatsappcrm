@@ -179,11 +179,11 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_ecocash_phone",
-                        "condition_config": {"type": "question_reply_is_valid", "value": True}
+                        "priority": 0, "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "condition_config": {"type": "always_true"}
+                        "priority": 1, "condition_config": {"type": "always_true"}
                     }
                 ]
             },
