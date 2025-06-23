@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 
+app_name = 'paynow_integration'
 urlpatterns = [
     # URL for Paynow to redirect the user's browser after payment
     path('paynow/return/', views.paynow_return_view, name='paynow_return'),
