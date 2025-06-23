@@ -204,125 +204,70 @@ def perform_deposit(
     paynow_method_type: Optional[str] = None
 ) -> dict:
     """
-    Handles a deposit request. For 'manual' method, it directly credits the wallet.
-    For 'paynow_mobile', it initiates a payment process.
+    Handles a deposit request. Creates a PENDING transaction and, for Paynow,
+    dispatches a task to initiate the external payment.
     """
     if amount <= 0:
         return {"success": False, "message": "Deposit amount must be positive."}
 
     try:
-        with transaction.atomic():
-            # Get user and wallet, which is common for all methods
-            contact = Contact.objects.get(whatsapp_id=whatsapp_id)
-            profile = CustomerProfile.objects.get(contact=contact)
-            if not profile.user:
-                return {"success": False, "message": "No linked user account found for this contact."}
-            wallet = UserWallet.objects.get(user=profile.user)
+        # This function is called within a transaction.atomic() block in flows/services.py
+        # Get user and wallet, which is common for all methods
+        contact = Contact.objects.get(whatsapp_id=whatsapp_id)
+        profile = CustomerProfile.objects.get(contact=contact)
+        if not profile.user:
+            return {"success": False, "message": "No linked user account found for this contact."}
+        wallet = UserWallet.objects.get(user=profile.user)
 
-            if payment_method == 'manual':
-                # Directly credit the wallet using the model's method
-                # Generate a reference for manual deposits
-                manual_ref = f"MANUAL-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}" # Added %f for microseconds
-                
-                # Create a PENDING transaction. Wallet balance is NOT updated yet.
-                WalletTransaction.objects.create(
-                    wallet=wallet,
-                    amount=Decimal(str(amount)),
-                    transaction_type='DEPOSIT',
-                    status='PENDING', # Key change: status is PENDING
-                    payment_method='manual',
-                    reference=manual_ref,
-                    description=f"Manual deposit request for {amount}. Ref: {manual_ref}"
-                )
-                logger.info(f"Manual deposit request of {amount} recorded as PENDING for {whatsapp_id}. Ref: {manual_ref}")
+        # Generate a unique internal reference for the transaction
+        transaction_reference = f"DEP-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
 
-                # Do NOT trigger WhatsApp confirmation here; it's for COMPLETED transactions.
-                # The flow will send a message about pending approval.
-                
-                return {
-                    "success": True,
-                    "message": f"Your manual deposit request for {amount:.2f} has been received and is pending approval. You will be notified once it's processed.",
-                    "new_balance": float(wallet.balance) # Return current balance, not new balance
-                }
+        payment_details = {}
+        if phone_number:
+            payment_details['phone_number'] = phone_number
+        if paynow_method_type:
+            payment_details['paynow_method_type'] = paynow_method_type
+
+        # Create a PENDING transaction for all deposit types.
+        WalletTransaction.objects.create(
+            wallet=wallet,
+            amount=Decimal(str(amount)),
+            transaction_type='DEPOSIT',
+            status='PENDING',
+            payment_method=payment_method,
+            reference=transaction_reference,
+            description=description,
+            payment_details=payment_details
+        )
+        logger.info(f"Created PENDING WalletTransaction {transaction_reference} for {whatsapp_id} via {payment_method}.")
+
+        if payment_method == 'manual':
+            return {
+                "success": True,
+                "message": f"Your manual deposit request for {amount:.2f} has been received and is pending approval.",
+                "new_balance": float(wallet.balance) # Return current balance
+            }
+        
+        elif payment_method == 'paynow_mobile':
+            # Dispatch the Celery task ONLY AFTER the current database transaction commits
+            transaction.on_commit(lambda: initiate_paynow_express_checkout_task.delay(transaction_reference))
+            logger.info(f"Scheduled initiate_paynow_express_checkout_task for {transaction_reference} on transaction commit.")
             
-            elif payment_method == 'paynow_mobile':
-                # This is an initiation, not a direct credit. The IPN will handle completion.
-                payment_details = {'phone_number': phone_number}
-                return initiate_deposit_process(
-                    whatsapp_id=whatsapp_id,
-                    amount=amount,
-                    description=description,
-                    payment_method='paynow_mobile',
-                    paynow_method_type=paynow_method_type,
-                    payment_details=payment_details
-                )
-            
-            else:
-                return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
+            return {"success": True, "message": "Your payment is being processed. You will receive a prompt on your phone shortly."}
+        
+        else:
+            # Fail the transaction if the payment method is unsupported
+            tx_to_fail = WalletTransaction.objects.get(reference=transaction_reference)
+            tx_to_fail.status = 'FAILED'
+            tx_to_fail.description = f"Unsupported payment method: {payment_method}"
+            tx_to_fail.save()
+            return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
 
     except (Contact.DoesNotExist, CustomerProfile.DoesNotExist, UserWallet.DoesNotExist):
         return {"success": False, "message": "Could not find a valid, linked customer account and wallet."}
     except Exception as e:
         logger.error(f"Error performing deposit for {whatsapp_id}: {e}", exc_info=True)
         return {"success": False, "message": f"Error during deposit: {str(e)}"}
-
-def initiate_deposit_process(
-    whatsapp_id: str,
-    amount: float,
-    description: str,
-    payment_method: str,
-    paynow_method_type: Optional[str] = None, # e.g., 'ecocash', 'onemoney'
-    payment_details: dict = None # e.g., {'phone_number': '26377xxxxxxx'} for mobile
-) -> dict:
-    """
-    Initiates a deposit process, potentially involving an external payment gateway.
-    This function does NOT directly update the wallet balance.
-    It returns instructions for the flow (e.g., a redirect URL).
-    """
-    if not payment_details:
-        payment_details = {}
-
-    profile_result = get_customer_profile(whatsapp_id)
-    if not profile_result['success']:
-        return profile_result # Return error if profile not found
-    
-    profile = profile_result['profile']
-    
-    # Generate a unique reference for this transaction
-    transaction_reference = f"DEP-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
-
-    logger.info(f"Initiating deposit process for {whatsapp_id} via {payment_method}. Ref: {transaction_reference}")
-
-    if payment_method == 'paynow_mobile':
-        # Create a PENDING transaction record before calling Paynow.
-        # The wallet balance is NOT updated yet.
-        try:
-            wallet = UserWallet.objects.get(user=profile.user)
-            WalletTransaction.objects.create(
-                wallet=wallet,
-                amount=Decimal(str(amount)),
-                transaction_type='DEPOSIT',
-                status='PENDING',
-                reference=transaction_reference,
-                payment_method=payment_method,
-                description=f"Pending Paynow deposit for {amount}. Ref: {transaction_reference}",
-                payment_details={'phone_number': payment_details.get('phone_number'), 'paynow_method_type': paynow_method_type}
-            )
-        except UserWallet.DoesNotExist:
-            return {"success": False, "message": "User wallet not found."}
-        except Exception as e:
-            logger.error(f"Failed to create pending transaction record for {whatsapp_id}: {e}", exc_info=True)
-            return {"success": False, "message": "Internal error while preparing deposit."}
-
-        # Asynchronously initiate the payment via Celery to avoid timeouts
-        initiate_paynow_express_checkout_task.delay(
-            transaction_reference=transaction_reference
-        )
-        
-        # Return an immediate success message to the flow
-        return {"success": True, "message": "Your payment is being processed. You will receive a prompt on your phone shortly."}
-    else:
-        return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
 
 def process_paynow_ipn(ipn_data: Dict[str, Any]) -> dict:
     """
