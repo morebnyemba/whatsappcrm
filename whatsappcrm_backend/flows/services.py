@@ -845,38 +845,67 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
             elif actual_message_type == "text":
                 text_content: TextMessageContent = payload_field_value
                 body_template_string = text_content.body # e.g., "{{ flow_context.my_list }}" or "Hello {{ name }}"
-
-                # Attempt to see if the body_template_string refers to a single context variable that might be a list
-                single_var_match = re.fullmatch(r"\s*\{\{\s*([\w.]+)\s*\}\}\s*", body_template_string)
                 
                 potential_list_value = None
+                # Prepare context for Django template rendering
+                template_context_data = {
+                    'flow_context': current_step_context, # Pass the entire flow_context
+                    'contact': contact,
+                }
+                # Add customer_profile if it exists
+                try:
+                    template_context_data['customer_profile'] = contact.customerprofile
+                except CustomerProfile.DoesNotExist:
+                    template_context_data['customer_profile'] = None
+
+                # Create Django Context
+                context = Context(template_context_data)
+
+                # Attempt to see if the body_template_string refers to a single context variable that might be a list
+                # This is a custom behavior to allow sending multiple messages from a single list variable.
+                single_var_match = re.fullmatch(r"\s*\{\{\s*([\w.]+)\s*\}\}\s*", body_template_string)
                 if single_var_match:
                     variable_path = single_var_match.group(1).strip()
                     # Directly get the value of the variable from context/contact
                     potential_list_value = _get_value_from_context_or_contact(variable_path, current_step_context, contact)
 
                 if isinstance(potential_list_value, list):
-                    # The template variable resolved directly to a list of strings (message parts)
+                    # The template variable resolved directly to a list of strings (message parts), send each as a separate message
                     logger.info(f"Step '{step.name}': Template variable '{variable_path}' resolved to a list ({len(potential_list_value)} parts). Generating multiple send actions.")
                     for i, part_body in enumerate(potential_list_value):
                         part_body_str = str(part_body).strip() if part_body is not None else ""
                         if part_body_str:
                              actions_to_perform.append({
                                 'type': 'send_whatsapp_message',
-                                    'message_type': 'text',
-                                    'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
-                                })
+                                'message_type': 'text',
+                                'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
+                            })
                     logger.debug(f"Step '{step.name}': Added send action for text part {i+1} from list variable.")
                     final_api_data_structure = None # Indicate that actions were already added
                 else:
-                    # Not a single variable resolving to a list, or not a single variable template at all.
-                    # Resolve the entire body string as a template, expecting a single string result.
-                    resolved_body_string = _resolve_value(body_template_string, current_step_context, contact)
-                    logger.debug(f"Step '{step.name}': Resolved text body string: '{str(resolved_body_string)[:100]}{'...' if len(str(resolved_body_string)) > 100 else ''}'")
-                    if resolved_body_string is not None: # Ensure there's a body to send
-                        final_api_data_structure = {'body': str(resolved_body_string), 'preview_url': text_content.preview_url}
-                    else:
-                        final_api_data_structure = None # No message to send if resolved body is None
+                    # This path handles general Django templating, including {% if %} and filters.
+                    try:
+                        template = Template(body_template_string)
+                        resolved_body_string = template.render(context)
+                        logger.debug(f"Step '{step.name}': Rendered Django template body: '{str(resolved_body_string)[:100]}{'...' if len(str(resolved_body_string)) > 100 else ''}'")
+
+                        if resolved_body_string is not None:
+                            final_body = resolved_body_string.strip()
+                            if final_body:
+                                final_api_data_structure = {'body': final_body, 'preview_url': text_content.preview_url}
+                            else:
+                                logger.warning(f"Step '{step.name}': Rendered text body was empty after stripping. No message sent.")
+                                final_api_data_structure = None
+                        else:
+                            logger.warning(f"Step '{step.name}': Rendered text body was None. No message sent.")
+                            final_api_data_structure = None
+
+                    except (TemplateSyntaxError, TemplateDoesNotExist) as e:
+                        logger.error(f"Django Template error for 'send_message' step '{step.name}' (ID: {step.id}): {e}. Raw template: '{body_template_string}'", exc_info=True)
+                        final_api_data_structure = {'body': 'An error occurred while preparing this message. Please contact support.', 'preview_url': False}
+                    except Exception as e:
+                        logger.error(f"Unexpected error during Django template rendering for 'send_message' step '{step.name}' (ID: {step.id}): {e}", exc_info=True)
+                        final_api_data_structure = {'body': 'An unexpected error occurred while preparing this message. Please contact support.', 'preview_url': False}
 
             elif actual_message_type in ['image', 'document', 'audio', 'video', 'sticker']:
                 media_conf: MediaMessageContent = payload_field_value
