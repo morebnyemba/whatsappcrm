@@ -8,6 +8,9 @@ from typing import List, Dict, Any, Optional, Union, Literal, Tuple
 from django.db import models
 from django.utils import timezone
 from django.db import transaction
+from django.template import Template, Context
+from django.template.exceptions import TemplateSyntaxError, TemplateDoesNotExist
+
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 from decimal import Decimal # Ensure Decimal is imported for type hints if used by Pydantic validators
 
