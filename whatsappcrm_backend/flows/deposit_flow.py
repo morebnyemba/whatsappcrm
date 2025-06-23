@@ -20,7 +20,7 @@ def create_deposit_flow():
                         "type": "list", # Changed from "button" to "list"
                         "body": {"text": "How would you like to deposit funds into your wallet?"},
                         "action": {
-                            "button": "Select Option", # Button text for the list message (shortened to fit 20 char limit)
+                            "button": "Menu", # Button text for the list message (shortened to fit 20 char limit)
                             "sections": [
                                 {
                                     "title": "Available Methods", # Optional section title
