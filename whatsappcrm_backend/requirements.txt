@@ -12,6 +12,7 @@ djangorestframework
 djangorestframework-simplejwt
 
 # CORS handling
+django-extensions
 django-cors-headers
 paynow
 # Celery and related packages
