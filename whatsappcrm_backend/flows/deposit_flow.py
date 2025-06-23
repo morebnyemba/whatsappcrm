@@ -121,10 +121,12 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "perform_manual_deposit",
+                        "priority": 1, # Set a higher priority (lower number)
                         "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow", # Fallback if max retries reached
+                        "priority": 99, # Set a lower priority (higher number) for the fallback
                         "condition_config": {"type": "always_true"}
                     }
                 ]
