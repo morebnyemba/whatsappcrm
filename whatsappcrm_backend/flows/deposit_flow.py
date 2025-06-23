@@ -38,27 +38,27 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_manual_amount",
-                        "priority": 1, # Set a higher priority (lower number)
+                        "priority": 1, # This is a high priority (low number)
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_manual"}
                     },
                     {
                         "to_step": "ask_ecocash_amount",
-                        "priority": 1, # Set a higher priority
+                        "priority": 1, # This is a high priority (low number)
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_ecocash"}
                     },
                     {
                         "to_step": "ask_innbucks_amount",
-                        "priority": 1, # Set a higher priority
+                        "priority": 1, # This is a high priority (low number)
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_innbucks"}
                     },
                     {
                         "to_step": "ask_omari_amount",
-                        "priority": 1, # Set a higher priority
+                        "priority": 1, # This is a high priority (low number)
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_omari"}
                     },
                     {
                         "to_step": "deposit_failed",
-                        "priority": 99, # Set a very low priority (higher number) for the fallback
+                        "priority": 99, # This is a low priority (high number) for the fallback
                         "condition_config": {"type": "always_true"}, # Fallback for invalid interactive reply
                         "config": {"message": "Invalid deposit method selected. Please try again."}
                     }
