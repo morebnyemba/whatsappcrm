@@ -43,8 +43,10 @@ def run():
                     next_step = steps_map.get(trans_data.get("to_step"))
                     if next_step:
                         FlowTransition.objects.create(
-                            current_step=current_step, next_step=next_step,
-                            condition_config=trans_data.get("condition_config", {})
+                            current_step=current_step,
+                            next_step=next_step,
+                            condition_config=trans_data.get("condition_config", {}),
+                            priority=trans_data.get("priority", 0) # Add priority here
                         )
         except ImportError:
             print(">>> Skipping 'Get Fixtures Flow' creation: `create_get_fixtures_flow` not found.")
@@ -85,8 +87,10 @@ def run():
                     next_step = deposit_steps_map.get(trans_data.get("to_step"))
                     if next_step:
                         FlowTransition.objects.create(
-                            current_step=current_step, next_step=next_step,
-                            condition_config=trans_data.get("condition_config", {})
+                            current_step=current_step,
+                            next_step=next_step,
+                            condition_config=trans_data.get("condition_config", {}),
+                            priority=trans_data.get("priority", 0) # Add priority here
                         )
         except ImportError:
             print(">>> Skipping 'Deposit Flow' creation: `create_deposit_flow` not found.")
@@ -94,3 +98,4 @@ def run():
             print(f">>> ERROR creating 'Deposit Flow': {e}")
 
     print(">>> Flow creation script finished!")
+
