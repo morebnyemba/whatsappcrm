@@ -37,19 +37,19 @@ def create_deposit_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "ask_manual_amount",
+                        "to_step": "ask_manual_amount", # Step to transition
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_manual"}
                     },
                     {
-                        "to_step": "ask_ecocash_amount",
+                        "to_step": "ask_ecocash_amount", # Step to transition
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_ecocash"}
                     },
                     {
-                        "to_step": "ask_innbucks_amount",
+                        "to_step": "ask_innbucks_amount", # Step to transition
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_innbucks"}
                     },
                     {
-                        "to_step": "ask_omari_amount",
+                        "to_step": "ask_omari_amount", # Step to transition
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "deposit_omari"}
                     },
                     {
