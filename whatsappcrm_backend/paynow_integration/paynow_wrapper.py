@@ -71,7 +71,7 @@ class PaynowSDK: # This class will wrap the official Paynow SDK
             else:
                 error_message = getattr(response, 'error', 'Unknown error from Paynow SDK.')
                 logger.error(f"PaynowSDK: API returned an error: {error_message}. Full response: {response.__dict__}")
-                return {"success": False, "message": f"Paynow error: {error_message}"}
+                return {"success": False, "message": f"Paynow error: {str(error_message)}"} # Ensure it's a string
 
         except Exception as e:
             logger.error(f"PaynowSDK: Unexpected error during Express Checkout initiation: {e}", exc_info=True)
