@@ -17,14 +17,20 @@ def create_deposit_flow():
                 "config": {
                     "message_type": "interactive",
                     "interactive": {
-                        "type": "button",
+                        "type": "list", # Changed from "button" to "list"
                         "body": {"text": "How would you like to deposit funds into your wallet?"},
                         "action": {
-                            "buttons": [
-                                {"type": "reply", "reply": {"id": "deposit_manual", "title": "Manual Deposit"}},
-                                {"type": "reply", "reply": {"id": "deposit_ecocash", "title": "EcoCash"}},
-                                {"type": "reply", "reply": {"id": "deposit_innbucks", "title": "Innbucks"}},
-                                {"type": "reply", "reply": {"id": "deposit_omari", "title": "Omari"}},
+                            "button": "Choose Deposit Method", # Button text for the list message
+                            "sections": [
+                                {
+                                    "title": "Available Methods", # Optional section title
+                                    "rows": [
+                                        {"id": "deposit_manual", "title": "Manual Deposit", "description": "Deposit with admin approval"},
+                                        {"id": "deposit_ecocash", "title": "EcoCash", "description": "Pay via EcoCash mobile money"},
+                                        {"id": "deposit_innbucks", "title": "Innbucks", "description": "Pay via Innbucks mobile money"},
+                                        {"id": "deposit_omari", "title": "Omari", "description": "Pay via Omari mobile money"},
+                                    ]
+                                }
                             ]
                         }
                     }
