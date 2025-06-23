@@ -7,7 +7,7 @@ from django.views.decorators.http import require_http_methods
 from .models import PaynowConfig
 from .paynow_wrapper import PaynowSDK # Import the SDK wrapper
 from .services import PaynowService # Import PaynowService to get config
-from customer_data.utils import record_deposit_transaction # Import the recording function
+# Import the recording function
 from conversations.models import Contact # Assuming you need to find the contact by whatsapp_id
 
 logger = logging.getLogger(__name__)
@@ -91,20 +91,7 @@ def paynow_result_view(request: HttpRequest) -> HttpResponse:
                 logger.error(f"Paynow IPN reference format not recognized: {reference}. Cannot extract profile ID.")
                 return HttpResponse("Invalid Reference Format", status=400)
 
-            if contact:
-                # Record the deposit
-                record_deposit_transaction(
-                    whatsapp_id=contact.whatsapp_id,
-                    amount=float(amount),
-                    description=f"Paynow Mobile Deposit (Ref: {paynow_reference})",
-                    transaction_id=paynow_reference,
-                    payment_method='paynow_mobile'
-                )
-                logger.info(f"Successfully recorded Paynow deposit for {contact.whatsapp_id}, Ref: {reference}")
-                return HttpResponse("OK", status=200)
-            else:
-                logger.error(f"Contact not found for profile ID {profile_id} from Paynow IPN reference {reference}.")
-                return HttpResponse("Contact Not Found", status=404)
+
         except Exception as e:
             logger.error(f"Error processing Paynow IPN for reference {reference}: {e}", exc_info=True)
             return HttpResponse("Internal Server Error", status=500)
