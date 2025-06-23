@@ -8,6 +8,8 @@ from .models import Flow, FlowStep, FlowTransition
 from .serializers import FlowSerializer, FlowStepSerializer, FlowTransitionSerializer
 
 import logging
+
+from whatsappcrm_backend.flows import serializers
 logger = logging.getLogger(__name__)
 
 class FlowViewSet(viewsets.ModelViewSet):

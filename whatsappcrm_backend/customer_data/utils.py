@@ -1,9 +1,11 @@
 # utils.py
 
+from .tasks import send_deposit_confirmation_whatsapp # Import the new Celery task
 from decimal import Decimal
 import secrets
 import string
 from django.db import transaction
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from conversations.models import Contact
 from .models import CustomerProfile, UserWallet, WalletTransaction
@@ -21,6 +23,19 @@ def generate_strong_password(length=12):
     alphabet = string.ascii_letters + string.digits + string.punctuation
     password = ''.join(secrets.choice(alphabet) for i in range(length))
     return password
+
+def get_customer_profile(whatsapp_id: str) -> dict:
+    """
+    Retrieves the CustomerProfile for a given WhatsApp ID.
+    """
+    try:
+        contact = Contact.objects.get(whatsapp_id=whatsapp_id)
+        profile = CustomerProfile.objects.get(contact=contact)
+        return {"success": True, "profile": profile}
+    except Contact.DoesNotExist:
+        return {"success": False, "message": f"Contact not found for WhatsApp ID {whatsapp_id}."}
+    except CustomerProfile.DoesNotExist:
+        return {"success": False, "message": f"CustomerProfile not found for WhatsApp ID {whatsapp_id}."}
 
 def create_or_get_customer_account(
     whatsapp_id: str,
@@ -167,6 +182,72 @@ def get_customer_wallet_balance(whatsapp_id: str) -> dict:
     except Exception as e:
         return {"success": False, "message": f"Error retrieving balance: {str(e)}", "balance": 0.0}
 
+def perform_deposit(
+    whatsapp_id: str,
+    amount: float,
+    payment_method: str,
+    description: str = "Deposit via flow",
+    phone_number: Optional[str] = None,
+    paynow_method_type: Optional[str] = None
+) -> dict:
+    """
+    Handles a deposit request. For 'manual' method, it directly credits the wallet.
+    For 'paynow_mobile', it initiates a payment process.
+    """
+    if amount <= 0:
+        return {"success": False, "message": "Deposit amount must be positive."}
+
+    try:
+        with transaction.atomic():
+            # Get user and wallet, which is common for all methods
+            contact = Contact.objects.get(whatsapp_id=whatsapp_id)
+            profile = CustomerProfile.objects.get(contact=contact)
+            if not profile.user:
+                return {"success": False, "message": "No linked user account found for this contact."}
+            wallet = UserWallet.objects.get(user=profile.user)
+
+            if payment_method == 'manual':
+                # Directly credit the wallet using the model's method
+                # Generate a reference for manual deposits too
+                manual_ref = f"MANUAL-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                new_balance = wallet.add_funds(Decimal(str(amount)), description, 'DEPOSIT', payment_method='manual', reference=manual_ref)
+                logger.info(f"Manual deposit of {amount} recorded for {whatsapp_id}. New balance: {new_balance}")
+
+                # Trigger WhatsApp notification for manual deposit
+                send_deposit_confirmation_whatsapp.delay(
+                    whatsapp_id=whatsapp_id,
+                    amount=str(amount),
+                    new_balance=str(new_balance),
+                    transaction_reference=manual_ref,
+                    currency_symbol="$" # Pass the currency symbol
+                )
+                return {
+                    "success": True,
+                    "message": f"Deposit of {amount:.2f} successful.",
+                    "new_balance": float(new_balance)
+                }
+            
+            elif payment_method == 'paynow_mobile':
+                # This is an initiation, not a direct credit.
+                payment_details = {'phone_number': phone_number}
+                return initiate_deposit_process(
+                    whatsapp_id=whatsapp_id,
+                    amount=amount,
+                    description=description,
+                    payment_method='paynow_mobile',
+                    paynow_method_type=paynow_method_type,
+                    payment_details=payment_details
+                )
+            
+            else:
+                return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
+
+    except (Contact.DoesNotExist, CustomerProfile.DoesNotExist, UserWallet.DoesNotExist):
+        return {"success": False, "message": "Could not find a valid, linked customer account and wallet."}
+    except Exception as e:
+        logger.error(f"Error performing deposit for {whatsapp_id}: {e}", exc_info=True)
+        return {"success": False, "message": f"Error during deposit: {str(e)}"}
+
 def initiate_deposit_process(
     whatsapp_id: str,
     amount: float,
@@ -190,14 +271,30 @@ def initiate_deposit_process(
     profile = profile_result['profile']
     
     # Generate a unique reference for this transaction
-    # This reference should be stored and used to match the IPN callback.
-    # For simplicity, we'll use a timestamp + whatsapp_id snippet.
-    # In a real system, use a UUID or a dedicated transaction ID from your DB.
     transaction_reference = f"DEP-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
 
     logger.info(f"Initiating deposit process for {whatsapp_id} via {payment_method}. Ref: {transaction_reference}")
 
     if payment_method == 'paynow_mobile':
+        # Create a PENDING transaction record before calling Paynow.
+        # The wallet balance is NOT updated yet.
+        try:
+            wallet = UserWallet.objects.get(user=profile.user)
+            WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=Decimal(str(amount)),
+                transaction_type='DEPOSIT',
+                status='PENDING',
+                reference=transaction_reference,
+                payment_method=payment_method,
+                description=f"Pending Paynow deposit for {amount}. Ref: {transaction_reference}"
+            )
+        except UserWallet.DoesNotExist:
+            return {"success": False, "message": "User wallet not found."}
+        except Exception as e:
+            logger.error(f"Failed to create pending transaction record for {whatsapp_id}: {e}", exc_info=True)
+            return {"success": False, "message": "Internal error while preparing deposit."}
+
         paynow_service = PaynowService()
         phone_number = payment_details.get('phone_number')
         email = profile.user.email if profile.user and profile.user.email else f"{whatsapp_id}@example.com" # Fallback email
@@ -219,72 +316,111 @@ def initiate_deposit_process(
             description=description
         )
         if paynow_response['success']:
-            # Store the transaction reference and Paynow reference temporarily if needed
-            # (e.g., in a pending_transactions table) to link the IPN callback.
-            # For now, we just return the redirect URL.
+            # Update the pending transaction with the external reference from Paynow
+            try:
+                pending_tx = WalletTransaction.objects.get(reference=transaction_reference)
+                pending_tx.external_reference = paynow_response.get('paynow_reference')
+                pending_tx.save(update_fields=['external_reference'])
+            except WalletTransaction.DoesNotExist:
+                logger.error(f"Could not find pending transaction with ref {transaction_reference} to update external_reference.")
+                return {"success": False, "message": "Internal error: could not link payment gateway transaction."}
+
             return {
                 "success": True,
                 "message": "Paynow mobile payment initiated.",
                 "paynow_reference": paynow_response.get('paynow_reference'),
-                "poll_url": paynow_response.get('poll_url'), # New: Store this for status checks
-                "instructions": paynow_response.get('instructions'), # New: Display to user
+                "poll_url": paynow_response.get('poll_url'),
+                "instructions": paynow_response.get('instructions'),
                 "transaction_reference": transaction_reference # Our internal reference
             }
         else:
+            # If Paynow initiation fails, mark our pending transaction as FAILED.
+            try:
+                pending_tx = WalletTransaction.objects.get(reference=transaction_reference)
+                pending_tx.status = 'FAILED'
+                pending_tx.description = f"Paynow initiation failed: {paynow_response.get('message', 'Unknown error')}"
+                pending_tx.save(update_fields=['status', 'description'])
+            except WalletTransaction.DoesNotExist:
+                logger.error(f"Could not find pending transaction with ref {transaction_reference} to mark as failed.")
             return paynow_response
     else:
         return {"success": False, "message": f"Unsupported payment method: {payment_method}"}
 
-def record_deposit_transaction(whatsapp_id: str, amount: float, description: str, transaction_id: str = None, payment_method: str = None) -> dict:
+def process_paynow_ipn(ipn_data: Dict[str, Any]) -> dict:
     """
-    Records a confirmed deposit into the customer's wallet.
+    Processes an IPN from Paynow, validates it, and updates the wallet if successful.
+    This function is designed to be idempotent.
     """
+    logger.info(f"Processing Paynow IPN: {ipn_data}")
+    paynow_service = PaynowService()
+
+    # 1. Validate the hash to ensure the request is from Paynow
+    if not paynow_service.is_ipn_authentic(ipn_data):
+        logger.error(f"Paynow IPN with invalid hash received. Reference: {ipn_data.get('reference')}")
+        return {"success": False, "message": "Invalid IPN hash."}
+
+    # 2. Extract key fields from the IPN
+    internal_ref = ipn_data.get('reference')
+    paynow_ref = ipn_data.get('paynowreference')
+    amount_paid_str = ipn_data.get('amount')
+    status = ipn_data.get('status')
+
+    if not all([internal_ref, paynow_ref, amount_paid_str, status]):
+        logger.error(f"Paynow IPN is missing one or more required fields. Data: {ipn_data}")
+        return {"success": False, "message": "Missing required fields in IPN."}
+
     try:
         with transaction.atomic():
-            contact = Contact.objects.get(whatsapp_id=whatsapp_id)
-            profile = CustomerProfile.objects.get(contact=contact)
-            if not profile:
-                return {"success": False, "message": f"CustomerProfile not found for WhatsApp ID {whatsapp_id}."}
+            # 3. Find the corresponding PENDING transaction in our system
+            try:
+                pending_tx = WalletTransaction.objects.select_for_update().get(reference=internal_ref, status='PENDING')
+            except WalletTransaction.DoesNotExist:
+                if WalletTransaction.objects.filter(reference=internal_ref, status='COMPLETED').exists():
+                    logger.info(f"Received duplicate IPN for already completed transaction. Ref: {internal_ref}. Ignoring.")
+                    return {"success": True, "message": "Duplicate IPN for completed transaction."}
+                else:
+                    logger.error(f"Received IPN for an unknown or non-pending transaction. Ref: {internal_ref}.")
+                    return {"success": False, "message": "Transaction not found or not in a pending state."}
 
-            # Ensure amount is positive and convert to Decimal
-            deposit_amount = Decimal(str(amount))
-            if deposit_amount <= 0:
-                return {"success": False, "message": "Deposit amount must be positive."}
-            
-            # Update wallet balance
-            profile.wallet_balance = F('wallet_balance') + deposit_amount
-            profile.save(update_fields=['wallet_balance'])
-            profile.refresh_from_db() # Get updated balance
+            # 4. Process based on the IPN status
+            wallet = pending_tx.wallet
+            amount_paid = Decimal(amount_paid_str)
 
-            WalletTransaction.objects.create(
-                customer_profile=profile,
-                transaction_type='deposit',
-                amount=deposit_amount,
-                description=description,
-                transaction_id=transaction_id, # Store external transaction ID
-                payment_method=payment_method
-            )
-            logger.info(f"Deposit of {deposit_amount} recorded for {whatsapp_id}. New balance: {profile.wallet_balance}")
-            return {
-                "success": True,
-                "message": f"Deposit of {deposit_amount} successful.",
-                "new_balance": float(profile.wallet_balance)
-            }
-    except Contact.DoesNotExist:
-        logger.error(f"Contact not found for WhatsApp ID {whatsapp_id}.")
-        return {
-            "success": False,
-            "message": f"Contact not found for WhatsApp ID {whatsapp_id}."
-        }
-    except CustomerProfile.DoesNotExist:
-        logger.error(f"CustomerProfile not found for WhatsApp ID {whatsapp_id}.")
-        return {
-            "success": False,
-            "message": f"CustomerProfile not found for WhatsApp ID {whatsapp_id}."
-        }
+            if amount_paid != pending_tx.amount:
+                logger.error(f"Amount mismatch for transaction Ref {internal_ref}. Expected: {pending_tx.amount}, IPN Amount: {amount_paid}. Marking as FAILED.")
+                pending_tx.status = 'FAILED'
+                pending_tx.description = f"IPN amount mismatch. Expected {pending_tx.amount}, got {amount_paid}."
+                pending_tx.save()
+                return {"success": False, "message": "Amount mismatch."}
+
+            if status.lower() in ['paid', 'delivered']:
+                wallet.balance += amount_paid
+                wallet.save(update_fields=['balance'])
+                pending_tx.status = 'COMPLETED'
+                pending_tx.description = f"Paynow deposit successful. Paynow Ref: {paynow_ref}"
+                pending_tx.save()
+                logger.info(f"Successfully processed deposit for Ref {internal_ref}. User: {wallet.user.username}, Amount: {amount_paid}. New balance: {wallet.balance}")
+
+                # Trigger WhatsApp notification via Celery task
+                # We pass arguments as strings as it's best practice for Celery
+                send_deposit_confirmation_whatsapp.delay(
+                    whatsapp_id=wallet.user.customer_profile.contact.whatsapp_id,
+                    amount=str(amount_paid),
+                    new_balance=str(wallet.balance),
+                    transaction_reference=internal_ref,
+                    currency_symbol="$" # Pass the currency symbol
+                )
+            elif status.lower() in ['cancelled', 'failed', 'disputed']:
+                pending_tx.status = 'CANCELLED' if status.lower() == 'cancelled' else 'FAILED'
+                pending_tx.description = f"Paynow transaction status: {status}. Paynow Ref: {paynow_ref}"
+                pending_tx.save()
+                logger.warning(f"Paynow transaction for Ref {internal_ref} was not successful. Status: {status}.")
+            else:
+                logger.info(f"Received non-final IPN status '{status}' for Ref {internal_ref}. No action taken.")
+            return {"success": True, "message": "IPN processed."}
     except Exception as e:
-        logger.error(f"Error performing deposit for {whatsapp_id}: {e}", exc_info=True)
-        return {"success": False, "message": f"Error during deposit: {str(e)}"}
+        logger.error(f"Critical error processing IPN for Ref {internal_ref}: {e}", exc_info=True)
+        return {"success": False, "message": f"Internal server error: {e}"}
 
 def perform_withdrawal(whatsapp_id: str, amount: float, description: str = "Withdrawal via flow") -> dict:
     """
@@ -305,43 +441,27 @@ def perform_withdrawal(whatsapp_id: str, amount: float, description: str = "With
         with transaction.atomic():
             contact = Contact.objects.get(whatsapp_id=whatsapp_id)
             customer_profile = CustomerProfile.objects.get(contact=contact)
-            if not customer_profile:
-                return {"success": False, "message": f"CustomerProfile not found for WhatsApp ID {whatsapp_id}."}
+            if not customer_profile.user:
+                return {"success": False, "message": "No linked user account found for this contact.", "new_balance": None}
 
-            if customer_profile.wallet_balance < Decimal(str(amount)):
-                return {"success": False, "message": "Insufficient funds for withdrawal.", "new_balance": float(customer_profile.wallet_balance)}
+            wallet = UserWallet.objects.get(user=customer_profile.user)
 
-            customer_profile.wallet_balance = F('wallet_balance') - Decimal(str(amount))
-            customer_profile.save(update_fields=['wallet_balance'])
-            customer_profile.refresh_from_db()
+            # The wallet's deduct_funds method will raise ValueError for insufficient funds
+            new_balance = wallet.deduct_funds(Decimal(str(amount)), description, 'WITHDRAWAL', payment_method='manual')
 
-            WalletTransaction.objects.create(
-                customer_profile=customer_profile,
-                transaction_type='withdrawal',
-                amount=Decimal(str(amount)),
-                description=description
-            )
-            logger.info(f"Withdrawal of {amount} recorded for {whatsapp_id}. New balance: {customer_profile.wallet_balance}")
-            return {"success": True, "message": f"Successfully withdrew {amount:.2f}.", "new_balance": float(customer_profile.wallet_balance)}
-    except Contact.DoesNotExist:
-        logger.error(f"Contact not found for WhatsApp ID {whatsapp_id}.")
-        return {"success": False, "message": "Contact not found.", "new_balance": None}
-    except CustomerProfile.DoesNotExist:
-        logger.error(f"CustomerProfile not found for WhatsApp ID {whatsapp_id}.")
-        return {"success": False, "message": "Customer profile not found for this contact.", "new_balance": None}
+            logger.info(f"Withdrawal of {amount} recorded for {whatsapp_id}. New balance: {new_balance}")
+            return {"success": True, "message": f"Successfully withdrew {amount:.2f}.", "new_balance": float(new_balance)}
+    except (Contact.DoesNotExist, CustomerProfile.DoesNotExist, UserWallet.DoesNotExist):
+        return {"success": False, "message": "Could not find a valid, linked customer account and wallet.", "new_balance": None}
+    except ValueError as e: # Catches insufficient funds from wallet.deduct_funds
+        logger.warning(f"Withdrawal failed for {whatsapp_id}: {e}")
+        # To return the current balance, we need to fetch the wallet again if the transaction was rolled back
+        try:
+            wallet = UserWallet.objects.get(user__customer_profile__contact__whatsapp_id=whatsapp_id)
+            current_balance = float(wallet.balance)
+        except (UserWallet.DoesNotExist, CustomerProfile.DoesNotExist, Contact.DoesNotExist):
+            current_balance = None
+        return {"success": False, "message": str(e), "new_balance": current_balance}
     except Exception as e:
         logger.error(f"Error during withdrawal for {whatsapp_id}: {e}", exc_info=True)
         return {"success": False, "message": f"Error during withdrawal: {str(e)}", "new_balance": None}
-
-def get_customer_profile(whatsapp_id: str) -> dict:
-    """
-    Retrieves the CustomerProfile for a given WhatsApp ID.
-    """
-    try:
-        contact = Contact.objects.get(whatsapp_id=whatsapp_id)
-        profile = CustomerProfile.objects.get(contact=contact)
-        return {"success": True, "profile": profile}
-    except Contact.DoesNotExist:
-        return {"success": False, "message": f"Contact not found for WhatsApp ID {whatsapp_id}."}
-    except CustomerProfile.DoesNotExist:
-        return {"success": False, "message": f"CustomerProfile not found for WhatsApp ID {whatsapp_id}."}

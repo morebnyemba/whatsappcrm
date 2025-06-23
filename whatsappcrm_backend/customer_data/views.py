@@ -1,14 +1,18 @@
 # whatsappcrm_backend/customer_data/views.py
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.http import Http404
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 
 from .models import CustomerProfile
 from .serializers import CustomerProfileSerializer
 from conversations.models import Contact # To ensure contact exists for profile creation/retrieval
+from .utils import process_paynow_ipn
 
 import logging
 logger = logging.getLogger(__name__)
@@ -65,3 +69,28 @@ class CustomerProfileViewSet(viewsets.ModelViewSet):
     # or created on first update/get. If you want an explicit POST to /profiles/
     # to create one (expecting contact_id in payload), that's also possible.
     # The get_or_create in get_object handles on-demand creation for GET/PUT/PATCH.
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaynowIPNWebhookView(APIView):
+    """
+    Receives Instant Payment Notifications (IPN) from Paynow.
+    This endpoint should be publicly accessible.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        # Paynow sends data as form-urlencoded
+        ipn_data = request.data.dict()
+        logger.info(f"Received Paynow IPN webhook request. Data: {ipn_data}")
+
+        # Offload processing to a utility function
+        result = process_paynow_ipn(ipn_data)
+
+        if result["success"]:
+            # Paynow expects an empty 200 OK to acknowledge receipt.
+            return Response(status=status.HTTP_200_OK)
+        else:
+            # Even on failure, we return 200 OK so Paynow doesn't keep retrying.
+            # The error is logged on our side for investigation.
+            logger.error(f"Failed to process Paynow IPN. Reason: {result['message']}. Data: {ipn_data}")
+            return Response(status=status.HTTP_200_OK)

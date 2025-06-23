@@ -313,6 +313,7 @@ class PerformDepositConfig(BasePydanticConfig):
     amount_template: Union[float, str] # Can be a direct float or a template string
     payment_method: Literal["paynow_mobile", "stripe", "manual"] = "manual" # New field
     phone_number_template: Optional[str] = None # New field for mobile payments
+    paynow_method_type_template: Optional[str] = None # e.g., 'ecocash', 'onemoney'
     description_template: Optional[str] = "Deposit via bot flow"
 
 class PerformWithdrawalConfig(BasePydanticConfig):
@@ -1104,8 +1105,8 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['deposit_message'] = "Error: Deposit feature is unavailable."
                         continue
                     
+                    # Resolve amount and validate it's a float
                     resolved_amount = _resolve_value(action_item_root.amount_template, current_step_context, contact)
-                    # Ensure amount is float for the utility function
                     try:
                         resolved_amount = float(resolved_amount)
                     except (ValueError, TypeError):
@@ -1114,18 +1115,37 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['deposit_message'] = "Invalid deposit amount provided."
                         continue
 
+                    # Resolve all other templates from the action config
                     resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
+                    resolved_phone_number = _resolve_value(action_item_root.phone_number_template, current_step_context, contact) if hasattr(action_item_root, 'phone_number_template') and action_item_root.phone_number_template else None
+                    resolved_paynow_method_type = _resolve_value(action_item_root.paynow_method_type_template, current_step_context, contact) if hasattr(action_item_root, 'paynow_method_type_template') and action_item_root.paynow_method_type_template else None
                     
+                    # Call the updated perform_deposit function with all necessary parameters
                     result = customer_data_utils.perform_deposit(
                         whatsapp_id=contact.whatsapp_id,
                         amount=resolved_amount,
-                        description=resolved_description
+                        payment_method=action_item_root.payment_method, # This is a literal, not a template
+                        description=resolved_description,
+                        phone_number=resolved_phone_number,
+                        paynow_method_type=resolved_paynow_method_type
                     )
+                    
+                    # Update context with the result from the utility function
                     current_step_context['deposit_status'] = result['success']
                     current_step_context['deposit_message'] = result['message']
-                    if result['success']:
+                    
+                    # Handle different result structures based on payment method
+                    if result.get('new_balance') is not None: # For manual deposits
                         current_step_context['current_balance'] = result['new_balance']
-                        logger.info(f"Deposit successful for {contact.whatsapp_id}. New balance: {result['new_balance']:.2f}")
+                    
+                    # For Paynow initiations, save the details needed for polling and user instructions
+                    if result.get('poll_url'):
+                        current_step_context['paynow_poll_url'] = result.get('poll_url')
+                    if result.get('instructions'):
+                        current_step_context['paynow_instructions'] = result.get('instructions')
+
+                    if result['success']:
+                        logger.info(f"Deposit action for {contact.whatsapp_id} processed successfully. Message: {result['message']}")
                     else:
                         logger.error(f"Deposit failed for {contact.whatsapp_id}: {result['message']}")
 

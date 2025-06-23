@@ -52,7 +52,7 @@ class UserWallet(models.Model):
     def __str__(self):
         return f"{self.user.username}'s Wallet - ${self.balance}"
 
-    def add_funds(self, amount: Decimal, description: str, transaction_type: str = 'DEPOSIT'):
+    def add_funds(self, amount: Decimal, description: str, transaction_type: str = 'DEPOSIT', payment_method: str = 'manual', reference: str = None, external_reference: str = None):
         """Add funds to wallet"""
         if amount <= 0:
             raise ValueError("Amount must be positive")
@@ -61,12 +61,16 @@ class UserWallet(models.Model):
             wallet=self,
             amount=amount,
             transaction_type=transaction_type,
-            description=description
+            description=description,
+            status=WalletTransaction.COMPLETED,
+            payment_method=payment_method,
+            reference=reference,
+            external_reference=external_reference
         )
         self.save()
         return self.balance
 
-    def deduct_funds(self, amount: Decimal, description: str, transaction_type: str = 'WITHDRAWAL'):
+    def deduct_funds(self, amount: Decimal, description: str, transaction_type: str = 'WITHDRAWAL', payment_method: str = 'manual'):
         """Deduct funds from wallet"""
         if amount <= 0:
             raise ValueError("Amount must be positive")
@@ -77,7 +81,9 @@ class UserWallet(models.Model):
             wallet=self,
             amount=-amount, # Store deductions as negative amounts for easier accounting
             transaction_type=transaction_type,
-            description=description
+            description=description,
+            status=WalletTransaction.COMPLETED,
+            payment_method=payment_method
         )
         self.save()
         return self.balance
@@ -98,11 +104,23 @@ class WalletTransaction(models.Model):
         ('BET_REFUNDED', 'Bet Refunded'),
     ]
 
+    TRANSACTION_STATUS = [
+        ('PENDING', 'Pending'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
     wallet = models.ForeignKey(UserWallet, on_delete=models.CASCADE, related_name='transactions')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
     description = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    status = models.CharField(max_length=20, choices=TRANSACTION_STATUS, default='COMPLETED', db_index=True)
+    payment_method = models.CharField(max_length=50, null=True, blank=True)
+    reference = models.CharField(max_length=255, unique=True, null=True, blank=True, db_index=True, help_text="Our internal unique reference for the transaction.")
+    external_reference = models.CharField(max_length=255, null=True, blank=True, db_index=True, help_text="Reference from the external payment gateway (e.g., Paynow).")
 
     def __str__(self):
         return f"{self.transaction_type} - ${self.amount} - {self.created_at}"
