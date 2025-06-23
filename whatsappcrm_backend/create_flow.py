@@ -39,7 +39,8 @@ def create_the_flow():
                 if next_step:
                     FlowTransition.objects.create(
                         current_step=current_step, next_step=next_step,
-                        condition_config=trans_data.get("condition_config", {})
+                        condition_config=trans_data.get("condition_config", {}),
+                        priority=trans_data.get("priority", 0) # Add this line
                     )
     print(">>> Flow creation script finished!")
 

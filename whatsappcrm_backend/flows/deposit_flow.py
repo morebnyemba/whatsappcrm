@@ -181,11 +181,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_ecocash_phone",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -212,11 +214,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_ecocash_deposit",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -272,11 +276,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_innbucks_phone",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -303,11 +309,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_innbucks_deposit",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -363,11 +371,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "ask_omari_phone",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -394,11 +404,13 @@ def create_deposit_flow():
                 "transitions": [
                     {
                         "to_step": "initiate_omari_deposit",
-                        "priority": 0, # Explicitly set highest priority for valid reply
+                        "priority": 0,
+                        "condition_config": {"type": "question_reply_is_valid", "value": True}
                     },
                     {
                         "to_step": "end_deposit_flow",
-                        "priority": 1, # Explicitly set lower priority for fallback
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
