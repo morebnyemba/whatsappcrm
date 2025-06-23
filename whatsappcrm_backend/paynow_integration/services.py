@@ -35,34 +35,41 @@ class PaynowService:
                     result_url=result_url,
                     return_url=return_url
                 )
-        except Exception as e:
-            logger.error(f"Error loading PaynowConfig: {e}")
+                logger.debug(f"PaynowSDK wrapper successfully initialized for Integration ID: {self.config.integration_id}.")
+        except Exception as e: # Catch any exception during initialization
+            logger.error(f"Error initializing PaynowService: {type(e).__name__}: {e}", exc_info=True)
+            self.paynow_sdk = None # Ensure SDK is None if init fails
     
     def initiate_express_checkout_payment(
         self,
-        amount: Decimal,
-        reference: str,
-        phone_number: str,
-        email: str,
-        paynow_method_type: str,
-        description: str = "Wallet Deposit"
+        amount: Decimal, reference: str, phone_number: str, email: str,
+        paynow_method_type: str, description: str = "Wallet Deposit"
     ) -> Dict[str, Any]:
         """
         Initiates an Express Checkout payment via Paynow using the SDK.
         """
         if not self.paynow_sdk:
-            return {"success": False, "message": "Paynow SDK not initialized. Configuration missing."}
-    
-        # The SDK wrapper's constructor already has the result_url and return_url
-        # from the PaynowService's __init__.
-        return self.paynow_sdk.initiate_express_checkout(
-            amount=amount,
-            reference=reference,
-            phone_number=phone_number,
-            email=email,
-            paynow_method_type=paynow_method_type,
-            description=description
-        )
+            logger.error("Paynow SDK not initialized when initiate_express_checkout_payment was called. Configuration likely missing or failed to load.")
+            return {"success": False, "message": "Paynow service not configured or failed to initialize."}
+        
+        logger.debug(f"Attempting to initiate Paynow Express Checkout for reference: {reference}, amount: {amount}, phone: {phone_number}, method: {paynow_method_type}.")
+        try:
+            result = self.paynow_sdk.initiate_express_checkout(
+                amount=amount,
+                reference=reference,
+                phone_number=phone_number,
+                email=email,
+                paynow_method_type=paynow_method_type,
+                description=description
+            )
+            if result['success']:
+                logger.info(f"Paynow Express Checkout initiated successfully for reference: {reference}. PaynowRef: {result.get('paynow_reference')}.")
+            else:
+                logger.warning(f"Paynow Express Checkout initiation failed for reference: {reference}. Reason: {result.get('message')}.")
+            return result
+        except Exception as e: # Catch any unexpected exceptions from the SDK call
+            logger.error(f"Error during Paynow SDK initiate_express_checkout for reference {reference}: {type(e).__name__}: {e}", exc_info=True)
+            return {"success": False, "message": f"Paynow initiation failed: {type(e).__name__} - {e}"}
     
     def check_transaction_status(self, poll_url: str) -> Dict[str, Any]:
         """
@@ -70,4 +77,15 @@ class PaynowService:
         """
         if not self.paynow_sdk:
             return {"success": False, "message": "Paynow SDK not initialized. Configuration missing."}
-        return self.paynow_sdk.check_transaction_status(poll_url)
+        
+        logger.debug(f"Attempting to check Paynow transaction status using poll URL: {poll_url}.")
+        try:
+            result = self.paynow_sdk.check_transaction_status(poll_url)
+            if result['success']:
+                logger.info(f"Paynow status check successful for {poll_url}. Status: {result.get('status')}, Paid: {result.get('paid')}.")
+            else:
+                logger.warning(f"Paynow status check failed for {poll_url}. Reason: {result.get('message')}.")
+            return result
+        except Exception as e:
+            logger.error(f"Error during Paynow SDK check_transaction_status for {poll_url}: {type(e).__name__}: {e}", exc_info=True)
+            return {"success": False, "message": f"Error checking status: {type(e).__name__} - {e}"}
