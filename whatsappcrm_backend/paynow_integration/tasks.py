@@ -81,7 +81,7 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
             if status.lower() == 'paid':
                 # --- BUG FIX: Update existing transaction instead of creating a new one ---
                 wallet = pending_tx.wallet
-                with transaction.atomic():
+                with transaction.atomic(): # Atomic transaction to prevent race conditions
                     # Lock the wallet row to prevent race conditions while updating balance
                     wallet_to_update = UserWallet.objects.select_for_update().get(pk=wallet.pk)
                     wallet_to_update.balance += pending_tx.amount
@@ -92,7 +92,7 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                     pending_tx.description = f"Paynow deposit successful. Paynow Ref: {pending_tx.external_reference}"
                     pending_tx.save(update_fields=['status', 'description'])
                 logger.info(f"Successfully processed deposit for Ref {transaction_reference}. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
-                wallet.refresh_from_db() # Refresh the wallet object to get the latest balance for the notification
+                wallet.refresh_from_db()  # Refresh the wallet object to get the latest balance for the notification
                 
                 # Send success notification
                 send_deposit_confirmation_whatsapp.delay(
