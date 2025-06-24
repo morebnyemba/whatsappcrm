@@ -280,8 +280,8 @@ def perform_withdrawal(
     Handles a withdrawal request. Creates a PENDING WalletTransaction for admin approval.
     Does NOT deduct funds immediately.
     """
-    if amount <= 0:
-        return {"success": False, "message": "Withdrawal amount must be positive."}
+    if amount < 5.00:
+        return {"success": False, "message": "Minimum withdrawal amount is $5.00."}
 
     try:
         with transaction.atomic(): # Ensure atomicity for transaction creation

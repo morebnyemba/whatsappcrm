@@ -43,6 +43,42 @@ def create_the_flow():
                         condition_config=trans_data.get("condition_config", {}),
                         priority=trans_data.get("priority", 0) # Add this line
                     )
+
+        # Create/Update Withdrawal Flow
+        withdrawal_flow_config = create_withdrawal_flow()
+        withdrawal_flow, withdrawal_created = Flow.objects.update_or_create(
+            name=withdrawal_flow_config["name"],
+            defaults={
+                "description": withdrawal_flow_config["description"],
+                "trigger_keywords": withdrawal_flow_config["trigger_keywords"],
+                "is_active": True
+            }
+        )
+        if withdrawal_created:
+            print(f'>>> Flow "{withdrawal_flow.name}" was created.')
+        else:
+            print(f'>>> Flow "{withdrawal_flow.name}" was updated.')
+            withdrawal_flow.steps.all().delete() # Clear existing steps for update
+
+        withdrawal_steps_map = {}
+        for step_data in withdrawal_flow_config.get("steps", []):
+            step = FlowStep.objects.create(
+                flow=withdrawal_flow, name=step_data["name"], step_type=step_data["step_type"],
+                is_entry_point=step_data.get("is_entry_point", False),
+                config=step_data.get("config", {})
+            )
+            withdrawal_steps_map[step.name] = step
+        
+        for step_data in withdrawal_flow_config.get("steps", []):
+            current_step = withdrawal_steps_map[step_data["name"]]
+            for trans_data in step_data.get("transitions", []):
+                next_step = withdrawal_steps_map.get(trans_data.get("to_step"))
+                if next_step:
+                    FlowTransition.objects.create(
+                        current_step=current_step, next_step=next_step,
+                        condition_config=trans_data.get("condition_config", {}),
+                        priority=trans_data.get("priority", 0)
+                    )
     print(">>> Flow creation script finished!")
 
 create_the_flow()
