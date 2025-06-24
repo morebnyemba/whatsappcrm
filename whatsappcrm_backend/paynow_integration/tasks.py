@@ -140,11 +140,24 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                 )
 
             elif status.lower() in ['cancelled', 'failed']:
+                logger.warning(f"Paynow transaction failed for Ref {transaction_reference}. Status: {status}")
+                
+                # Mark as failed
                 pending_tx.status = 'FAILED'
                 pending_tx.description = f"Paynow transaction failed. Status: {status}"
                 pending_tx.save()
-                logger.warning(f"Paynow transaction failed for Ref {transaction_reference}. Status: {status}")
-                fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=f"Paynow payment failed with status: {status}")
+
+                # Notify the user directly from this task, removing the need for a separate task call.
+                try:
+                    contact_to_notify = pending_tx.wallet.user.customer_profile.contact
+                    error_message = f"Paynow payment failed with status: {status}"
+                    failure_message = f"❌ We're sorry, but your payment could not be processed. Reason: {error_message}. Please try again later."
+                    message_data = create_text_message_data(text_body=failure_message)
+                    send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
+                    logger.info(f"Successfully notified user {contact_to_notify.whatsapp_id} about payment failure for {transaction_reference}.")
+                except Exception as notify_exc:
+                     logger.error(f"Error notifying user about failed transaction {transaction_reference}: {notify_exc}", exc_info=True)
+
             else:
                 # Status is still pending, retry the task
                 logger.info(f"Transaction {transaction_reference} is still pending. Retrying...")
@@ -199,7 +212,8 @@ def send_innbucks_authorization_message(transaction_reference: str):
 @shared_task(name="paynow_integration.fail_pending_transaction_and_notify")
 def fail_pending_transaction_and_notify(transaction_reference: str, error_message: str):
     """
-    Marks a pending transaction as failed and sends a WhatsApp notification to the user.
+    Marks a PENDING transaction as failed and sends a WhatsApp notification to the user.
+    This is primarily for immediate failures during initiation, not for polling results.
     """
     logger.info(f"Marking transaction {transaction_reference} as failed and notifying user.")
     try:
@@ -214,6 +228,6 @@ def fail_pending_transaction_and_notify(transaction_reference: str, error_messag
         send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
         logger.info(f"Successfully notified user {contact_to_notify.whatsapp_id} about payment failure for {transaction_reference}.")
     except WalletTransaction.DoesNotExist:
-        logger.error(f"Transaction with reference {transaction_reference} not found while attempting to mark as failed.")
+        logger.error(f"Transaction with reference {transaction_reference} not found (or not PENDING) while attempting to mark as failed.")
     except Exception as e:
         logger.error(f"Error marking transaction {transaction_reference} as failed and notifying user: {e}", exc_info=True)
