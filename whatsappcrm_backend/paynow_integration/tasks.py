@@ -7,7 +7,9 @@ import requests
 from django.db import transaction
 
 from .services import PaynowService
+from meta_integration.utils import send_whatsapp_message, create_text_message_data
 from customer_data.models import WalletTransaction, UserWallet
+from customer_data.tasks import send_deposit_confirmation_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +49,39 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
 
         if paynow_response.get('success'):
             pending_tx.external_reference = paynow_response.get('paynow_reference')
-            # Store the poll_url in payment_details for later status checks
-            pending_tx.payment_details['poll_url'] = paynow_response.get('poll_url')
-            pending_tx.save(update_fields=['external_reference', 'payment_details'])
+            
+            # Always store the poll_url if provided by Paynow
+            if paynow_response.get('poll_url'):
+                pending_tx.payment_details['poll_url'] = paynow_response.get('poll_url')
 
-            # Schedule the polling task
-            poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
-            logger.info(f"Successfully initiated Paynow payment for {transaction_reference} and scheduled polling.")
+            # --- Specific handling for different payment methods ---
+            if paynow_method_type == 'omari':
+                otpreference = paynow_response.get('otpreference')
+                remoteotpurl = paynow_response.get('remoteotpurl')
+                if not otpreference or not remoteotpurl:
+                    raise Exception("O'mari payment initiated but missing OTP reference or remote OTP URL.")
+                pending_tx.payment_details['otpreference'] = otpreference
+                pending_tx.payment_details['remoteotpurl'] = remoteotpurl
+                pending_tx.save(update_fields=['external_reference', 'payment_details'])
+                logger.info(f"O'mari payment initiated for {transaction_reference}. OTP required. Not scheduling polling yet.")
+                # The flow will need to ask for OTP, then a new action/task will submit it.
+                # Polling will only start after successful OTP submission.
+            elif paynow_method_type == 'innbucks':
+                authorizationcode = paynow_response.get('authorizationcode')
+                authorizationexpires = paynow_response.get('authorizationexpires')
+                if authorizationcode:
+                    pending_tx.payment_details['authorizationcode'] = authorizationcode
+                    pending_tx.payment_details['authorizationexpires'] = authorizationexpires
+                pending_tx.save(update_fields=['external_reference', 'payment_details'])
+                
+                # Schedule sending the specific InnBucks message
+                send_innbucks_authorization_message.delay(transaction_reference=transaction_reference)
+                poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
+                logger.info(f"InnBucks payment initiated for {transaction_reference}. Authorization code: {authorizationcode}. Polling scheduled.")
+            else: # Default for EcoCash and other direct mobile money methods
+                pending_tx.save(update_fields=['external_reference', 'payment_details'])
+                poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
+                logger.info(f"Successfully initiated Paynow payment for {transaction_reference} and scheduled polling.")
         else:
             raise Exception(paynow_response.get('message', 'Unknown error from Paynow'))
 
@@ -131,6 +159,42 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
         logger.error(f"Error polling Paynow for {transaction_reference}: {e}", exc_info=True)
         self.retry(exc=e)
 
+@shared_task(name="paynow_integration.send_innbucks_authorization_message")
+def send_innbucks_authorization_message(transaction_reference: str):
+    """
+    Sends a WhatsApp message to the user with InnBucks authorization details.
+    """
+    logger.info(f"Preparing to send InnBucks authorization message for transaction {transaction_reference}")
+    try:
+        transaction_obj = WalletTransaction.objects.get(reference=transaction_reference)
+        
+        authorization_code = transaction_obj.payment_details.get('authorizationcode')
+        authorization_expires = transaction_obj.payment_details.get('authorizationexpires')
+        whatsapp_id = transaction_obj.wallet.user.customer_profile.contact.whatsapp_id
+
+        if not authorization_code:
+            logger.error(f"InnBucks authorization code not found for transaction {transaction_reference}. Cannot send message.")
+            return
+
+        message_body = (
+            f"Your InnBucks deposit for ${transaction_obj.amount:.2f} has been initiated.\n\n"
+            f"Please use the following authorization code to complete your payment in the InnBucks app:\n"
+            f"*{authorization_code}*\n\n"
+            f"This code expires on: {authorization_expires}\n\n"
+            f"You can also use this deep link to open the InnBucks app directly (if installed):\n"
+            f"schinn.wbpycode://innbucks.co.zw?pymInnCode={authorization_code}\n\n"
+            f"We will notify you once your deposit is confirmed."
+        )
+        
+        message_data = create_text_message_data(text_body=message_body)
+        send_whatsapp_message(to_phone_number=whatsapp_id, message_type='text', data=message_data)
+        logger.info(f"Successfully sent InnBucks authorization message for transaction {transaction_reference} to {whatsapp_id}.")
+
+    except WalletTransaction.DoesNotExist:
+        logger.error(f"WalletTransaction {transaction_reference} not found for InnBucks authorization message.")
+    except Exception as e:
+        logger.error(f"Error sending InnBucks authorization message for {transaction_reference}: {e}", exc_info=True)
+
 
 @shared_task(name="paynow_integration.fail_pending_transaction_and_notify")
 def fail_pending_transaction_and_notify(transaction_reference: str, error_message: str):
@@ -153,6 +217,3 @@ def fail_pending_transaction_and_notify(transaction_reference: str, error_messag
         logger.error(f"Transaction with reference {transaction_reference} not found while attempting to mark as failed.")
     except Exception as e:
         logger.error(f"Error marking transaction {transaction_reference} as failed and notifying user: {e}", exc_info=True)
-
-from meta_integration.utils import send_whatsapp_message, create_text_message_data #Import here to avoid circular dependency
-from customer_data.tasks import send_deposit_confirmation_whatsapp
