@@ -43,6 +43,10 @@ def create_the_flow():
                         condition_config=trans_data.get("condition_config", {}),
                         priority=trans_data.get("priority", 0) # Add this line
                     )
+        print(f'>>> Deposit Flow "{deposit_flow.name}" steps and transitions processed.')
+
+        # --- Withdrawal Flow Creation ---
+        print(f'>>> Starting creation/update for Withdrawal Flow...')
 
         # Create/Update Withdrawal Flow
         withdrawal_flow_config = create_withdrawal_flow()
@@ -62,23 +66,34 @@ def create_the_flow():
 
         withdrawal_steps_map = {}
         for step_data in withdrawal_flow_config.get("steps", []):
-            step = FlowStep.objects.create(
-                flow=withdrawal_flow, name=step_data["name"], step_type=step_data["step_type"],
-                is_entry_point=step_data.get("is_entry_point", False),
-                config=step_data.get("config", {})
-            )
-            withdrawal_steps_map[step.name] = step
+            try:
+                step = FlowStep.objects.create(
+                    flow=withdrawal_flow, name=step_data["name"], step_type=step_data["step_type"],
+                    is_entry_point=step_data.get("is_entry_point", False),
+                    config=step_data.get("config", {})
+                )
+                withdrawal_steps_map[step.name] = step
+                print(f'    Created step: {step.name}')
+            except Exception as e:
+                print(f'    ERROR creating step "{step_data["name"]}" for Withdrawal Flow: {e}')
+                raise # Re-raise to ensure transaction rollback and show error
         
         for step_data in withdrawal_flow_config.get("steps", []):
             current_step = withdrawal_steps_map[step_data["name"]]
             for trans_data in step_data.get("transitions", []):
                 next_step = withdrawal_steps_map.get(trans_data.get("to_step"))
                 if next_step:
-                    FlowTransition.objects.create(
-                        current_step=current_step, next_step=next_step,
-                        condition_config=trans_data.get("condition_config", {}),
-                        priority=trans_data.get("priority", 0)
-                    )
+                    try:
+                        FlowTransition.objects.create(
+                            current_step=current_step, next_step=next_step,
+                            condition_config=trans_data.get("condition_config", {}),
+                            priority=trans_data.get("priority", 0)
+                        )
+                        print(f'        Created transition: {current_step.name} -> {next_step.name}')
+                    except Exception as e:
+                        print(f'        ERROR creating transition from "{current_step.name}" to "{trans_data.get("to_step")}" for Withdrawal Flow: {e}')
+                        raise # Re-raise to ensure transaction rollback and show error
+    print(f'>>> Withdrawal Flow "{withdrawal_flow.name}" steps and transitions processed.')
     print(">>> Flow creation script finished!")
 
 create_the_flow()
