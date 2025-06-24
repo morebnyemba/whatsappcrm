@@ -47,7 +47,9 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
 
         if paynow_response.get('success'):
             pending_tx.external_reference = paynow_response.get('paynow_reference')
-            pending_tx.save(update_fields=['external_reference'])
+            # Store the poll_url in payment_details for later status checks
+            pending_tx.payment_details['poll_url'] = paynow_response.get('poll_url')
+            pending_tx.save(update_fields=['external_reference', 'payment_details'])
 
             # Schedule the polling task
             poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
@@ -70,9 +72,15 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
     try:
         pending_tx = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
         paynow_service = PaynowService()
-        
-        # Get the status from Paynow
-        status_response = paynow_service.get_express_checkout_status(pending_tx.external_reference)
+
+        # Retrieve the poll_url from payment_details
+        poll_url = pending_tx.payment_details.get('poll_url')
+        if not poll_url:
+            logger.error(f"Poll URL not found in payment_details for transaction {transaction_reference}. Cannot poll status.")
+            raise ValueError("Poll URL missing for transaction.")
+
+        # Get the status from Paynow using the correct method and poll_url
+        status_response = paynow_service.check_transaction_status(poll_url)
         
         if status_response['success']:
             status = status_response['status']
