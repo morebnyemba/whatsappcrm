@@ -1,6 +1,6 @@
 # utils.py
 
-from .tasks import send_deposit_confirmation_whatsapp # Import the new Celery task
+from .tasks import send_deposit_confirmation_whatsapp, send_withdrawal_confirmation_whatsapp # Import the new Celery task
 from decimal import Decimal
 import secrets
 from paynow_integration.tasks import initiate_paynow_express_checkout_task
@@ -269,6 +269,146 @@ def perform_deposit(
         logger.error(f"Error performing deposit for {whatsapp_id}: {e}", exc_info=True)
         return {"success": False, "message": f"Error during deposit: {str(e)}"}
 
+def perform_withdrawal(
+    whatsapp_id: str,
+    amount: float,
+    payment_method: str, # e.g., 'ecocash'
+    phone_number: str, # The EcoCash number
+    description: str = "Withdrawal via flow"
+) -> dict:
+    """
+    Handles a withdrawal request. Creates a PENDING WalletTransaction for admin approval.
+    Does NOT deduct funds immediately.
+    """
+    if amount <= 0:
+        return {"success": False, "message": "Withdrawal amount must be positive."}
+
+    try:
+        with transaction.atomic(): # Ensure atomicity for transaction creation
+            contact = Contact.objects.get(whatsapp_id=whatsapp_id)
+            profile = CustomerProfile.objects.get(contact=contact)
+            if not profile.user:
+                return {"success": False, "message": "No linked user account found for this contact."}
+            wallet = UserWallet.objects.get(user=profile.user)
+
+            # Check if user has sufficient funds for the request
+            if wallet.balance < Decimal(str(amount)):
+                return {"success": False, "message": "Insufficient funds in your wallet for this withdrawal request."}
+
+            # Generate a unique internal reference for the transaction
+            transaction_reference = f"WDR-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
+
+            payment_details = {
+                'payment_method': payment_method,
+                'phone_number': phone_number
+            }
+
+            # Create a PENDING WalletTransaction for withdrawal
+            WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=Decimal(str(amount)),
+                transaction_type='WITHDRAWAL',
+                status='PENDING', # Key: PENDING status
+                payment_method=payment_method,
+                reference=transaction_reference,
+                description=description,
+                payment_details=payment_details
+            )
+            logger.info(f"Created PENDING WalletTransaction {transaction_reference} for {whatsapp_id} via {payment_method}.")
+
+            return {
+                "success": True,
+                "message": f"Your withdrawal request for ${amount:.2f} to {phone_number} is pending admin approval. You will be notified once it's processed.",
+                "transaction_reference": transaction_reference
+            }
+
+    except (Contact.DoesNotExist, CustomerProfile.DoesNotExist, UserWallet.DoesNotExist):
+        return {"success": False, "message": "Could not find a valid, linked customer account and wallet."}
+    except Exception as e:
+        logger.error(f"Error performing withdrawal request for {whatsapp_id}: {e}", exc_info=True)
+        return {"success": False, "message": f"Error during withdrawal request: {str(e)}"}
+
+def process_withdrawal_approval(transaction_reference: str, approved: bool, reason: Optional[str] = None) -> dict:
+    """
+    Processes the approval or rejection of a PENDING withdrawal transaction.
+    If approved, deducts funds and updates transaction status to COMPLETED.
+    If rejected, updates transaction status to FAILED.
+    """
+    logger.info(f"Attempting to process withdrawal approval for reference: {transaction_reference}. Approved: {approved}")
+    try:
+        with transaction.atomic():
+            # Find the PENDING withdrawal transaction and lock it for update
+            withdrawal_tx = WalletTransaction.objects.select_for_update().get(
+                reference=transaction_reference,
+                status='PENDING',
+                transaction_type='WITHDRAWAL'
+            )
+
+            wallet = withdrawal_tx.wallet
+            amount_to_deduct = withdrawal_tx.amount
+            whatsapp_id = wallet.user.customer_profile.contact.whatsapp_id
+
+            if approved:
+                # Check for sufficient funds again at the time of approval
+                if wallet.balance < amount_to_deduct:
+                    withdrawal_tx.status = 'FAILED'
+                    withdrawal_tx.description = f"Withdrawal failed: Insufficient funds ({wallet.balance}) at time of approval for {amount_to_deduct}."
+                    withdrawal_tx.save(update_fields=['status', 'description'])
+                    logger.warning(f"Withdrawal {transaction_reference} failed due to insufficient funds at approval. Wallet: {wallet.balance}, Requested: {amount_to_deduct}.")
+                    
+                    # Notify user about failure
+                    send_withdrawal_confirmation_whatsapp.delay(
+                        whatsapp_id=whatsapp_id,
+                        amount=str(amount_to_deduct),
+                        new_balance=str(wallet.balance),
+                        status='FAILED',
+                        reason="Insufficient funds at time of approval."
+                    )
+                    return {"success": False, "message": "Insufficient funds at time of approval."}
+
+                # Deduct funds
+                wallet.balance -= amount_to_deduct
+                wallet.save(update_fields=['balance'])
+
+                # Update transaction status to COMPLETED
+                withdrawal_tx.status = 'COMPLETED'
+                withdrawal_tx.description = f"Withdrawal approved and disbursed to {withdrawal_tx.payment_details.get('phone_number')}."
+                withdrawal_tx.save(update_fields=['status', 'description'])
+
+                logger.info(f"Withdrawal {transaction_reference} approved. Wallet {wallet.user.username} new balance: {wallet.balance}")
+
+                # Trigger WhatsApp confirmation message
+                send_withdrawal_confirmation_whatsapp.delay(
+                    whatsapp_id=whatsapp_id,
+                    amount=str(amount_to_deduct),
+                    new_balance=str(wallet.balance),
+                    status='COMPLETED',
+                    reason=None # No reason for success
+                )
+                return {"success": True, "message": f"Withdrawal {transaction_reference} approved successfully."}
+            else: # Not approved (rejected)
+                withdrawal_tx.status = 'FAILED'
+                withdrawal_tx.description = f"Withdrawal rejected by admin. Reason: {reason or 'No reason provided'}."
+                withdrawal_tx.save(update_fields=['status', 'description'])
+                logger.info(f"Withdrawal {transaction_reference} rejected. Reason: {reason}.")
+
+                # Notify user about rejection
+                send_withdrawal_confirmation_whatsapp.delay(
+                    whatsapp_id=whatsapp_id,
+                    amount=str(amount_to_deduct),
+                    new_balance=str(wallet.balance),
+                    status='FAILED',
+                    reason=reason or "Your withdrawal request was rejected by an administrator."
+                )
+                return {"success": True, "message": f"Withdrawal {transaction_reference} rejected successfully."}
+
+    except WalletTransaction.DoesNotExist:
+        logger.error(f"Withdrawal transaction with reference {transaction_reference} not found, not pending, or not a withdrawal.")
+        return {"success": False, "message": "Transaction not found, not pending, or not a withdrawal."}
+    except Exception as e:
+        logger.error(f"Error processing withdrawal approval for {transaction_reference}: {e}", exc_info=True)
+        return {"success": False, "message": f"Error during approval process: {str(e)}"}
+
 def process_paynow_ipn(ipn_data: Dict[str, Any]) -> dict:
     """
     Processes an IPN from Paynow, validates it, and updates the wallet if successful.
@@ -394,50 +534,6 @@ def process_manual_deposit_approval(transaction_reference: str) -> dict:
     except Exception as e:
         logger.error(f"Error approving manual deposit {transaction_reference}: {e}", exc_info=True)
         return {"success": False, "message": f"Error during approval: {str(e)}"}
-
-def perform_withdrawal(whatsapp_id: str, amount: float, description: str = "Withdrawal via flow") -> dict:
-    """
-    Performs a withdrawal from the customer's wallet.
-
-    Args:
-        whatsapp_id (str): The WhatsApp ID of the contact.
-        amount (float): The amount to withdraw.
-        description (str, optional): Description for the transaction. Defaults to "Withdrawal via flow".
-
-    Returns:
-        dict: A dictionary containing success status, message, new balance (if successful).
-    """
-    if amount <= 0:
-        return {"success": False, "message": "Withdrawal amount must be positive.", "new_balance": None}
-
-    try:
-        with transaction.atomic():
-            contact = Contact.objects.get(whatsapp_id=whatsapp_id)
-            customer_profile = CustomerProfile.objects.get(contact=contact)
-            if not customer_profile.user:
-                return {"success": False, "message": "No linked user account found for this contact.", "new_balance": None}
-
-            wallet = UserWallet.objects.get(user=customer_profile.user)
-
-            # The wallet's deduct_funds method will raise ValueError for insufficient funds
-            new_balance = wallet.deduct_funds(Decimal(str(amount)), description, 'WITHDRAWAL', payment_method='manual')
-
-            logger.info(f"Withdrawal of {amount} recorded for {whatsapp_id}. New balance: {new_balance}")
-            return {"success": True, "message": f"Successfully withdrew {amount:.2f}.", "new_balance": float(new_balance)}
-    except (Contact.DoesNotExist, CustomerProfile.DoesNotExist, UserWallet.DoesNotExist):
-        return {"success": False, "message": "Could not find a valid, linked customer account and wallet.", "new_balance": None}
-    except ValueError as e: # Catches insufficient funds from wallet.deduct_funds
-        logger.warning(f"Withdrawal failed for {whatsapp_id}: {e}")
-        # To return the current balance, we need to fetch the wallet again if the transaction was rolled back
-        try:
-            wallet = UserWallet.objects.get(user__customer_profile__contact__whatsapp_id=whatsapp_id)
-            current_balance = float(wallet.balance)
-        except (UserWallet.DoesNotExist, CustomerProfile.DoesNotExist, Contact.DoesNotExist):
-            current_balance = None
-        return {"success": False, "message": str(e), "new_balance": current_balance}
-    except Exception as e:
-        logger.error(f"Error during withdrawal for {whatsapp_id}: {e}", exc_info=True)
-        return {"success": False, "message": f"Error during withdrawal: {str(e)}", "new_balance": None}
 
 
 # Helper functions for JSONField serialization robustness (UPDATED)

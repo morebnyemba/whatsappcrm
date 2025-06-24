@@ -2,6 +2,7 @@ def create_the_flow():
     from django.db import transaction
     from flows.models import Flow, FlowStep, FlowTransition
     from flows.deposit_flow import create_deposit_flow # Import the new deposit flow
+    from flows.withdrawal_flow import create_withdrawal_flow # Import the new withdrawal flow
     
     print("Preparing to create the flow from a script...")
     

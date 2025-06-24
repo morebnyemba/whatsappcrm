@@ -38,8 +38,8 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     search_fields = ('wallet__user__username', 'reference', 'external_reference', 'description')
     raw_id_fields = ('wallet',)
     readonly_fields = ('created_at', 'external_reference', 'payment_details')
-    date_hierarchy = 'created_at'
-    actions = ['approve_selected_manual_deposits'] # Add the new action
+    date_hierarchy = 'created_at' # Add the new action
+    actions = ['approve_selected_manual_deposits', 'process_selected_withdrawal_requests']
 
     def approve_selected_manual_deposits(self, request, queryset):
         """
@@ -69,6 +69,36 @@ class WalletTransactionAdmin(admin.ModelAdmin):
             self.message_user(request, f"Failed to approve {failed_count} transaction(s). Check logs for details.", level=messages.WARNING)
 
     approve_selected_manual_deposits.short_description = "Approve selected PENDING manual deposits"
+
+    def process_selected_withdrawal_requests(self, request, queryset):
+        """
+        Admin action to process selected PENDING withdrawal requests.
+        """
+        from django.contrib import messages
+        from customer_data.utils import process_withdrawal_approval # Import the utility function
+        
+        processed_count = 0
+        failed_count = 0
+        
+        for transaction_obj in queryset:
+            if transaction_obj.status == 'PENDING' and transaction_obj.transaction_type == 'WITHDRAWAL':
+                # For now, we assume approval. If rejection is needed, a separate action or UI would be required.
+                result = process_withdrawal_approval(transaction_obj.reference, approved=True)
+                if result['success']:
+                    processed_count += 1
+                else:
+                    failed_count += 1
+                    self.message_user(request, f"Failed to process withdrawal {transaction_obj.reference}: {result['message']}", level=messages.ERROR)
+            else:
+                failed_count += 1
+                self.message_user(request, f"Transaction {transaction_obj.reference} is not a PENDING withdrawal request and was skipped.", level=messages.WARNING)
+
+        if processed_count > 0:
+            self.message_user(request, f"Successfully processed {processed_count} withdrawal request(s).", level=messages.SUCCESS)
+        if failed_count > 0:
+            self.message_user(request, f"Failed to process {failed_count} withdrawal request(s). Check logs for details.", level=messages.WARNING)
+
+    process_selected_withdrawal_requests.short_description = "Process selected PENDING withdrawal requests"
 
 class BetInline(admin.TabularInline):
     """
