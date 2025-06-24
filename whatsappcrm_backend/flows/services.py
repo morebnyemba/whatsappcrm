@@ -1049,10 +1049,40 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 action_type = action_item_root.action_type
                 
                 logger.info(f"Step '{step.name}': Executing action item {i+1}/{len(action_step_config.actions_to_run)} of type '{action_type}'.")
-                
+
                 if action_type == ActionType.SET_CONTEXT_VARIABLE:
-                    # Access attributes directly from action_item_root due to __getattr__
-                    resolved_value = _resolve_value(action_item_root.value_template, current_step_context, contact)
+                    # Use the Django template engine for consistency with message rendering.
+                    template_context_data = {
+                        'flow_context': current_step_context,
+                        'contact': contact,
+                    }
+                    # Make utility modules available in the template context if they are enabled
+                    if CUSTOMER_DATA_UTILS_ENABLED:
+                        template_context_data['customer_data'] = {'utils': customer_data_utils}
+                    if FOOTBALL_APP_ENABLED:
+                        from football_data_app import utils as football_data_utils
+                        template_context_data['football_data'] = {'utils': football_data_utils}
+
+                    try:
+                        template_context_data['customer_profile'] = contact.customerprofile
+                    except CustomerProfile.DoesNotExist:
+                        template_context_data['customer_profile'] = None
+
+                    context = Context(template_context_data)
+                    
+                    resolved_value = None
+                    try:
+                        # The value_template can be a string to be rendered, or another type.
+                        if isinstance(action_item_root.value_template, str):
+                            template = Template(action_item_root.value_template)
+                            resolved_value = template.render(context)
+                        else:
+                            # If it's not a string, it's a literal value, no need to render.
+                            resolved_value = action_item_root.value_template
+                    except (TemplateSyntaxError, TemplateDoesNotExist) as e:
+                        logger.error(f"Django Template error for 'set_context_variable' action in step '{step.name}': {e}. Raw template: '{action_item_root.value_template}'", exc_info=True)
+                        resolved_value = f"TEMPLATE_ERROR: {e}" # Set an error message in the context for debugging
+                    
                     current_step_context[action_item_root.variable_name] = resolved_value
                     logger.info(f"Step '{step.name}': Context variable '{action_item_root.variable_name}' set to: '{str(resolved_value)[:100]}'.")
                 
