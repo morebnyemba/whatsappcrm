@@ -322,6 +322,8 @@ class PerformDepositConfig(BasePydanticConfig):
 class PerformWithdrawalConfig(BasePydanticConfig):
     action_type: Literal["perform_withdrawal"] = "perform_withdrawal"
     amount_template: Union[float, str]
+    payment_method_template: str # e.g., 'ecocash', 'innbucks'
+    phone_number_template: str # The phone number for withdrawal
     description_template: Optional[str] = "Withdrawal via bot flow"
 
 class HandleBettingActionConfig(BasePydanticConfig):
@@ -1206,14 +1208,20 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['withdrawal_message'] = "Invalid withdrawal amount provided."
                         continue
                     
+                    resolved_payment_method = _resolve_value(action_item_root.payment_method_template, current_step_context, contact)
+                    resolved_phone_number = _resolve_value(action_item_root.phone_number_template, current_step_context, contact)
                     resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
                     
                     result = customer_data_utils.perform_withdrawal(
                         whatsapp_id=contact.whatsapp_id,
                         amount=resolved_amount,
+                        payment_method=resolved_payment_method,
+                        phone_number=resolved_phone_number,
                         description=resolved_description
                     )
                     current_step_context['withdrawal_status'] = result['success']
+                    # Ensure withdrawal_message is set even if result['message'] is missing
+                    # This handles cases where perform_withdrawal might return success:False but no message
                     current_step_context['withdrawal_message'] = result['message']
                     if result['success']:
                         current_step_context['current_balance'] = result['new_balance']

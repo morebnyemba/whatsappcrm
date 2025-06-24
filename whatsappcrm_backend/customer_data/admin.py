@@ -125,8 +125,9 @@ class PendingWithdrawalAdmin(admin.ModelAdmin):
     # Ensure the process_selected_withdrawal_requests action is available for this proxy model
     def get_actions(self, request):
         actions = super().get_actions(request)
-        if 'process_selected_withdrawal_requests' not in actions:
-            actions['process_selected_withdrawal_requests'] = self.process_selected_withdrawal_requests
+        # Reference the action from the WalletTransactionAdmin class directly
+        if 'process_selected_withdrawal_requests' not in actions and hasattr(WalletTransactionAdmin, 'process_selected_withdrawal_requests'):
+            actions['process_selected_withdrawal_requests'] = WalletTransactionAdmin.process_selected_withdrawal_requests
         return actions
 
 class BetInline(admin.TabularInline):
