@@ -109,7 +109,6 @@ class PaynowSDK: # This class will wrap the official Paynow SDK
                 "success": True,
                 "status": status_response.status,
                 "paid": status_response.paid,
-                "hash_valid": status_response.hash_valid,
                 "message": status_response.status # Use the status as a message
             }
         except Exception as e:
