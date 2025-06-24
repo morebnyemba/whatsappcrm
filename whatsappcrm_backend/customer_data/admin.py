@@ -1,6 +1,6 @@
 # whatsappcrm_backend/customer_data/admin.py
 from django.contrib import admin
-from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet
+from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet, PendingWithdrawal
 
 @admin.register(CustomerProfile)
 class CustomerProfileAdmin(admin.ModelAdmin):
@@ -99,6 +99,35 @@ class WalletTransactionAdmin(admin.ModelAdmin):
             self.message_user(request, f"Failed to process {failed_count} withdrawal request(s). Check logs for details.", level=messages.WARNING)
 
     process_selected_withdrawal_requests.short_description = "Process selected PENDING withdrawal requests"
+
+@admin.register(PendingWithdrawal)
+class PendingWithdrawalAdmin(admin.ModelAdmin):
+    """
+    Admin interface specifically for Pending Withdrawal requests.
+    Uses a proxy model to provide a dedicated view.
+    """
+    list_display = ('id', 'wallet_user', 'amount', 'payment_method', 'phone_number', 'created_at')
+    list_filter = ('payment_method',)
+    search_fields = ('wallet__user__username', 'reference', 'payment_details')
+    raw_id_fields = ('wallet',)
+    readonly_fields = ('created_at', 'reference', 'external_reference', 'payment_details')
+    date_hierarchy = 'created_at'
+    actions = ['process_selected_withdrawal_requests'] # Reuse the action from WalletTransactionAdmin
+
+    def wallet_user(self, obj):
+        return obj.wallet.user.username if obj.wallet and obj.wallet.user else 'N/A'
+    wallet_user.short_description = "User"
+
+    def phone_number(self, obj):
+        return obj.payment_details.get('phone_number', 'N/A')
+    phone_number.short_description = "Phone Number"
+
+    # Ensure the process_selected_withdrawal_requests action is available for this proxy model
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'process_selected_withdrawal_requests' not in actions:
+            actions['process_selected_withdrawal_requests'] = self.process_selected_withdrawal_requests
+        return actions
 
 class BetInline(admin.TabularInline):
     """

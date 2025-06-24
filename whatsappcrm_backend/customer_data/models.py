@@ -129,6 +129,25 @@ class WalletTransaction(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+
+class PendingWithdrawalManager(models.Manager):
+    """
+    Custom manager for WalletTransaction to filter for pending withdrawal requests.
+    """
+    def get_queryset(self):
+        return super().get_queryset().filter(
+            transaction_type='WITHDRAWAL',
+            status='PENDING'
+        )
+
+class PendingWithdrawal(WalletTransaction):
+    objects = PendingWithdrawalManager()
+    class Meta:
+        proxy = True
+        verbose_name = "Pending Withdrawal"
+        verbose_name_plural = "Pending Withdrawals"
+        ordering = ['-created_at'] # Order by newest first
+
 class BetTicket(models.Model):
     """
     BetTicket model to group multiple bets together.
