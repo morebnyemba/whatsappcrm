@@ -30,24 +30,34 @@ def run():
 
             steps_map = {}
             for step_data in flow_config.get("steps", []):
-                step = FlowStep.objects.create(
-                    flow=flow, name=step_data["name"], step_type=step_data["step_type"],
-                    is_entry_point=step_data.get("is_entry_point", False),
-                    config=step_data.get("config", {})
-                )
-                steps_map[step.name] = step
+                try:
+                    step = FlowStep.objects.create(
+                        flow=flow, name=step_data["name"], step_type=step_data["step_type"],
+                        is_entry_point=step_data.get("is_entry_point", False),
+                        config=step_data.get("config", {})
+                    )
+                    steps_map[step.name] = step
+                    print(f'    Created step: {step.name}')
+                except Exception as e:
+                    print(f'    ERROR creating step "{step_data["name"]}" for "{flow.name}": {e}')
+                    raise
             
             for step_data in flow_config.get("steps", []):
                 current_step = steps_map[step_data["name"]]
                 for trans_data in step_data.get("transitions", []):
                     next_step = steps_map.get(trans_data.get("to_step"))
                     if next_step:
-                        FlowTransition.objects.create(
-                            current_step=current_step,
-                            next_step=next_step,
-                            condition_config=trans_data.get("condition_config", {}),
-                            priority=trans_data.get("priority", 0) # Add priority here
-                        )
+                        try:
+                            FlowTransition.objects.create(
+                                current_step=current_step,
+                                next_step=next_step,
+                                condition_config=trans_data.get("condition_config", {}),
+                                priority=trans_data.get("priority", 0)
+                            )
+                            print(f'        Created transition: {current_step.name} -> {next_step.name}')
+                        except Exception as e:
+                            print(f'        ERROR creating transition from "{current_step.name}" to "{trans_data.get("to_step")}" for "{flow.name}": {e}')
+                            raise
         except ImportError:
             print(">>> Skipping 'Get Fixtures Flow' creation: `create_get_fixtures_flow` not found.")
         except Exception as e:
@@ -74,24 +84,34 @@ def run():
 
             deposit_steps_map = {}
             for step_data in deposit_flow_config.get("steps", []):
-                step = FlowStep.objects.create(
-                    flow=deposit_flow, name=step_data["name"], step_type=step_data["step_type"],
-                    is_entry_point=step_data.get("is_entry_point", False),
-                    config=step_data.get("config", {})
-                )
-                deposit_steps_map[step.name] = step
+                try:
+                    step = FlowStep.objects.create(
+                        flow=deposit_flow, name=step_data["name"], step_type=step_data["step_type"],
+                        is_entry_point=step_data.get("is_entry_point", False),
+                        config=step_data.get("config", {})
+                    )
+                    deposit_steps_map[step.name] = step
+                    print(f'    Created step: {step.name}')
+                except Exception as e:
+                    print(f'    ERROR creating step "{step_data["name"]}" for "{deposit_flow.name}": {e}')
+                    raise
             
             for step_data in deposit_flow_config.get("steps", []):
                 current_step = deposit_steps_map[step_data["name"]]
                 for trans_data in step_data.get("transitions", []):
                     next_step = deposit_steps_map.get(trans_data.get("to_step"))
                     if next_step:
-                        FlowTransition.objects.create(
-                            current_step=current_step,
-                            next_step=next_step,
-                            condition_config=trans_data.get("condition_config", {}),
-                            priority=trans_data.get("priority", 0) # Add priority here
-                        )
+                        try:
+                            FlowTransition.objects.create(
+                                current_step=current_step,
+                                next_step=next_step,
+                                condition_config=trans_data.get("condition_config", {}),
+                                priority=trans_data.get("priority", 0)
+                            )
+                            print(f'        Created transition: {current_step.name} -> {next_step.name}')
+                        except Exception as e:
+                            print(f'        ERROR creating transition from "{current_step.name}" to "{trans_data.get("to_step")}" for "{deposit_flow.name}": {e}')
+                            raise
         except ImportError:
             print(">>> Skipping 'Deposit Flow' creation: `create_deposit_flow` not found.")
         except Exception as e:
@@ -117,26 +137,91 @@ def run():
 
             reg_steps_map = {}
             for step_data in reg_flow_config.get("steps", []):
-                step = FlowStep.objects.create(
-                    flow=reg_flow, name=step_data["name"], step_type=step_data["step_type"],
-                    is_entry_point=step_data.get("is_entry_point", False),
-                    config=step_data.get("config", {})
-                )
-                reg_steps_map[step.name] = step
+                try:
+                    step = FlowStep.objects.create(
+                        flow=reg_flow, name=step_data["name"], step_type=step_data["step_type"],
+                        is_entry_point=step_data.get("is_entry_point", False),
+                        config=step_data.get("config", {})
+                    )
+                    reg_steps_map[step.name] = step
+                    print(f'    Created step: {step.name}')
+                except Exception as e:
+                    print(f'    ERROR creating step "{step_data["name"]}" for "{reg_flow.name}": {e}')
+                    raise
             
             for step_data in reg_flow_config.get("steps", []):
                 current_step = reg_steps_map[step_data["name"]]
                 for trans_data in step_data.get("transitions", []):
                     next_step = reg_steps_map.get(trans_data.get("to_step"))
                     if next_step:
-                        FlowTransition.objects.create(
-                            current_step=current_step, next_step=next_step,
-                            condition_config=trans_data.get("condition_config", {}),
-                            priority=trans_data.get("priority", 0)
-                        )
+                        try:
+                            FlowTransition.objects.create(
+                                current_step=current_step, next_step=next_step,
+                                condition_config=trans_data.get("condition_config", {}),
+                                priority=trans_data.get("priority", 0)
+                            )
+                            print(f'        Created transition: {current_step.name} -> {next_step.name}')
+                        except Exception as e:
+                            print(f'        ERROR creating transition from "{current_step.name}" to "{trans_data.get("to_step")}" for "{reg_flow.name}": {e}')
+                            raise
         except ImportError:
             print(">>> Skipping 'User Registration Flow' creation: `create_registration_flow` not found.")
         except Exception as e:
             print(f">>> ERROR creating 'User Registration Flow': {e}")
+
+        # --- Create/Update Withdrawal Flow ---
+        try:
+            from flows.withdrawal_flow import create_withdrawal_flow
+            print(f'>>> Starting creation/update for Withdrawal Flow...')
+
+            withdrawal_flow_config = create_withdrawal_flow()
+            withdrawal_flow, withdrawal_created = Flow.objects.update_or_create(
+                name=withdrawal_flow_config["name"],
+                defaults={
+                    "description": withdrawal_flow_config["description"],
+                    "trigger_keywords": withdrawal_flow_config["trigger_keywords"],
+                    "is_active": True
+                }
+            )
+            if withdrawal_created:
+                print(f'>>> Flow "{withdrawal_flow.name}" was created.')
+            else:
+                print(f'>>> Flow "{withdrawal_flow.name}" was updated.')
+                withdrawal_flow.steps.all().delete() # Clear existing steps for update
+
+            withdrawal_steps_map = {}
+            for step_data in withdrawal_flow_config.get("steps", []):
+                try:
+                    step = FlowStep.objects.create(
+                        flow=withdrawal_flow, name=step_data["name"], step_type=step_data["step_type"],
+                        is_entry_point=step_data.get("is_entry_point", False),
+                        config=step_data.get("config", {})
+                    )
+                    withdrawal_steps_map[step.name] = step
+                    print(f'    Created step: {step.name}')
+                except Exception as e:
+                    print(f'    ERROR creating step "{step_data["name"]}" for Withdrawal Flow: {e}')
+                    raise # Re-raise to ensure transaction rollback and show error
+            
+            for step_data in withdrawal_flow_config.get("steps", []):
+                current_step = withdrawal_steps_map[step_data["name"]]
+                for trans_data in step_data.get("transitions", []):
+                    next_step = withdrawal_steps_map.get(trans_data.get("to_step"))
+                    if next_step:
+                        try:
+                            FlowTransition.objects.create(
+                                current_step=current_step, next_step=next_step,
+                                condition_config=trans_data.get("condition_config", {}),
+                                priority=trans_data.get("priority", 0)
+                            )
+                            print(f'        Created transition: {current_step.name} -> {next_step.name}')
+                        except Exception as e:
+                            print(f'        ERROR creating transition from "{current_step.name}" to "{trans_data.get("to_step")}" for Withdrawal Flow: {e}')
+                            raise
+            print(f'>>> Withdrawal Flow "{withdrawal_flow.name}" steps and transitions processed.')
+        except ImportError:
+            print(">>> Skipping 'Withdrawal Flow' creation: `create_withdrawal_flow` not found.")
+        except Exception as e:
+            print(f">>> ERROR creating 'Withdrawal Flow': {e}")
 
     print(">>> Flow creation script finished!")
