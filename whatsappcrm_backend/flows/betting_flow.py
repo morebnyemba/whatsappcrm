@@ -1,0 +1,182 @@
+# whatsappcrm_backend/flows/betting_flow.py
+
+def create_betting_flow():
+    """
+    Defines a flow for handling sports betting activities.
+    """
+    return {
+        "name": "Betting Flow",
+        "description": "Guides the user through viewing matches, placing bets, and checking tickets.",
+        "trigger_keywords": ["bet", "play", "ticket", "matches", "odds"],
+        "is_active": True,
+        "steps": [
+            # 1. Entry Point: Ensure user has an account
+            {
+                "name": "ensure_customer_account_betting",
+                "step_type": "action",
+                "is_entry_point": True,
+                "config": {
+                    "actions_to_run": [{"action_type": "create_account"}]
+                },
+                "transitions": [
+                    {"to_step": "show_betting_menu", "priority": 1, "condition_config": {"type": "variable_equals", "variable_name": "account_creation_status", "value": True}},
+                    {"to_step": "account_creation_failed_betting", "priority": 99, "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # 2. Main Menu
+            {
+                "name": "show_betting_menu",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "list",
+                            "header": {"type": "text", "text": "Betting Menu"},
+                            "body": {"text": "Welcome to BetBlitz! What would you like to do?"},
+                            "footer": {"text": "Select an option"},
+                            "action": {
+                                "button": "Menu",
+                                "sections": [
+                                    {
+                                        "title": "Betting Options",
+                                        "rows": [
+                                            {"id": "bet_view_matches", "title": "View Matches", "description": "See upcoming fixtures and odds"},
+                                            {"id": "bet_place_text", "title": "Place Bet (Text)", "description": "Place a bet using text commands"},
+                                            {"id": "bet_view_tickets", "title": "My Tickets", "description": "Check the status of your open bets"},
+                                            {"id": "bet_check_balance", "title": "Check Balance", "description": "View your current wallet balance"},
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "selected_betting_option",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "ask_league_for_fixtures", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_matches"}},
+                    {"to_step": "ask_for_bet_string", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_place_text"}},
+                    {"to_step": "fetch_user_tickets", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_tickets"}},
+                    {"to_step": "fetch_wallet_balance", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_check_balance"}},
+                ]
+            },
+            # --- Path 1: View Matches ---
+            {
+                "name": "ask_league_for_fixtures",
+                "step_type": "question",
+                "config": {
+                    "message_config": {"message_type": "text", "text": {"body": "Enter a league code (e.g., 'epl', 'laliga') or type 'all' to see fixtures from all available leagues."}},
+                    "reply_config": {"save_to_variable": "selected_league_code", "expected_type": "text"}
+                },
+                "transitions": [
+                    {"to_step": "fetch_fixtures", "condition_config": {"type": "question_reply_is_valid", "value": True}}
+                ]
+            },
+            {
+                "name": "fetch_fixtures",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "view_matches",
+                        "league_code_template": "{{ flow_context.selected_league_code }}"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "display_fixtures", "condition_config": {"type": "variable_equals", "variable_name": "view_matches_status", "value": True}},
+                    {"to_step": "betting_action_failed", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "display_fixtures",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "{{ flow_context.view_matches_message }}"}
+                },
+                "transitions": [
+                    {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # --- Path 2: Place Bet via Text ---
+            {
+                "name": "ask_for_bet_string",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {"body": "Please enter your bets, one per line, followed by your stake.\n\nExample:\n123 Home\n456 Over 2.5\nStake 10"}
+                    },
+                    "reply_config": {"save_to_variable": "raw_bet_string", "expected_type": "text"}
+                },
+                "transitions": [
+                    {"to_step": "process_bet_string", "condition_config": {"type": "question_reply_is_valid", "value": True}}
+                ]
+            },
+            {
+                "name": "process_bet_string",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "place_ticket",
+                        "raw_bet_string_template": "{{ flow_context.raw_bet_string }}"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "display_bet_placement_result", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "display_bet_placement_result",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "{{ flow_context.place_ticket_message }}"}
+                },
+                "transitions": [
+                    {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # --- Path 3 & 4 are handled by handle_betting_action which sets a message in context ---
+            {
+                "name": "fetch_user_tickets",
+                "step_type": "action",
+                "config": {"actions_to_run": [{"action_type": "handle_betting_action", "betting_action": "view_my_tickets"}]},
+                "transitions": [{"to_step": "display_betting_action_result", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "fetch_wallet_balance",
+                "step_type": "action",
+                "config": {"actions_to_run": [{"action_type": "handle_betting_action", "betting_action": "check_wallet_balance"}]},
+                "transitions": [{"to_step": "display_betting_action_result", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "display_betting_action_result",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "{{ flow_context.view_my_tickets_message | default:'' }}{{ flow_context.check_wallet_balance_message | default:'' }}"}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            # --- Common Failure/End Steps ---
+            {
+                "name": "account_creation_failed_betting",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "❌ We couldn't set up your account at this time. {{ flow_context.account_creation_message }}"}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "betting_action_failed",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "❌ Sorry, something went wrong. {{ flow_context.view_matches_message | default:'Please try again.' }}"}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "end_betting_flow",
+                "step_type": "end_flow",
+                "config": {"message_config": {"message_type": "text", "text": {"body": "Thanks for using BetBlitz! Good luck!"}}}
+            }
+        ]
+    }

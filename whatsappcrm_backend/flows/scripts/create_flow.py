@@ -224,4 +224,54 @@ def run():
         except Exception as e:
             print(f">>> ERROR creating 'Withdrawal Flow': {e}")
 
+        # --- Create/Update Betting Flow ---
+        try:
+            from flows.betting_flow import create_betting_flow
+            print(f'>>> Starting creation/update for Betting Flow...')
+
+            betting_flow_config = create_betting_flow()
+            betting_flow, betting_created = Flow.objects.update_or_create(
+                name=betting_flow_config["name"],
+                defaults={
+                    "description": betting_flow_config["description"],
+                    "trigger_keywords": betting_flow_config["trigger_keywords"],
+                    "is_active": True
+                }
+            )
+            if betting_created:
+                print(f'>>> Flow "{betting_flow.name}" was created.')
+            else:
+                print(f'>>> Flow "{betting_flow.name}" was updated.')
+                betting_flow.steps.all().delete() # Clear existing steps for update
+
+            betting_steps_map = {}
+            for step_data in betting_flow_config.get("steps", []):
+                try:
+                    step = FlowStep.objects.create(
+                        flow=betting_flow, name=step_data["name"], step_type=step_data["step_type"],
+                        is_entry_point=step_data.get("is_entry_point", False),
+                        config=step_data.get("config", {})
+                    )
+                    betting_steps_map[step.name] = step
+                    print(f'    Created step: {step.name}')
+                except Exception as e:
+                    print(f'    ERROR creating step "{step_data["name"]}" for Betting Flow: {e}')
+                    raise
+            
+            for step_data in betting_flow_config.get("steps", []):
+                current_step = betting_steps_map[step_data["name"]]
+                for trans_data in step_data.get("transitions", []):
+                    next_step = betting_steps_map.get(trans_data.get("to_step"))
+                    if next_step:
+                        FlowTransition.objects.create(
+                            current_step=current_step, next_step=next_step,
+                            condition_config=trans_data.get("condition_config", {}),
+                            priority=trans_data.get("priority", 0)
+                        )
+            print(f'>>> Betting Flow "{betting_flow.name}" steps and transitions processed.')
+        except ImportError:
+            print(">>> Skipping 'Betting Flow' creation: `create_betting_flow` not found.")
+        except Exception as e:
+            print(f">>> ERROR creating 'Betting Flow': {e}")
+
     print(">>> Flow creation script finished!")
