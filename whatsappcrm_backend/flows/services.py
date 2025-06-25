@@ -322,9 +322,17 @@ class PerformDepositConfig(BasePydanticConfig):
 class PerformWithdrawalConfig(BasePydanticConfig):
     action_type: Literal["perform_withdrawal"] = "perform_withdrawal"
     amount_template: Union[float, str]
-    payment_method_template: str # e.g., 'ecocash', 'innbucks'
+    payment_method: Optional[str] = None # Allow direct value
+    payment_method_template: Optional[str] = None # Make template optional
     phone_number_template: str # The phone number for withdrawal
     description_template: Optional[str] = "Withdrawal via bot flow"
+
+    @root_validator(pre=False, skip_on_failure=True)
+    def check_payment_method_source(cls, values):
+        # Ensure that either the direct value or the template is provided.
+        if not values.get('payment_method') and not values.get('payment_method_template'):
+            raise ValueError("Either 'payment_method' or 'payment_method_template' must be provided for 'perform_withdrawal' action.")
+        return values
 
 class HandleBettingActionConfig(BasePydanticConfig):
     action_type: Literal["handle_betting_action"] = "handle_betting_action"
@@ -1073,12 +1081,23 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     resolved_value = None
                     try:
                         # The value_template can be a string to be rendered, or another type.
-                        if isinstance(action_item_root.value_template, str):
-                            template = Template(action_item_root.value_template)
-                            resolved_value = template.render(context)
+                        value_template_str = action_item_root.value_template
+                        if isinstance(value_template_str, str):
+                            # HACK: Special handling for invalid template syntax `get_customer_wallet_balance(...)`
+                            # This makes the service robust to this specific error found in logs.
+                            if 'get_customer_wallet_balance' in value_template_str:
+                                logger.warning(f"Applying special handling for 'get_customer_wallet_balance' in template for step '{step.name}'.")
+                                balance_info = customer_data_utils.get_customer_wallet_balance(contact.whatsapp_id)
+                                if '.balance' in value_template_str:
+                                    resolved_value = balance_info.get('balance', 0.0)
+                                else:
+                                    resolved_value = balance_info # Return the whole dict
+                            else:
+                                template = Template(value_template_str)
+                                resolved_value = template.render(context)
                         else:
                             # If it's not a string, it's a literal value, no need to render.
-                            resolved_value = action_item_root.value_template
+                            resolved_value = template.render(context)
                     except (TemplateSyntaxError, TemplateDoesNotExist) as e:
                         logger.error(f"Django Template error for 'set_context_variable' action in step '{step.name}': {e}. Raw template: '{action_item_root.value_template}'", exc_info=True)
                         resolved_value = f"TEMPLATE_ERROR: {e}" # Set an error message in the context for debugging
@@ -1238,7 +1257,13 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context['withdrawal_message'] = "Invalid withdrawal amount provided."
                         continue
                     
-                    resolved_payment_method = _resolve_value(action_item_root.payment_method_template, current_step_context, contact)
+                    # Get payment method from either the direct field or the template
+                    resolved_payment_method = None
+                    if action_item_root.payment_method:
+                        resolved_payment_method = action_item_root.payment_method
+                    elif action_item_root.payment_method_template:
+                        resolved_payment_method = _resolve_value(action_item_root.payment_method_template, current_step_context, contact)
+
                     resolved_phone_number = _resolve_value(action_item_root.phone_number_template, current_step_context, contact)
                     resolved_description = _resolve_value(action_item_root.description_template, current_step_context, contact)
                     

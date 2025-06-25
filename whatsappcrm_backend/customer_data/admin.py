@@ -118,70 +118,26 @@ class WalletTransactionAdmin(admin.ModelAdmin):
     reject_selected_withdrawal_requests.short_description = "Reject selected PENDING withdrawals"
 
 @admin.register(PendingWithdrawal)
-class PendingWithdrawalAdmin(admin.ModelAdmin):
+class PendingWithdrawalAdmin(WalletTransactionAdmin):
     """
     Admin interface specifically for Pending Withdrawal requests.
-    Uses a proxy model to provide a dedicated view.
+    Inherits from WalletTransactionAdmin to reuse actions and basic setup,
+    but provides a focused view for pending withdrawals via the proxy model.
     """
     list_display = ('id', 'wallet_user', 'amount', 'payment_method', 'phone_number', 'created_at')
     list_filter = ('payment_method',)
     search_fields = ('wallet__user__username', 'reference', 'payment_details')
-    raw_id_fields = ('wallet',)
-    readonly_fields = ('created_at', 'reference', 'external_reference', 'payment_details')
-    date_hierarchy = 'created_at'
-    actions = ['approve_selected_withdrawal_requests', 'reject_selected_withdrawal_requests']
 
     def wallet_user(self, obj):
         return obj.wallet.user.username if obj.wallet and obj.wallet.user else 'N/A'
     wallet_user.short_description = "User"
 
     def phone_number(self, obj):
-        return obj.payment_details.get('phone_number', 'N/A')
+        # Ensure payment_details is a dict before calling .get()
+        if isinstance(obj.payment_details, dict):
+            return obj.payment_details.get('phone_number', 'N/A')
+        return 'N/A'
     phone_number.short_description = "Phone Number"
-
-    def _process_transactions(self, request, queryset, action_name, process_func, success_message, **process_kwargs):
-        """
-        Generic helper to process transactions. The queryset is already filtered by the proxy model.
-        """
-        processed_count = 0
-        failed_count = 0
-        
-        for transaction_obj in queryset:
-            result = process_func(transaction_obj.reference, **process_kwargs)
-            if result['success']:
-                processed_count += 1
-            else:
-                failed_count += 1
-                messages.error(request, f"Failed to {action_name} transaction {transaction_obj.reference}: {result['message']}")
-
-        if processed_count > 0:
-            messages.success(request, success_message.format(count=processed_count))
-        if failed_count > 0:
-            messages.warning(request, f"Failed to {action_name} {failed_count} transaction(s). Check individual messages and logs for details.")
-
-    def approve_selected_withdrawal_requests(self, request, queryset):
-        """
-        Admin action to APPROVE selected PENDING withdrawal requests.
-        """
-        self._process_transactions(
-            request=request, queryset=queryset, action_name="approve withdrawal",
-            process_func=process_withdrawal_approval,
-            success_message="Successfully approved {count} withdrawal request(s).",
-            approved=True
-        )
-    approve_selected_withdrawal_requests.short_description = "Approve selected PENDING withdrawals"
-
-    def reject_selected_withdrawal_requests(self, request, queryset):
-        """
-        Admin action to REJECT selected PENDING withdrawal requests.
-        """
-        self._process_transactions(
-            request=request, queryset=queryset, action_name="reject withdrawal",
-            process_func=process_withdrawal_approval,
-            success_message="Successfully rejected {count} withdrawal request(s).",
-            approved=False, reason="Rejected by admin action."
-        )
-    reject_selected_withdrawal_requests.short_description = "Reject selected PENDING withdrawals"
 
 class BetInline(admin.TabularInline):
     """
