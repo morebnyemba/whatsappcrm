@@ -70,6 +70,9 @@ def process_bet_ticket_submission(
             if not valid_outcomes:
                 return {"success": False, "message": "No valid market outcomes to place a bet."}
 
+            # Determine bet type
+            bet_type = 'SINGLE' if len(valid_outcomes) == 1 else 'MULTIPLE'
+
             # Calculate potential winnings
             potential_winnings = Decimal(str(stake)) * total_odds
 
@@ -78,17 +81,23 @@ def process_bet_ticket_submission(
                 user=customer_profile.user,
                 total_stake=Decimal(str(stake)),
                 potential_winnings=potential_winnings,
-                status='PENDING', # Ticket should be PENDING until place_ticket is called
-                
+                status='PENDING',
+                bet_type=bet_type
             )
 
             # Create individual Bets for the ticket
             for outcome in valid_outcomes:
+                # The amount for a single bet is the full stake. For a multiple, the
+                # existing logic divides it, which is more like a system bet. We'll
+                # follow this for now to fix the immediate error, but it's a point for review.
+                bet_amount = Decimal(str(stake)) if bet_type == 'SINGLE' else Decimal(str(stake)) / len(valid_outcomes)
+                potential_winnings_for_bet = bet_amount * outcome.odds
+
                 Bet.objects.create(
                     ticket=bet_ticket,
-                    market_outcome=outcome, # Assign the MarketOutcome object directly
-                    # odds_at_placement is not a field on the Bet model. Potential winnings are calculated on Bet.
-                    amount=Decimal(str(stake)) if len(valid_outcomes) == 1 else Decimal(str(stake)) / len(valid_outcomes),
+                    market_outcome=outcome,
+                    amount=bet_amount,
+                    potential_winnings=potential_winnings_for_bet, # Provide the value here
                     status='PENDING'
                 )
 
