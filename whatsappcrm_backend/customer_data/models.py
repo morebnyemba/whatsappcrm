@@ -62,7 +62,7 @@ class UserWallet(models.Model):
             amount=amount,
             transaction_type=transaction_type,
             description=description,
-            status=WalletTransaction.COMPLETED,
+            status='COMPLETED',
             payment_method=payment_method,
             reference=reference,
             external_reference=external_reference
@@ -81,8 +81,8 @@ class UserWallet(models.Model):
             wallet=self,
             amount=-amount, # Store deductions as negative amounts for easier accounting
             transaction_type=transaction_type,
-            description=description,
-            status=WalletTransaction.COMPLETED,
+            description=description, # Corrected: This was missing in the original diff, but should be there.
+            status='COMPLETED',
             payment_method=payment_method
         )
         self.save()
