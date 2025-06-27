@@ -28,7 +28,7 @@ def create_welcome_flow():
                                     {
                                         "title": "Services",
                                         "rows": [
-                                            {"id": "welcome_register", "title": "Register (if not registered)", "description": "Create a new account"},
+                                            {"id": "welcome_register", "title": "Register (New Users)", "description": "Create a new account"},
                                             {"id": "welcome_betting", "title": "Betting", "description": "Access betting options"},
                                             {"id": "welcome_account", "title": "Account Management", "description": "Manage your account (coming soon)"},
                                         ]
