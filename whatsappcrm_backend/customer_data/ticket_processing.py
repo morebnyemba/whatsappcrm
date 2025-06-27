@@ -106,6 +106,10 @@ def process_bet_ticket_submission(
             # Now, place the ticket (this will update its status to PLACED)
             bet_ticket.place_ticket()
 
+            # Refresh the wallet object from the database to get the updated balance
+            # after the deduction made inside place_ticket().
+            user_wallet.refresh_from_db()
+
             return {
                 "success": True,
                 "message": f"Betting ticket (ID: {bet_ticket.id}) successfully placed. Potential winnings: {float(potential_winnings):.2f}. New balance: {float(user_wallet.balance):.2f}.",
