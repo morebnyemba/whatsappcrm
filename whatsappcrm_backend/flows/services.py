@@ -1301,6 +1301,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         resolved_stake = None # Ensure it's None if invalid
 
                     resolved_market_outcome_id = _resolve_value(action_item_root.market_outcome_id_template, current_step_context, contact) if hasattr(action_item_root, 'market_outcome_id_template') else None
+                    resolved_ticket_id = _resolve_value(action_item_root.ticket_id_template, current_step_context, contact) if hasattr(action_item_root, 'ticket_id_template') else None
                     resolved_raw_bet_string = _resolve_value(action_item_root.raw_bet_string_template, current_step_context, contact) if hasattr(action_item_root, 'raw_bet_string_template') else None
                     
                     # Parameters for view_matches/view_results (if the betting_action itself involves fetching data)
@@ -1315,6 +1316,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         flow_context=current_step_context, # Pass context directly for internal updates by betting action
                         stake=resolved_stake,
                         market_outcome_id=resolved_market_outcome_id,
+                        ticket_id=resolved_ticket_id, # Pass the resolved ticket_id
                         raw_bet_string=resolved_raw_bet_string,
                         # Pass data fetching params
                         league_code=resolved_league_code,
