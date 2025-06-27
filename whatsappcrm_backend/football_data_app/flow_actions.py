@@ -253,9 +253,7 @@ def handle_football_betting_action(
                     ticket_message += f"  - Match: {fixture_name}\n"
                     ticket_message += f"    Selection: {bet.market_outcome.outcome_name} ({bet.market_outcome.market.category.name})\n"
                     ticket_message += f"    Odds: {float(bet.market_outcome.odds):.2f}\n"
-                    ticket_message += f"    Bet Amount: ${float(bet.amount):.2f}\n"
                     ticket_message += f"    Bet Status: {bet.get_status_display()}\n"
-                    ticket_message += f"    Potential Win: ${float(bet.potential_winnings):.2f}\n"
                     ticket_message += "    ---\n"
                 
                 return {"success": True, "message": "Ticket details retrieved.", "data": {"single_ticket_status": True, "single_ticket_message": ticket_message}}
