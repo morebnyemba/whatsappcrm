@@ -41,9 +41,9 @@ def create_betting_flow():
                                     {
                                         "title": "Betting Options",
                                         "rows": [
-                                            {"id": "bet_view_matches", "title": "View Matches", "description": "See upcoming fixtures and odds"},
+                                            {"id": "bet_view_results", "title": "View Results", "description": "See results for finished matches"},
                                             {"id": "bet_place_text", "title": "Place Bet (Text)", "description": "Place a bet using text commands"},
-                                            {"id": "bet_view_tickets", "title": "My Tickets", "description": "Check the status of your open bets"},
+                                            {"id": "bet_view_single_ticket", "title": "View Ticket by ID", "description": "View details of a specific ticket"},
                                             {"id": "bet_check_balance", "title": "Check Balance", "description": "View your current wallet balance"},
                                         ]
                                     }
@@ -57,49 +57,86 @@ def create_betting_flow():
                     }
                 },
                 "transitions": [
-                    {"to_step": "ask_league_for_fixtures", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_matches"}},
+                    {"to_step": "ask_league_for_results", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_results"}},
                     {"to_step": "ask_for_bet_string", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_place_text"}},
-                    {"to_step": "fetch_user_tickets", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_tickets"}},
+                    {"to_step": "ask_for_ticket_id", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_single_ticket"}},
                     {"to_step": "fetch_wallet_balance", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_check_balance"}},
                 ]
             },
-            # --- Path 1: View Matches ---
+            # --- Path 1: View Results ---
             {
-                "name": "ask_league_for_fixtures",
+                "name": "ask_league_for_results",
                 "step_type": "question",
                 "config": {
-                    "message_config": {"message_type": "text", "text": {"body": "Enter a league code (e.g., 'epl', 'laliga') or type 'all' to see fixtures from all available leagues."}},
+                    "message_config": {"message_type": "text", "text": {"body": "Enter a league code (e.g., 'epl', 'laliga') or type 'all' to see recent results from all available leagues."}},
                     "reply_config": {"save_to_variable": "selected_league_code", "expected_type": "text"}
                 },
                 "transitions": [
-                    {"to_step": "fetch_fixtures", "condition_config": {"type": "question_reply_is_valid", "value": True}}
+                    {"to_step": "fetch_results", "condition_config": {"type": "question_reply_is_valid", "value": True}}
                 ]
             },
             {
-                "name": "fetch_fixtures",
+                "name": "fetch_results",
                 "step_type": "action",
                 "config": {
                     "actions_to_run": [{
                         "action_type": "handle_betting_action",
-                        "betting_action": "view_matches",
+                        "betting_action": "view_results",
                         "league_code_template": "{{ flow_context.selected_league_code }}"
                     }]
                 },
                 "transitions": [
-                    {"to_step": "display_fixtures", "condition_config": {"type": "variable_equals", "variable_name": "view_matches_status", "value": True}},
+                    {"to_step": "display_results", "condition_config": {"type": "variable_equals", "variable_name": "view_results_status", "value": True}},
                     {"to_step": "betting_action_failed", "condition_config": {"type": "always_true"}}
                 ]
             },
             {
-                "name": "display_fixtures",
+                "name": "display_results",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "{{ flow_context.view_matches_message }}"}
+                    "text": {"body": "{{ flow_context.view_results_message }}"}
                 },
                 "transitions": [
                     {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
                 ]
+            },
+            # --- Path 3: View Single Ticket by ID ---
+            {
+                "name": "ask_for_ticket_id",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {"body": "Please enter the ID of the ticket you wish to view:"}
+                    },
+                    "reply_config": {"save_to_variable": "ticket_id_for_lookup", "expected_type": "number"}
+                },
+                "transitions": [
+                    {"to_step": "fetch_single_ticket_details", "condition_config": {"type": "question_reply_is_valid", "value": True}},
+                    {"to_step": "betting_action_failed", "condition_config": {"type": "always_true"}} # Fallback for invalid input
+                ]
+            },
+            {
+                "name": "fetch_single_ticket_details",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "view_single_ticket",
+                        "ticket_id_template": "{{ flow_context.ticket_id_for_lookup }}"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "display_single_ticket_details", "priority": 1, "condition_config": {"type": "variable_equals", "variable_name": "single_ticket_status", "value": True}},
+                    {"to_step": "single_ticket_not_found", "priority": 99, "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "display_single_ticket_details",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "{{ flow_context.single_ticket_message }}"}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
             },
             # --- Path 2: Place Bet via Text ---
             {
@@ -195,12 +232,6 @@ def create_betting_flow():
             },
             # --- Path 3 & 4 are handled by handle_betting_action which sets a message in context ---
             {
-                "name": "fetch_user_tickets",
-                "step_type": "action",
-                "config": {"actions_to_run": [{"action_type": "handle_betting_action", "betting_action": "view_my_tickets"}]},
-                "transitions": [{"to_step": "display_betting_action_result", "condition_config": {"type": "always_true"}}]
-            },
-            {
                 "name": "fetch_wallet_balance",
                 "step_type": "action",
                 "config": {"actions_to_run": [{"action_type": "handle_betting_action", "betting_action": "check_wallet_balance"}]},
@@ -226,9 +257,15 @@ def create_betting_flow():
                 "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
             },
             {
+                "name": "single_ticket_not_found",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "Ticket ID {{ flow_context.ticket_id_for_lookup }} not found or does not belong to you. Please check the ID and try again."}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
                 "name": "betting_action_failed",
                 "step_type": "send_message",
-                "config": {"message_type": "text", "text": {"body": "❌ Sorry, something went wrong. {{ flow_context.view_matches_message | default:'Please try again.' }}"}},
+                "config": {"message_type": "text", "text": {"body": "❌ Sorry, something went wrong. {{ flow_context.view_results_message | default:flow_context.view_matches_message | default:'Please try again.' }}"}},
                 "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
             },
             {

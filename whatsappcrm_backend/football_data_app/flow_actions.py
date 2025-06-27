@@ -4,7 +4,7 @@ from conversations.models import Contact
 from decimal import Decimal
 from django.contrib.auth.models import User
 import logging
-from customer_data.models import CustomerProfile, UserWallet
+from customer_data.models import CustomerProfile, UserWallet, BetTicket
 from customer_data.ticket_processing import process_bet_ticket_submission
 from customer_data.utils import create_or_get_customer_account, get_customer_wallet_balance
 # IMPORTANT: Using 'FootballFixture' as the main fixture model name
@@ -28,8 +28,7 @@ def handle_football_betting_action(
     stake: float = None,
     market_outcome_id: str = None,
     ticket_id: str = None,
-    raw_bet_string: str = None,
-    # Parameters for get_formatted_football_data
+    raw_bet_string: str = None, # For place_ticket and parse_and_confirm_ticket
     league_code: Optional[str] = None,
     days_ahead: int = 10,
     days_past: int = 2,
@@ -225,56 +224,54 @@ def handle_football_betting_action(
 
             return {"success": place_result.get("success"), "message": place_result.get("message"), "data": final_result_data}
 
-        elif action_type == 'place_ticket':
-            parsed_data = {"success": False, "message": "No betting data provided."}
-            if raw_bet_string:
-                parsed_data = parse_betting_string(raw_bet_string)
-            elif flow_context.get('bets_in_progress'):
-                parsed_data['success'] = True
-                parsed_data['market_outcome_ids'] = [str(b['market_outcome_id']) for b in flow_context['bets_in_progress']]
-                if stake:
-                    parsed_data['stake'] = stake
-                else:
-                    parsed_data['success'] = False
-                    parsed_data['message'] = "Stake amount not found for ticket from context."
+        elif action_type == 'view_single_ticket':
+            if not ticket_id:
+                return {"success": False, "message": "Ticket ID is required to view a specific ticket.", "data": {"single_ticket_status": False, "single_ticket_message": "Ticket ID is required."}}
+            
+            try:
+                # Ensure ticket_id is an integer
+                ticket_id_int = int(ticket_id)
+                ticket = BetTicket.objects.filter(user=customer_profile.user, id=ticket_id_int).prefetch_related(
+                    'bets__market_outcome__market__fixture__home_team',
+                    'bets__market_outcome__market__fixture__away_team',
+                    'bets__market_outcome__market__category'
+                ).first()
 
-            if not parsed_data['success']:
-                return {"success": False, "message": parsed_data['message'], "data": {}}
+                if not ticket:
+                    return {"success": False, "message": f"Ticket ID {ticket_id} not found or does not belong to you.", "data": {"single_ticket_status": False, "single_ticket_message": f"Ticket ID {ticket_id} not found or does not belong to you."}}
+                
+                # Format the detailed ticket information
+                ticket_message = f"🎫 *Ticket ID: {ticket.id}*\n"
+                ticket_message += f"Status: {ticket.get_status_display()}\n"
+                ticket_message += f"Total Stake: ${float(ticket.total_stake):.2f}\n"
+                ticket_message += f"Potential Winnings: ${float(ticket.potential_winnings):.2f}\n"
+                ticket_message += f"Placed On: {timezone.localtime(ticket.created_at).strftime('%Y-%m-%d %H:%M')}\n\n"
+                
+                ticket_message += "*Individual Bets:*\n"
+                for bet in ticket.bets.all():
+                    fixture_name = f"{bet.market_outcome.market.fixture.home_team.name} vs {bet.market_outcome.market.fixture.away_team.name}"
+                    ticket_message += f"  - Match: {fixture_name}\n"
+                    ticket_message += f"    Selection: {bet.market_outcome.outcome_name} ({bet.market_outcome.market.category.name})\n"
+                    ticket_message += f"    Odds: {float(bet.market_outcome.odds):.2f}\n"
+                    ticket_message += f"    Bet Amount: ${float(bet.amount):.2f}\n"
+                    ticket_message += f"    Bet Status: {bet.get_status_display()}\n"
+                    ticket_message += f"    Potential Win: ${float(bet.potential_winnings):.2f}\n"
+                    ticket_message += "    ---\n"
+                
+                return {"success": True, "message": "Ticket details retrieved.", "data": {"single_ticket_status": True, "single_ticket_message": ticket_message}}
+            except ValueError:
+                return {"success": False, "message": "Invalid Ticket ID format. Please enter a number.", "data": {"single_ticket_status": False, "single_ticket_message": "Invalid Ticket ID format. Please enter a number."}}
+            except Exception as e:
+                logger.error(f"Error viewing single ticket for contact {contact.whatsapp_id}, ticket ID {ticket_id}: {e}", exc_info=True)
+                return {"success": False, "message": "An unexpected error occurred while fetching ticket details.", "data": {"single_ticket_status": False, "single_ticket_message": "An unexpected error occurred while fetching ticket details."}}
 
-            market_outcome_ids_to_process = parsed_data['market_outcome_ids']
-            stake_to_process = parsed_data['stake']
-
-            if not market_outcome_ids_to_process:
-                return {"success": False, "message": "No valid betting options found to place the ticket.", "data": {}}
-            if not stake_to_process or stake_to_process <= 0:
-                return {"success": False, "message": "A valid stake amount is required to place the ticket.", "data": {}}
-
-            place_result = process_bet_ticket_submission(
-                whatsapp_id=contact.whatsapp_id,
-                market_outcome_ids=market_outcome_ids_to_process,
-                stake=stake_to_process
-            )
-
-            if place_result['success']:
-                flow_context.pop('current_ticket_id', None)
-                flow_context.pop('bets_in_progress', None)
-                result = {
-                    "success": True,
-                    "message": place_result['message'],
-                    "data": {"ticket_id": place_result.get('ticket_id'), "new_balance": place_result.get('new_balance')}
-                }
-            else:
-                result = {
-                    "success": False,
-                    "message": place_result['message'],
-                    "data": {"balance": float(user_wallet.balance) if user_wallet else 0.0}
-                }
-
-        elif action_type == 'view_my_tickets':
+        elif action_type == 'view_my_tickets': # This action is no longer directly used in the flow, but kept for completeness
             tickets = BetTicket.objects.filter(user=customer_profile.user).order_by('-created_at')
             
-            MAX_CHARS_PER_PART_ACTION = 4000
-            ITEM_SEPARATOR_ACTION = "\n---\n" # Separator between tickets in a part
+            from football_data_app.utils import MAX_CHARS_PER_MESSAGE_PART, MESSAGE_PART_SEPARATOR
+
+            MAX_CHARS_PER_PART_ACTION = MAX_CHARS_PER_MESSAGE_PART
+            ITEM_SEPARATOR_ACTION = MESSAGE_PART_SEPARATOR # Separator between tickets in a part
             now_harare = timezone.localtime(timezone.now())
             datetime_str = now_harare.strftime('%B %d, %Y, %I:%M %p %Z')
             footer_string = f"\n\n_Generated by BetBlitz on {datetime_str}_"
