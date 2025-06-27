@@ -98,7 +98,16 @@ def create_welcome_flow():
             {
                 "name": "show_developer_contact",
                 "step_type": "send_message",
-                "config": {"message_type": "text", "text": {"body": "This platform was developed by Sly-T. You can reach them at morebnyemba@gmail.com."}},
+                "config": {
+                    "message_type": "text", 
+                    "text": {
+                        "body": "This platform was developed by Moreblessing Nyemba from Slyker Tech Web Services.\n\n"
+                                "You can reach them via:\n"
+                                "- WhatsApp: https://wa.me/263787211325?text=Hello%20Slyker%20Tech\n"
+                                "- Call: +263787211325\n"
+                                "- Email: morebnyemba@slykertech.co.zw"
+                    }
+                },
                 "transitions": [{"to_step": "end_welcome_flow", "condition_config": {"type": "always_true"}}]
             },
             # --- End Flow Step ---
