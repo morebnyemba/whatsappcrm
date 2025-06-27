@@ -46,7 +46,9 @@ def process_bet_ticket_submission(
             if not customer_profile.user:
                 return {"success": False, "message": "No linked user account found for this contact. Cannot place bet."}
 
-            user_wallet = UserWallet.objects.get(user=customer_profile.user)
+            # Lock the wallet row for the duration of the transaction to prevent race conditions.
+            # This ensures the balance check and deduction are atomic.
+            user_wallet = UserWallet.objects.select_for_update().get(user=customer_profile.user)
 
             # Check for sufficient funds
             if user_wallet.balance < Decimal(str(stake)):

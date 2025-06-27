@@ -117,20 +117,6 @@ def create_betting_flow():
                 ]
             },
             {
-                "name": "process_bet_string",
-                "step_type": "action",
-                "config": {
-                    "actions_to_run": [{
-                        "action_type": "handle_betting_action",
-                        "betting_action": "place_ticket",
-                        "raw_bet_string_template": "{{ flow_context.raw_bet_string }}"
-                    }]
-                },
-                "transitions": [
-                    {"to_step": "display_bet_placement_result", "condition_config": {"type": "always_true"}}
-                ]
-            },
-            {
                 "name": "display_bet_placement_result",
                 "step_type": "send_message",
                 "config": {
@@ -140,6 +126,72 @@ def create_betting_flow():
                 "transitions": [
                     {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
                 ]
+            },
+            {
+                "name": "parse_bet_string_for_confirmation",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "parse_and_confirm_ticket",
+                        "raw_bet_string_template": "{{ flow_context.raw_bet_string }}"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "ask_for_bet_confirmation", "priority": 1, "condition_config": {"type": "variable_equals", "variable_name": "bet_parsing_status", "value": True}},
+                    {"to_step": "bet_parsing_failed", "priority": 99, "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "ask_for_bet_confirmation",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "header": {"type": "text", "text": "Confirm Your Bet"},
+                            "body": {"text": "{{ flow_context.bet_confirmation_message }}"},
+                            "footer": {"text": "Please confirm to proceed."},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "confirm_bet_yes", "title": "✅ Yes, Place Bet"}},
+                                    {"type": "reply", "reply": {"id": "confirm_bet_no", "title": "❌ No, Cancel"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "bet_confirmation_response",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "process_confirmed_bet", "condition_config": {"type": "interactive_reply_id_equals", "value": "confirm_bet_yes"}},
+                    {"to_step": "bet_cancelled", "condition_config": {"type": "interactive_reply_id_equals", "value": "confirm_bet_no"}}
+                ]
+            },
+            {
+                "name": "process_confirmed_bet",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "place_ticket_from_context"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "display_bet_placement_result", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "bet_cancelled",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "Your bet has been cancelled as requested."}
+                },
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
             },
             # --- Path 3 & 4 are handled by handle_betting_action which sets a message in context ---
             {
@@ -165,6 +217,12 @@ def create_betting_flow():
                 "name": "account_creation_failed_betting",
                 "step_type": "send_message",
                 "config": {"message_type": "text", "text": {"body": "❌ We couldn't set up your account at this time. {{ flow_context.account_creation_message }}"}},
+                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "bet_parsing_failed",
+                "step_type": "send_message",
+                "config": {"message_type": "text", "text": {"body": "❌ We couldn't understand your bet. {{ flow_context.bet_parsing_message | default:'Please check the format and try again.' }}"}},
                 "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
             },
             {

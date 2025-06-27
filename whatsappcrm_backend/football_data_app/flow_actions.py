@@ -1,10 +1,12 @@
 # whatsappcrm_backend/football_data_app/flow_actions.py
 
 from conversations.models import Contact
+from decimal import Decimal
 from django.contrib.auth.models import User
 import logging
 from customer_data.models import CustomerProfile, UserWallet
 from customer_data.ticket_processing import process_bet_ticket_submission
+from customer_data.utils import create_or_get_customer_account, get_customer_wallet_balance
 # IMPORTANT: Using 'FootballFixture' as the main fixture model name
 from .models import FootballFixture, MarketOutcome # Import FootballFixture directly
 from .football_engine import FootballEngine # Retained for other specific engine operations if any
@@ -59,22 +61,13 @@ def handle_football_betting_action(
     result = {"success": False, "message": "Unknown betting action.", "data": {}}
 
     try:
-        customer_profile, _ = CustomerProfile.objects.get_or_create(contact=contact)
-        user = customer_profile.user
-        if not user:
-            # Determine username for the new User account
-            whatsapp_id = contact.whatsapp_id
-            email = getattr(contact, 'email', None)
-            username = email if email else whatsapp_id # Prefer email, fall back to whatsapp_id
-            if User.objects.filter(username=username).exists():
-                username = f"{username}_{contact.id}"
-
-            password = generate_strong_password()
-            user = User.objects.create_user(username=username, email=email, password=password)
-            customer_profile.user = user
-            customer_profile.save()
-            logger.info(f"Automated User account created for {whatsapp_id} with username: {username}")
-        user_wallet, _ = UserWallet.objects.get_or_create(user=customer_profile.user)
+        # Ensure user account and wallet exist using the centralized utility
+        account_info = create_or_get_customer_account(contact.whatsapp_id)
+        if not account_info.get('success'):
+            return {"success": False, "message": account_info.get('message', 'Failed to create or retrieve account.'), "data": {}}
+        
+        customer_profile = account_info.get('customer_profile')
+        user_wallet = account_info.get('wallet')
 
         if action_type == 'view_matches':
             formatted_matches_parts = get_formatted_football_data(
@@ -149,6 +142,88 @@ def handle_football_betting_action(
             else:
                 result = {"success": False, "message": "Failed to retrieve bet details.", "data": {}}
 
+        elif action_type == 'parse_and_confirm_ticket':
+            if not raw_bet_string:
+                return {"success": False, "message": "No betting information was provided.", "data": {"bet_parsing_status": False, "bet_parsing_message": "No betting information was provided."}}
+
+            # 1. Parse the raw text string into bets and stake
+            parsed_data = parse_betting_string(raw_bet_string)
+            if not parsed_data.get("success"):
+                return {"success": False, "message": parsed_data.get("message", "Could not understand your bet."), "data": {"bet_parsing_status": False, "bet_parsing_message": parsed_data.get("message", "Could not understand your bet.")}}
+
+            market_outcome_ids = parsed_data.get("market_outcome_ids", [])
+            stake = parsed_data.get("stake", 0.0)
+
+            # 2. Fetch outcomes and calculate total odds
+            try:
+                # Ensure IDs are integers for the query
+                int_market_outcome_ids = [int(i) for i in market_outcome_ids]
+                outcomes = MarketOutcome.objects.filter(id__in=int_market_outcome_ids).select_related('market__fixture__home_team', 'market__fixture__away_team')
+                
+                if len(outcomes) != len(market_outcome_ids):
+                    return {"success": False, "message": "One or more of your selections are invalid or no longer available.", "data": {"bet_parsing_status": False, "bet_parsing_message": "One or more of your selections are invalid or no longer available."}}
+
+                total_odds = Decimal('1.0')
+                selections_text_list = []
+                for outcome in outcomes:
+                    total_odds *= outcome.odds
+                    selections_text_list.append(
+                        f"  - {outcome.market.fixture.home_team.name} vs {outcome.market.fixture.away_team.name}\n"
+                        f"    Selection: {outcome.outcome_name} @ {outcome.odds:.2f}"
+                    )
+                
+                potential_winnings = Decimal(stake) * total_odds
+                
+                # 3. Format the confirmation message
+                confirmation_message = "*Please confirm your bet:*\n\n"
+                confirmation_message += "*Selections:*\n"
+                confirmation_message += "\n\n".join(selections_text_list)
+                confirmation_message += f"\n\n*Total Stake:* ${stake:.2f}"
+                confirmation_message += f"\n*Potential Winnings:* ${potential_winnings:.2f}"
+
+                # 4. Prepare data for context
+                data_for_context = {
+                    "bet_parsing_status": True,
+                    "bet_confirmation_message": confirmation_message,
+                    "parsed_bet_data": { # Store the validated data needed for placement
+                        "market_outcome_ids": market_outcome_ids,
+                        "stake": stake,
+                    }
+                }
+                return {"success": True, "message": "Bet parsed successfully.", "data": data_for_context}
+
+            except Exception as e:
+                logger.error(f"Error during bet parsing/confirmation for contact {contact.whatsapp_id}: {e}", exc_info=True)
+                return {"success": False, "message": "An internal error occurred while preparing your bet.", "data": {"bet_parsing_status": False, "bet_parsing_message": "An internal error occurred while preparing your bet."}}
+
+        elif action_type == 'place_ticket_from_context':
+            parsed_bet_data = flow_context.get('parsed_bet_data')
+            if not parsed_bet_data or not isinstance(parsed_bet_data, dict):
+                return {"success": False, "message": "Could not find your bet details to place the ticket. Please start over.", "data": {"place_ticket_status": False, "place_ticket_message": "Could not find your bet details to place the ticket. Please start over."}}
+
+            market_outcome_ids = parsed_bet_data.get("market_outcome_ids")
+            stake = parsed_bet_data.get("stake")
+
+            if not market_outcome_ids or not stake:
+                return {"success": False, "message": "Your bet details are incomplete. Please start over.", "data": {"place_ticket_status": False, "place_ticket_message": "Your bet details are incomplete. Please start over."}}
+
+            # Call the existing ticket processing logic
+            place_result = process_bet_ticket_submission(
+                whatsapp_id=contact.whatsapp_id,
+                market_outcome_ids=market_outcome_ids,
+                stake=stake
+            )
+            
+            # Adapt the result to what the flow expects
+            final_result_data = {
+                "place_ticket_status": place_result.get("success", False),
+                "place_ticket_message": place_result.get("message", "An unknown error occurred."),
+            }
+            if place_result.get("success"):
+                final_result_data["ticket_id"] = place_result.get("ticket_id")
+                final_result_data["new_balance"] = place_result.get("new_balance")
+
+            return {"success": place_result.get("success"), "message": place_result.get("message"), "data": final_result_data}
 
         elif action_type == 'place_ticket':
             parsed_data = {"success": False, "message": "No betting data provided."}
@@ -196,7 +271,7 @@ def handle_football_betting_action(
                 }
 
         elif action_type == 'view_my_tickets':
-            tickets = engine.get_user_tickets(customer_profile.user.id) # Corrected method name
+            tickets = BetTicket.objects.filter(user=customer_profile.user).order_by('-created_at')
             
             MAX_CHARS_PER_PART_ACTION = 4000
             ITEM_SEPARATOR_ACTION = "\n---\n" # Separator between tickets in a part
@@ -208,7 +283,7 @@ def handle_football_betting_action(
                 message_parts = ["You have no betting tickets yet." + footer_string]
             else:
                 ticket_detail_strings = [
-                    f"Ticket ID: {t.id}\nStatus: {t.status}\nStake: {float(t.total_stake):.2f}\nPotential Winnings: {float(t.potential_winnings):.2f}"
+                    f"Ticket ID: {t.id}\nStatus: {t.get_status_display()}\nStake: ${float(t.total_stake):.2f}\nPotential Winnings: ${float(t.potential_winnings):.2f}"
                     for t in tickets
                 ]
 
@@ -261,21 +336,15 @@ def handle_football_betting_action(
             }
 
         elif action_type == 'check_wallet_balance':
+            balance_info = get_customer_wallet_balance(contact.whatsapp_id)
             result = {
-                "success": True,
-                "message": f"Your current wallet balance is: {float(user_wallet.balance):.2f}",
-                "data": {"balance": float(user_wallet.balance)}
+                "success": balance_info.get('success'),
+                "message": f"Your current wallet balance is: ${balance_info.get('balance', 0.0):.2f}" if balance_info.get('success') else balance_info.get('message'),
+                "data": {"balance": balance_info.get('balance')}
             }
 
         else:
             result = {"success": False, "message": f"Unsupported betting action: {action_type}", "data": {}}
-
-    except Contact.DoesNotExist:
-        result = {"success": False, "message": "Contact not found.", "data": {}}
-    except CustomerProfile.DoesNotExist:
-        result = {"success": False, "message": "Customer profile not found.", "data": {}}
-    except UserWallet.DoesNotExist:
-        result = {"success": False, "message": "User wallet not found.", "data": {}}
     except Exception as e:
         import traceback
         traceback.print_exc()
