@@ -117,6 +117,21 @@ def create_betting_flow():
                 ]
             },
             {
+                "name": "parse_bet_string_for_confirmation",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{
+                        "action_type": "handle_betting_action",
+                        "betting_action": "parse_and_confirm_ticket",
+                        "raw_bet_string_template": "{{ flow_context.raw_bet_string }}"
+                    }]
+                },
+                "transitions": [
+                    {"to_step": "ask_for_bet_confirmation", "priority": 1, "condition_config": {"type": "variable_equals", "variable_name": "bet_parsing_status", "value": True}},
+                    {"to_step": "bet_parsing_failed", "priority": 99, "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
                 "name": "ask_for_bet_confirmation",
                 "step_type": "question",
                 "config": {
@@ -156,6 +171,17 @@ def create_betting_flow():
                 },
                 "transitions": [
                     {"to_step": "display_bet_placement_result", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "display_bet_placement_result",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "{{ flow_context.place_ticket_message }}"}
+                },
+                "transitions": [
+                    {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
             {
