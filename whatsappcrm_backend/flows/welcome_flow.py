@@ -64,7 +64,7 @@ def create_welcome_flow():
                 "name": "switch_to_registration",
                 "step_type": "action",
                 "config": {
-                    "actions_to_run": [{"action_type": "switch_flow", "target_flow_name": "User Registration"}]
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "register"}]
                 },
                 "transitions": [] # No transitions, as the flow will be switched
             },
@@ -72,7 +72,7 @@ def create_welcome_flow():
                 "name": "switch_to_betting",
                 "step_type": "action",
                 "config": {
-                    "actions_to_run": [{"action_type": "switch_flow", "target_flow_name": "Betting Flow"}]
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "bet"}]
                 },
                 "transitions": []
             },

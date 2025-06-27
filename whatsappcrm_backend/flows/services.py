@@ -291,9 +291,8 @@ class UpdateCustomerProfileConfig(BasePydanticConfig):
 
 class SwitchFlowConfig(BasePydanticConfig):
     action_type: Literal["switch_flow"] = "switch_flow"
-    target_flow_name: str
+    trigger_keyword_template: str
     initial_context_template: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    message_to_evaluate_for_new_flow: Optional[str] = None # Message body to simulate triggering the new flow
 
 class FetchFootballDataConfig(BasePydanticConfig):
     action_type: Literal["fetch_football_data"] = "fetch_football_data"
@@ -1115,14 +1114,12 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 
                 elif action_type == ActionType.SWITCH_FLOW:
                     resolved_initial_context = _resolve_value(action_item_root.initial_context_template or {}, current_step_context, contact)
-                    resolved_msg_body = _resolve_value(action_item_root.message_to_evaluate_for_new_flow, current_step_context, contact) if action_item_root.message_to_evaluate_for_new_flow else None
-                    
-                    logger.info(f"Step '{step.name}': Queuing switch to flow '{action_item_root.target_flow_name}'. Initial context: {resolved_initial_context}, Trigger message: '{resolved_msg_body}'")
+                    resolved_trigger_keyword = _resolve_value(action_item_root.trigger_keyword_template, current_step_context, contact)
+                    logger.info(f"Step '{step.name}': Queuing switch to flow via keyword '{resolved_trigger_keyword}'. Initial context: {resolved_initial_context}")
                     actions_to_perform.append({
                         'type': '_internal_command_switch_flow',
-                        'target_flow_name': action_item_root.target_flow_name,
-                        'initial_context': resolved_initial_context if isinstance(resolved_initial_context, dict) else {},
-                        'new_flow_trigger_message_body': resolved_msg_body
+                        'trigger_keyword': resolved_trigger_keyword,
+                        'initial_context': resolved_initial_context if isinstance(resolved_initial_context, dict) else {}
                     })
                     logger.debug(f"Step '{step.name}': Switch flow action encountered. Further actions in this step will be skipped.")
                     break # Stop processing further actions in this step after a flow switch command
@@ -2163,37 +2160,48 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                 logger.warning(f"Contact {contact.whatsapp_id}: Multiple switch flow commands. Redundant one (index {action_idx}) skipped.")
                 continue
 
-            target_flow_name = action.get('target_flow_name')
-            logger.info(f"Processing internal command to switch flow for contact {contact.whatsapp_id} to '{target_flow_name}'.")
+            trigger_keyword = action.get('trigger_keyword')
+            logger.info(f"Processing internal command to switch flow for contact {contact.whatsapp_id} via keyword '{trigger_keyword}'.")
             
             # Clear current state first (ensures clean slate for new flow)
-            _clear_contact_flow_state(contact, reason=f"Switching to flow {target_flow_name}")
+            _clear_contact_flow_state(contact, reason=f"Switching flow via keyword '{trigger_keyword}'")
 
             initial_context_for_new_flow = action.get('initial_context', {})
-            new_flow_trigger_msg_body = action.get('new_flow_trigger_message_body')
             
             # Simulate an incoming message to trigger the new flow using _trigger_new_flow
             synthetic_message_data = {
                 'type': 'text',
-                'text': {'body': new_flow_trigger_msg_body or f"__internal_trigger_{target_flow_name}"} # Use a unique internal trigger string
+                'text': {'body': trigger_keyword} # Use the keyword directly
             }
             
             switched_flow_actions = _trigger_new_flow(contact, synthetic_message_data, incoming_message_obj)
             
             # After _trigger_new_flow, if a new state was created, update its context
             newly_created_state_after_switch = ContactFlowState.objects.filter(contact=contact).first()
-            if newly_created_state_after_switch and initial_context_for_new_flow and isinstance(initial_context_for_new_flow, dict):
-                logger.debug(f"Applying initial context to newly switched flow state (pk={newly_created_state_after_switch.pk}). Current context: {newly_created_state_after_switch.flow_context_data}, Initial to apply: {initial_context_for_new_flow}")
-                if not isinstance(newly_created_state_after_switch.flow_context_data, dict):
-                    newly_created_state_after_switch.flow_context_data = {} # Ensure it's a dict
-                newly_created_state_after_switch.flow_context_data.update(initial_context_for_new_flow)
-                newly_created_state_after_switch.save(update_fields=['flow_context_data', 'last_updated_at'])
-                logger.info(f"Applied initial context to new flow '{target_flow_name}' state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
+            if newly_created_state_after_switch:
+                if initial_context_for_new_flow and isinstance(initial_context_for_new_flow, dict):
+                    logger.debug(f"Applying initial context to newly switched flow state (pk={newly_created_state_after_switch.pk}). Current context: {newly_created_state_after_switch.flow_context_data}, Initial to apply: {initial_context_for_new_flow}")
+                    if not isinstance(newly_created_state_after_switch.flow_context_data, dict):
+                        newly_created_state_after_switch.flow_context_data = {} # Ensure it's a dict
+                    newly_created_state_after_switch.flow_context_data.update(initial_context_for_new_flow)
+                    # Save the initial context to the newly created state before running auto-transitions
+                    # This ensures auto-transitions have access to the initial context.
+                    newly_created_state_after_switch.save(update_fields=['flow_context_data', 'last_updated_at'])
+                    logger.info(f"Applied initial context to new flow triggered by keyword '{trigger_keyword}' state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
+                
+                # Now, run automatic transitions from the new flow's entry point.
+                # This will continue executing action/send_message steps until a question or end_flow is hit.
+                logger.info(f"Running automatic transitions for newly switched flow from step '{newly_created_state_after_switch.current_step.name}'.")
+                additional_auto_actions = _process_automatic_transitions(newly_created_state_after_switch, contact)
+                switched_flow_actions.extend(additional_auto_actions) # Add these actions to the list to be returned
+            else:
+                logger.error(f"Switch flow command failed to trigger a new flow for contact {contact.whatsapp_id} with keyword '{trigger_keyword}'.")
+                switched_flow_actions.append({'type': 'send_whatsapp_message', 'message_type': 'text', 'data': {'body': 'Sorry, I could not switch to the requested section. Please try again.'}})
             
             # Only send message actions from the newly triggered flow's entry point
             final_actions_for_meta_view = [act for act in switched_flow_actions if act.get('type') == 'send_whatsapp_message']
-            processed_switch_command = True # Mark that a switch occurred
-            logger.info(f"Flow switch for {contact.whatsapp_id} to '{target_flow_name}' completed. Actions from new flow's entry point to be sent: {len(final_actions_for_meta_view)}")
+            processed_switch_command = True
+            logger.info(f"Flow switch for {contact.whatsapp_id} via keyword '{trigger_keyword}' completed. Actions from new flow to be sent: {len(final_actions_for_meta_view)}")
             break # Exit the loop, only these actions will be returned
 
         elif action_type == 'send_whatsapp_message':
