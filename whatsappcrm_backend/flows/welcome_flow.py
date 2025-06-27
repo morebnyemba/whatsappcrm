@@ -28,7 +28,7 @@ def create_welcome_flow():
                                     {
                                         "title": "Services",
                                         "rows": [
-                                            {"id": "welcome_register", "title": "Register", "description": "Create a new account"},
+                                            {"id": "welcome_register", "title": "Register (if not registered)", "description": "Create a new account"},
                                             {"id": "welcome_betting", "title": "Betting", "description": "Access betting options"},
                                             {"id": "welcome_account", "title": "Account Management", "description": "Manage your account (coming soon)"},
                                         ]
@@ -53,7 +53,7 @@ def create_welcome_flow():
                 "transitions": [
                     {"to_step": "switch_to_registration", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_register"}},
                     {"to_step": "switch_to_betting", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_betting"}},
-                    {"to_step": "show_account_management", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_account"}},
+                    {"to_step": "switch_to_account_management", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_account"}},
                     {"to_step": "show_about_us", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_about"}},
                     {"to_step": "show_support", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_support"}},
                     {"to_step": "show_developer_contact", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_developer"}},
@@ -76,13 +76,13 @@ def create_welcome_flow():
                 },
                 "transitions": []
             },
-            # --- Simple Message Steps ---
             {
-                "name": "show_account_management",
-                "step_type": "send_message",
-                "config": {"message_type": "text", "text": {"body": "Account management features are coming soon! Stay tuned."}},
-                "transitions": [{"to_step": "end_welcome_flow", "condition_config": {"type": "always_true"}}]
+                "name": "switch_to_account_management",
+                "step_type": "action",
+                "config": {"actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "account"}]},
+                "transitions": []
             },
+            # --- Simple Message Steps ---
             {
                 "name": "show_about_us",
                 "step_type": "send_message",
