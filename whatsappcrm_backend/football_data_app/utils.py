@@ -12,6 +12,9 @@ from football_data_app.models import *
 
 logger = logging.getLogger(__name__)
 
+MAX_CHARS_PER_MESSAGE_PART = 4000
+MESSAGE_PART_SEPARATOR = "\n\n---\n"
+
 def get_formatted_football_data(
     data_type: str,
     league_code: Optional[str] = None,
@@ -23,9 +26,6 @@ def get_formatted_football_data(
     This function now returns a list of strings (message parts) OR None if no data is found.
     """
     logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past})")
-
-    MAX_CHARS_PER_PART = 4000
-    PART_JOINER = "\n\n---\n"
 
     now = timezone.now()
     now_harare = timezone.localtime(now)
@@ -194,19 +194,19 @@ def get_formatted_football_data(
     # Assemble message parts
     all_message_parts: List[str] = []
     current_part_items: List[str] = []
-    current_part_length = 0
+    current_part_length = 0 # Length of content in current_part_items
     header_allowance = len(main_header) + len("\n\n")
 
     for i, item_str in enumerate(individual_item_strings):
-        separator_len = len(PART_JOINER) if current_part_items else 0
+        separator_len = len(MESSAGE_PART_SEPARATOR) if current_part_items else 0
         prospective_item_len = separator_len + len(item_str)
         current_total_prospective_len = current_part_length + prospective_item_len
 
         if not all_message_parts:
             current_total_prospective_len += header_allowance
 
-        if current_total_prospective_len > MAX_CHARS_PER_PART and current_part_items:
-            part_to_add = PART_JOINER.join(current_part_items)
+        if current_total_prospective_len > MAX_CHARS_PER_MESSAGE_PART and current_part_items:
+            part_to_add = MESSAGE_PART_SEPARATOR.join(current_part_items)
             if not all_message_parts:
                 part_to_add = main_header + "\n\n" + part_to_add
             all_message_parts.append(part_to_add)
@@ -218,13 +218,13 @@ def get_formatted_football_data(
             current_part_length += prospective_item_len
 
     if current_part_items:
-        final_part_str = PART_JOINER.join(current_part_items)
+        final_part_str = MESSAGE_PART_SEPARATOR.join(current_part_items)
         if not all_message_parts:
             final_part_str = main_header + "\n\n" + final_part_str
         all_message_parts.append(final_part_str)
 
     if all_message_parts:
-        if len(all_message_parts[-1]) + len(footer_string) <= MAX_CHARS_PER_PART:
+        if len(all_message_parts[-1]) + len(footer_string) <= MAX_CHARS_PER_MESSAGE_PART:
             all_message_parts[-1] += footer_string
         else:
             all_message_parts.append(footer_string)

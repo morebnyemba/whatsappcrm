@@ -101,9 +101,6 @@ def process_bet_ticket_submission(
                     status='PENDING'
                 )
 
-            # Deduct stake from wallet
-            user_wallet.deduct_funds(Decimal(str(stake)), f"Bet placed on ticket {bet_ticket.id}", 'BET_PLACED')
-            
             # Now, place the ticket (this will update its status to PLACED)
             bet_ticket.place_ticket()
 

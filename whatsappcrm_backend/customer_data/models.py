@@ -1,5 +1,4 @@
-# whatsappcrm_backend/customer_data/models.py
-
+# models.py
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
@@ -232,8 +231,8 @@ class BetTicket(models.Model):
 
     def settle_ticket(self):
         """Settle all bets in the ticket and update status"""
-        if self.status != 'PENDING':
-            raise ValueError("Ticket has already been settled")
+        if self.status != 'PLACED':
+            raise ValueError("Ticket is not in a PLACED state and cannot be settled.")
 
         if not self.user:
             raise ValueError("A ticket must have a user to be settled.")
@@ -245,27 +244,29 @@ class BetTicket(models.Model):
         if not all(bet.status != 'PENDING' for bet in bets):
             raise ValueError("Not all bets are settled")
         
-        if all(bet.status == 'WON' for bet in bets):
+        if all(bet.status == 'WON' for bet in bets): # All individual bets won
             self.status = 'WON'
+            # Add total potential winnings to wallet
             self.user.wallet.add_funds(self.potential_winnings, f"Won bet ticket #{self.id}", 'BET_WON')
         elif all(bet.status == 'LOST' for bet in bets):
             self.status = 'LOST'
         elif any(bet.status == 'WON' for bet in bets):
             self.status = 'PARTIAL_WIN'
             if self.bet_type == 'SINGLE':
-                winning_bet = next(bet for bet in bets if bet.status == 'WON')
-                partial_winnings = winning_bet.potential_winnings
+                # The logic here should be to sum up winnings from all WON bets
+                partial_winnings = sum(bet.potential_winnings for bet in bets if bet.status == 'WON')
             elif self.bet_type == 'MULTIPLE':
                 winning_bets = [bet for bet in bets if bet.status == 'WON']
                 partial_odds = Decimal('1.000')
                 for bet in winning_bets:
                     partial_odds *= bet.market_outcome.odds
                 partial_winnings = self.total_stake * partial_odds
-            else:  # SYSTEM
+            elif self.bet_type == 'SYSTEM':
                 winning_bets = [bet for bet in bets if bet.status == 'WON']
                 from itertools import combinations
                 partial_winnings = Decimal('0.000')
-                for r in range(2, len(winning_bets) + 1):
+                # Assuming system bets are at least 2-folds
+                for r in range(2, len(winning_bets) + 1): 
                     for combo in combinations(winning_bets, r):
                         combo_odds = Decimal('1.000')
                         for bet in combo:
@@ -273,8 +274,10 @@ class BetTicket(models.Model):
                         partial_winnings += (self.total_stake / len(bets)) * combo_odds
 
             self.user.wallet.add_funds(partial_winnings, f"Partial win on bet ticket #{self.id}", 'BET_WON')
-        elif any(bet.status == 'REFUNDED' for bet in bets):
-            self.status = 'REFUNDED'
+        
+        # If any bet is refunded, the whole ticket might be refunded or partially refunded.
+        # This logic needs to be more robust based on specific betting rules.
+        if any(bet.status == 'REFUNDED' for bet in bets) and self.status not in ['WON', 'LOST', 'PARTIAL_WIN']: 
             self.user.wallet.add_funds(self.total_stake, f"Refunded bet ticket #{self.id}", 'BET_REFUNDED')
         self.save()
         return self
