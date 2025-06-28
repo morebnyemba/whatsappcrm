@@ -6,7 +6,7 @@ def create_get_fixtures_flow():
     """
     return {
         "name": "View Football Fixtures", # Keep the name to update the existing flow
-        "description": "Shows all upcoming football fixtures from all available leagues.",
+        "description": "Shows all upcoming football fixtures and prompts for next action.",
         "trigger_keywords": ["fixtures", "matches", "view matches", "upcoming games"],
         "is_active": True,
         "steps": [
@@ -52,7 +52,7 @@ def create_get_fixtures_flow():
                     }
                 },
                 "transitions": [
-                    {"to_step": "end_fixtures_flow", "condition_config": {"type": "always_true"}}
+                    {"to_step": "ask_next_action_after_fixtures", "condition_config": {"type": "always_true"}}
                 ]
             },
             {
@@ -63,8 +63,51 @@ def create_get_fixtures_flow():
                     "text": {"body": "Sorry, no upcoming matches were found for the next 7 days. Please check back later."}
                 },
                 "transitions": [
-                    {"to_step": "end_fixtures_flow", "condition_config": {"type": "always_true"}}
+                    {"to_step": "ask_next_action_after_fixtures", "condition_config": {"type": "always_true"}}
                 ]
+            },
+            {
+                "name": "ask_next_action_after_fixtures",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "What would you like to do next?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "fixtures_start_betting", "title": "Start Betting"}},
+                                    {"type": "reply", "reply": {"id": "fixtures_main_menu", "title": "Main Menu"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "fixtures_next_action",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "switch_to_betting", "condition_config": {"type": "interactive_reply_id_equals", "value": "fixtures_start_betting"}},
+                    {"to_step": "switch_to_main_menu", "condition_config": {"type": "interactive_reply_id_equals", "value": "fixtures_main_menu"}}
+                ]
+            },
+            {
+                "name": "switch_to_betting",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "bet"}]
+                },
+                "transitions": []
+            },
+            {
+                "name": "switch_to_main_menu",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "menu"}]
+                },
+                "transitions": []
             },
             {
                 "name": "end_fixtures_flow",
