@@ -28,17 +28,17 @@ def create_welcome_flow():
                                     {
                                         "title": "Services",
                                         "rows": [
-                                            {"id": "welcome_register", "title": "Register (New Users)", "description": "Create a new account"},
-                                            {"id": "welcome_betting", "title": "Betting", "description": "Access betting options"},
-                                            {"id": "welcome_account", "title": "Account Management", "description": "Manage your account (coming soon)"},
+                                            {"id": "welcome_register", "title": "Register (New Users)", "description": "Sign up for a new BetBlitz account"},
+                                            {"id": "welcome_betting", "title": "Betting", "description": "Explore matches, odds, and place your bets"},
+                                            {"id": "welcome_account", "title": "Account Management", "description": "Manage your funds, deposits, and withdrawals"},
                                         ]
                                     },
                                     {
                                         "title": "Information",
                                         "rows": [
-                                            {"id": "welcome_about", "title": "About Us", "description": "Learn more about BetBlitz"},
-                                            {"id": "welcome_support", "title": "Support", "description": "Get help or contact support"},
-                                            {"id": "welcome_developer", "title": "Contact Developer", "description": "Get developer contact info"},
+                                            {"id": "welcome_about", "title": "About Us", "description": "Discover our mission and what we offer"},
+                                            {"id": "welcome_support", "title": "Support", "description": "Find answers or connect with our support team"},
+                                            {"id": "welcome_developer", "title": "Contact Developer", "description": "Information for technical inquiries or feedback"},
                                         ]
                                     }
                                 ]
