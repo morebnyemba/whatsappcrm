@@ -41,6 +41,7 @@ def create_betting_flow():
                                     {
                                         "title": "Betting Options",
                                         "rows": [
+                                            {"id": "bet_view_matches", "title": "View Matches & Odds", "description": "See upcoming matches and their odds"},
                                             {"id": "bet_view_results", "title": "View Results", "description": "See results for finished matches"},
                                             {"id": "bet_place_text", "title": "Place Bet (Text)", "description": "Place a bet using text commands"},
                                             {"id": "bet_view_single_ticket", "title": "View Ticket by ID", "description": "View details of a specific ticket"},
@@ -57,11 +58,21 @@ def create_betting_flow():
                     }
                 },
                 "transitions": [
+                    {"to_step": "switch_to_get_fixtures", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_matches"}},
                     {"to_step": "ask_league_for_results", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_results"}},
                     {"to_step": "ask_for_bet_string", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_place_text"}},
                     {"to_step": "ask_for_ticket_id", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_single_ticket"}},
                     {"to_step": "fetch_wallet_balance", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_check_balance"}},
                 ]
+            },
+            # --- Switch to Get Fixtures Flow ---
+            {
+                "name": "switch_to_get_fixtures",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "fixtures"}]
+                },
+                "transitions": []
             },
             # --- Path 1: View Results ---
             {
