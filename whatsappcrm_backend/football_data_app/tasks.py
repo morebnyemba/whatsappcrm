@@ -39,11 +39,11 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
         api_bookmaker_key=bookmaker_data['key'],
         defaults={'name': bookmaker_data['title']}
     )
-    
+
     for market_data in bookmaker_data.get('markets', []):
         market_key = market_data['key']
         category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
-        
+
         # Since old markets are cleared by the calling task, we can simply create new ones.
         market = Market.objects.create(
             fixture=fixture,
@@ -52,11 +52,11 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
             category=category,
             last_updated_odds_api=parser.isoparse(market_data['last_update'])
         )
-            
+
         outcomes_to_create = [
             MarketOutcome(
-                market=market, 
-                outcome_name=o['name'], 
+                market=market,
+                outcome_name=o['name'],
                 odds=Decimal(str(o['price'])),
                 point_value=o.get('point')
             )
@@ -94,7 +94,7 @@ def fetch_and_update_leagues_task(self, _=None):
             return []
 
         logger.info(f"Step 1: Received {len(sports_data_from_api)} items from /sports endpoint.")
-        
+
         processed_league_ids = []
         soccer_leagues_found_count = 0
 
@@ -119,7 +119,7 @@ def fetch_and_update_leagues_task(self, _=None):
                         'active': True
                     })
                 processed_league_ids.append(league_obj.id)
-        
+
         logger.info(f"Step 1: Found {soccer_leagues_found_count} soccer leagues from API data. Processed and returning {len(processed_league_ids)} league IDs.")
         return processed_league_ids
     except TheOddsAPIException as e:
@@ -165,10 +165,10 @@ def fetch_events_for_league_task(self, league_id: int):
         league = League.objects.get(id=league_id) # Ensure league exists
         client = TheOddsAPIClient()
         # Fetch events for the configured lead time to align with odds fetching
-        events_data = client.get_events(sport_key=league.api_id, days_from_now=ODDS_LEAD_TIME_DAYS) 
-        
+        events_data = client.get_events(sport_key=league.api_id, days_from_now=ODDS_LEAD_TIME_DAYS)
+
         logger.info(f"[EventFetch] API returned {len(events_data) if events_data else 0} events for league ID: {league_id} (using API Key for league: {league.api_id})")
-        
+
         if events_data: # Only proceed if there's data
             with transaction.atomic():
                 for item in events_data:
@@ -185,7 +185,7 @@ def fetch_events_for_league_task(self, league_id: int):
                         }
                     )
                     events_processed_count += 1
-        
+
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
         logger.info(f"[EventFetch] SUCCESS - Processed {events_processed_count} events for league ID: {league_id}")
@@ -196,10 +196,10 @@ def fetch_events_for_league_task(self, league_id: int):
     except TheOddsAPIException as e:
         logger.error(f"[EventFetch] FAILED - API error fetching events for league {league_id} (API Key: {league.api_id if 'league' in locals() else 'N/A'}): {e}", exc_info=True)
         # Let Celery handle retry based on task decorator
-        raise self.retry(exc=e) 
+        raise self.retry(exc=e)
     except Exception as e:
         logger.error(f"[EventFetch] FAILED - Unexpected error fetching events for league {league_id}: {e}", exc_info=True)
-        # For unexpected errors, return an error status. 
+        # For unexpected errors, return an error status.
         # Consider if retry is appropriate or if it should fail fast.
         return {"league_id": league_id, "status": "error", "message": str(e)}
 
@@ -214,17 +214,17 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     )
     if results_from_event_fetches:
         logger.debug(f"Step 3: Sample of results_from_event_fetches: {str(results_from_event_fetches)[:500]}")
-    
+
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
-    
+
     # Get a list of fixture IDs that need an odds update.
     fixture_ids_to_update = FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))
     ).values_list('id', flat=True)
- 
+
     if not fixture_ids_to_update:
         logger.info("No fixtures require an odds update at this time.")
         return
@@ -275,16 +275,16 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
         with transaction.atomic():
             # Re-fetch fixture with lock to prevent race conditions during update
             fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
-            
+
             # Get a list of bookmaker keys present in the new API data
             bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
-            
+
             # Delete markets for this fixture from bookmakers that are in the API response.
             # This ensures we are replacing their data with the latest, without touching
             # data from other bookmakers not in this specific API response.
             if bookmaker_keys_in_response:
                 deleted_count, _ = Market.objects.filter(
-                    fixture=fixture_for_update, 
+                    fixture=fixture_for_update,
                     bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response
                 ).delete()
                 logger.debug(
@@ -294,7 +294,7 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 
             for bookmaker_data in odds_data.get('bookmakers', []):
                 _process_bookmaker_data(fixture_for_update, bookmaker_data)
-            
+
             fixture_for_update.last_odds_update = timezone.now()
             fixture_for_update.save(update_fields=['last_odds_update'])
             logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}.")
@@ -356,6 +356,7 @@ def fetch_scores_for_league_task(self, league_id: int):
             logger.info(f"The Odds API returned no score data for the {fixtures_to_check.count()} fixtures checked in league {league_id}.")
             return
         
+        # ======================= START: CORRECTED BLOCK =======================
         for score_item in scores_data:
             with transaction.atomic():
                 fixture = FootballFixture.objects.select_for_update().get(api_id=score_item['id'])
@@ -363,38 +364,39 @@ def fetch_scores_for_league_task(self, league_id: int):
                     continue
 
                 logger.info(f"Processing score for fixture {fixture.api_id}, current status: {fixture.status}")
-                logger.info(f"API commence_time: {score_item.get('commence_time')}, fixture match_date: {fixture.match_date}, now: {now}")
 
+                # --- Universal Score Parsing Logic ---
+                home_s, away_s = None, None
+                api_home_team_name = score_item.get('home_team')
+                api_away_team_name = score_item.get('away_team')
 
+                if score_item.get('scores') and api_home_team_name and api_away_team_name:
+                    for score in score_item['scores']:
+                        if score['name'] == api_home_team_name:
+                            home_s = score['score']
+                        elif score['name'] == api_away_team_name:
+                            away_s = score['score']
+                
+                # Update scores regardless of completion status, keeping existing score if new one is None
+                fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
+                fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
+                # --- End Universal Score Parsing Logic ---
+
+                # Now, handle status update and save
                 if score_item.get('completed', False):
-                    # Use the team names from the score item itself for robust matching
-                    home_s, away_s = None, None
-                    api_home_team_name = score_item.get('home_team')
-                    api_away_team_name = score_item.get('away_team')
-
-                    if score_item.get('scores') and api_home_team_name and api_away_team_name:
-                        for score in score_item['scores']:
-                            if score['name'] == api_home_team_name:
-                                home_s = score['score']
-                            elif score['name'] == api_away_team_name:
-                                away_s = score['score']
-                    else:
-                        logger.warning(
-                            f"Score data for fixture {fixture.api_id} is missing 'scores' array or team names. "
-                            f"API Response (snippet): {str(score_item)[:200]}"
-                        )
-
-                    fixture.home_team_score = int(home_s) if home_s is not None else None
-                    fixture.away_team_score = int(away_s) if away_s is not None else None
                     fixture.status = FootballFixture.FixtureStatus.FINISHED
-                    fixture.save()
-                    logger.info(f"Fixture {fixture.id} marked as FINISHED. Triggering settlement.")
+                    fixture.last_score_update = timezone.now()
+                    fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                    logger.info(f"Fixture {fixture.id} marked as FINISHED. Final Score: {home_s}-{away_s}. Triggering settlement.")
                     settle_fixture_pipeline_task.delay(fixture.id)
                 else:
-                    if fixture.status == FootballFixture.FixtureStatus.SCHEDULED and parser.isoparse(score_item['commence_time']) <= now:
-                        fixture.status = FootballFixture.FixtureStatus.LIVE
-                        fixture.save()
-                        logger.info(f"Fixture {fixture.id} marked as LIVE.")
+                    # For live games, update status if needed and save everything
+                    fixture.status = FootballFixture.FixtureStatus.LIVE
+                    fixture.last_score_update = timezone.now()
+                    fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                    logger.info(f"Fixture {fixture.id} is LIVE. Score Updated: {home_s}-{away_s}.")
+        # ======================= END: CORRECTED BLOCK =======================
+
     except League.DoesNotExist:
         logger.error(f"League {league_id} not found for score update.")
     except TheOddsAPIException as e:
@@ -429,7 +431,7 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
             )
             # Abort the chain for this fixture. The error is logged for visibility.
             return
-            
+
         home_score, away_score = fixture.home_team_score, fixture.away_team_score
         outcomes_to_update = []
         for market in fixture.markets.prefetch_related('outcomes'):
@@ -452,11 +454,11 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
                     if ((outcome.outcome_name == 'Yes' and home_score > 0 and away_score > 0) or
                         (outcome.outcome_name == 'No' and not (home_score > 0 and away_score > 0))):
                         new_status = 'WON'
-                
+
                 if new_status != 'PENDING':
                     outcome.result_status = new_status
                     outcomes_to_update.append(outcome)
-        
+
         if outcomes_to_update:
             MarketOutcome.objects.bulk_update(outcomes_to_update, ['result_status'])
         logger.info(f"Settled {len(outcomes_to_update)} outcomes for fixture {fixture_id}.")
@@ -486,7 +488,7 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
         if bets_to_update:
             Bet.objects.bulk_update(bets_to_update, ['status'])
             logger.info(f"Settled {len(bets_to_update)} bets for fixture {fixture_id}.")
-                
+
         return fixture_id
     except Exception as e:
         logger.exception(f"Error settling bets for fixture {fixture_id}")
@@ -501,7 +503,7 @@ def settle_tickets_for_fixture_task(self, fixture_id: int):
         ticket_ids = BetTicket.objects.filter(
             bets__market_outcome__market__fixture_id=fixture_id # Updated field name
         ).distinct().values_list('id', flat=True)
-        
+
         for ticket_id in ticket_ids:
             ticket = BetTicket.objects.prefetch_related('bets').get(id=ticket_id)
             if ticket.status == 'PENDING' and not ticket.bets.filter(status='PENDING').exists():
