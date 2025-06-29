@@ -355,35 +355,44 @@ def fetch_scores_for_league_task(self, league_id: int):
         if not scores_data:
             logger.info(f"The Odds API returned no score data for the {fixtures_to_check.count()} fixtures checked in league {league_id}.")
             return
-        
+
         # ======================= START: CORRECTED BLOCK =======================
         for score_item in scores_data:
             with transaction.atomic():
                 fixture = FootballFixture.objects.select_for_update().get(api_id=score_item['id'])
                 if fixture.status == FootballFixture.FixtureStatus.FINISHED:
                     continue
-
                 logger.info(f"Processing score for fixture {fixture.api_id}, current status: {fixture.status}")
-
                 # --- Universal Score Parsing Logic ---
                 home_s, away_s = None, None
                 api_home_team_name = score_item.get('home_team')
                 api_away_team_name = score_item.get('away_team')
-
+                # --- Check for Assumed Completion ---
+                if (
+                    fixture.status == FootballFixture.FixtureStatus.SCHEDULED
+                    and fixture.match_date < now
+                    and fixture.match_date < assumed_end_time_cutoff
+                ):
+                    # If the match started over ASSUMED_COMPLETION_MINUTES ago and is still SCHEDULED,
+                    # assume it's finished even without a score update, and set to 0-0.
+                    # We still trigger settlement because we need to handle this case and it's better than leaving it open.
+                    fixture.status = FootballFixture.FixtureStatus.FINISHED
+                    fixture.home_team_score = 0  # Assume 0-0 if no score available
+                    fixture.away_team_score = 0
+                    logger.warning(f"Assuming completion for fixture {fixture.id} due to time elapsed. Setting score to 0-0.")
                 if score_item.get('scores') and api_home_team_name and api_away_team_name:
                     for score in score_item['scores']:
                         if score['name'] == api_home_team_name:
                             home_s = score['score']
                         elif score['name'] == api_away_team_name:
                             away_s = score['score']
-                
                 # Update scores regardless of completion status, keeping existing score if new one is None
-                fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
-                fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
+                if fixture.status != FootballFixture.FixtureStatus.FINISHED:  # Don't update scores if we've already assumed completion
+                    fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
+                    fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
                 # --- End Universal Score Parsing Logic ---
-
-                # Now, handle status update and save
-                if score_item.get('completed', False):
+                # Now, handle status update and save, ensuring we don't overwrite assumed completion
+                if fixture.status != FootballFixture.FixtureStatus.FINISHED and score_item.get('completed', False):
                     fixture.status = FootballFixture.FixtureStatus.FINISHED
                     fixture.last_score_update = timezone.now()
                     fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
@@ -395,8 +404,6 @@ def fetch_scores_for_league_task(self, league_id: int):
                     fixture.last_score_update = timezone.now()
                     fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
                     logger.info(f"Fixture {fixture.id} is LIVE. Score Updated: {home_s}-{away_s}.")
-        # ======================= END: CORRECTED BLOCK =======================
-
     except League.DoesNotExist:
         logger.error(f"League {league_id} not found for score update.")
     except TheOddsAPIException as e:
