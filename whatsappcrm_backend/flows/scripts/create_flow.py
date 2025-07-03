@@ -69,6 +69,7 @@ def run():
         ('flows.welcome_flow', 'create_welcome_flow'),
         ('flows.account_management_flow', 'create_account_management_flow'),
         ('flows.get_fixtures_flow', 'create_get_fixtures_flow'),
+        ('flows.view_results_flow', 'create_view_results_flow'),
         ('flows.deposit_flow', 'create_deposit_flow'),
         ('flows.registration_flow', 'create_registration_flow'),
         ('flows.withdrawal_flow', 'create_withdrawal_flow'),

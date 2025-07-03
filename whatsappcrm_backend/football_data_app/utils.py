@@ -305,9 +305,11 @@ def parse_betting_string(betting_string: str) -> dict:
                 # 3. BTTS (Both Teams To Score) matching e.g., "btts yes", "gg"
                 if not found_outcome:
                     btts_text = option_text.lower().replace(" ", "")
-                    if btts_text in ['bttsyes', 'gg', 'yes']:
+                    # REMOVED 'yes' and 'no' to avoid ambiguity with other markets.
+                    # User should be more specific, e.g., "btts yes" or "gg".
+                    if btts_text in ['bttsyes', 'gg']:
                         outcome_name_to_find = 'Yes'
-                    elif btts_text in ['bttsno', 'ng', 'no']:
+                    elif btts_text in ['bttsno', 'ng']:
                         outcome_name_to_find = 'No'
                     else:
                         outcome_name_to_find = None

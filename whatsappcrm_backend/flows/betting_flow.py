@@ -59,7 +59,7 @@ def create_betting_flow():
                 },
                 "transitions": [
                     {"to_step": "switch_to_get_fixtures", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_matches"}},
-                    {"to_step": "ask_league_for_results", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_results"}},
+                    {"to_step": "switch_to_view_results", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_results"}},
                     {"to_step": "ask_for_bet_string", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_place_text"}},
                     {"to_step": "ask_for_ticket_id", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_view_single_ticket"}},
                     {"to_step": "fetch_wallet_balance", "condition_config": {"type": "interactive_reply_id_equals", "value": "bet_check_balance"}},
@@ -74,43 +74,14 @@ def create_betting_flow():
                 },
                 "transitions": []
             },
-            # --- Path 1: View Results ---
+            # --- NEW: Switch to View Results Flow ---
             {
-                "name": "ask_league_for_results",
-                "step_type": "question",
-                "config": {
-                    "message_config": {"message_type": "text", "text": {"body": "Enter a league code (e.g., 'epl', 'laliga') or type 'all' to see recent results from all available leagues."}},
-                    "reply_config": {"save_to_variable": "selected_league_code", "expected_type": "text"}
-                },
-                "transitions": [
-                    {"to_step": "fetch_results", "condition_config": {"type": "question_reply_is_valid", "value": True}}
-                ]
-            },
-            {
-                "name": "fetch_results",
+                "name": "switch_to_view_results",
                 "step_type": "action",
                 "config": {
-                    "actions_to_run": [{
-                        "action_type": "handle_betting_action",
-                        "betting_action": "view_results",
-                        "league_code_template": "{{ flow_context.selected_league_code }}"
-                    }]
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "results"}]
                 },
-                "transitions": [
-                    {"to_step": "display_results", "condition_config": {"type": "variable_equals", "variable_name": "view_results_status", "value": True}},
-                    {"to_step": "betting_action_failed", "condition_config": {"type": "always_true"}}
-                ]
-            },
-            {
-                "name": "display_results",
-                "step_type": "send_message",
-                "config": {
-                    "message_type": "text",
-                    "text": {"body": "{{ flow_context.view_results_message }}"}
-                },
-                "transitions": [
-                    {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
-                ]
+                "transitions": []
             },
             # --- Path 3: View Single Ticket by ID ---
             {
