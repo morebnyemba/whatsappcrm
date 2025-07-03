@@ -1,7 +1,11 @@
 # whatsappcrm_backend/customer_data/admin.py
 from django.contrib import admin, messages
+from django.db import transaction
+from django.utils import timezone
 from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet, PendingWithdrawal
 from .utils import process_manual_deposit_approval, process_withdrawal_approval
+from football_data_app.models import FootballFixture
+from football_data_app.tasks import settle_fixture_pipeline_task
 
 @admin.register(CustomerProfile)
 class CustomerProfileAdmin(admin.ModelAdmin):
@@ -160,6 +164,42 @@ class BetTicketAdmin(admin.ModelAdmin):
     raw_id_fields = ('user',)
     inlines = [BetInline]
     readonly_fields = ('created_at', 'updated_at', 'potential_winnings', 'total_odds')
+    actions = ['force_settle_tickets']
+    list_select_related = ('user',)
+
+    @admin.action(description="Force settle selected PENDING tickets")
+    def force_settle_tickets(self, request, queryset):
+        pending_tickets = queryset.filter(status='PENDING')
+        fixtures_to_settle_ids = set()
+
+        # Find all unique fixtures linked to the pending bets in the selected tickets
+        fixtures = FootballFixture.objects.filter(
+            markets__outcomes__bets__ticket__in=pending_tickets,
+            markets__outcomes__bets__status='PENDING'
+        ).distinct()
+
+        settled_fixture_count = 0
+        with transaction.atomic():
+            for fixture in fixtures:
+                if fixture.status != FootballFixture.FixtureStatus.FINISHED:
+                    fixture.status = FootballFixture.FixtureStatus.FINISHED
+                    if fixture.home_team_score is None: fixture.home_team_score = 0
+                    if fixture.away_team_score is None: fixture.away_team_score = 0
+                    fixture.last_score_update = timezone.now()
+                    fixture.save(update_fields=['status', 'home_team_score', 'away_team_score', 'last_score_update'])
+                    settled_fixture_count += 1
+                fixtures_to_settle_ids.add(fixture.id)
+
+        for fixture_id in fixtures_to_settle_ids:
+            settle_fixture_pipeline_task.delay(fixture_id)
+
+        if settled_fixture_count > 0:
+            self.message_user(request, f"Forced {settled_fixture_count} fixtures to FINISHED status.")
+        
+        if fixtures_to_settle_ids:
+            self.message_user(request, f"Dispatched settlement pipelines for {len(fixtures_to_settle_ids)} unique fixtures. Check Celery logs for progress.")
+        else:
+            self.message_user(request, "No pending bets found in the selected tickets, or their fixtures are already settled.", level=messages.WARNING)
 
 @admin.register(Bet)
 class BetAdmin(admin.ModelAdmin):
