@@ -324,93 +324,110 @@ def run_score_and_settlement_task():
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id: int):
-    """Fetches scores for a league and updates fixture statuses (Live/Finished)."""
-    logger.info(f"Fetching scores for league ID: {league_id}")
+    """
+    Fetches scores for a league, updates fixture statuses (Live/Finished),
+    and marks overdue matches as finished.
+    """
+    logger.info(f"[Scores] START - Fetching scores for league ID: {league_id}")
     now = timezone.now()
-    # We only check for scores on scheduled matches that started recently
-    # to avoid checking very old, stuck fixtures.
-    assumed_end_time_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
+    # Cutoff time for when a match is assumed to be completed if no API data is available.
+    assumed_completion_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
+
     try:
         league = League.objects.get(id=league_id)
-        fixtures_to_check = FootballFixture.objects.filter(
+
+        # Get all fixtures that are potentially in-play or recently finished.
+        # This includes LIVE matches and SCHEDULED matches that should have started.
+        fixtures_to_check_qs = FootballFixture.objects.filter(
             league=league
         ).filter(
-            # Condition 1: The fixture is already marked as LIVE.
             models.Q(status=FootballFixture.FixtureStatus.LIVE) |
-            # Condition 2: The fixture is SCHEDULED, its start time is in the past,
-            # but not so far in the past that it's definitely over.
             models.Q(
                 status=FootballFixture.FixtureStatus.SCHEDULED,
-                match_date__lt=now, # It should have started
-                match_date__gt=assumed_end_time_cutoff # But it started recently enough to still be in-play
+                match_date__lt=now  # Match should have started
             )
-        ).values_list('api_id', flat=True)
+        )
 
-        if not fixtures_to_check.exists():
-            logger.info(f"No fixtures need a score update for league ID: {league_id}.")
+        if not fixtures_to_check_qs.exists():
+            logger.info(f"[Scores] No fixtures need a score update for league ID: {league_id}.")
             return
+
+        fixture_api_ids_to_check = list(fixtures_to_check_qs.values_list('api_id', flat=True))
+        logger.info(f"[Scores] Checking {len(fixture_api_ids_to_check)} fixtures for league {league_id}.")
 
         client = TheOddsAPIClient()
-        scores_data = client.get_scores(sport_key=league.api_id, event_ids=list(fixtures_to_check))
-        if not scores_data:
-            logger.info(f"The Odds API returned no score data for the {fixtures_to_check.count()} fixtures checked in league {league_id}.")
-            return
+        scores_data = client.get_scores(sport_key=league.api_id, event_ids=fixture_api_ids_to_check)
 
-        # ======================= START: CORRECTED BLOCK =======================
-        for score_item in scores_data:
-            with transaction.atomic():
-                fixture = FootballFixture.objects.select_for_update().get(api_id=score_item['id'])
-                if fixture.status == FootballFixture.FixtureStatus.FINISHED:
-                    continue
-                logger.info(f"Processing score for fixture {fixture.api_id}, current status: {fixture.status}")
-                # --- Universal Score Parsing Logic ---
-                home_s, away_s = None, None
-                api_home_team_name = score_item.get('home_team')
-                api_away_team_name = score_item.get('away_team')
-                # --- Check for Assumed Completion ---
-                if (
-                    fixture.status == FootballFixture.FixtureStatus.SCHEDULED
-                    and fixture.match_date < now
-                    and fixture.match_date < assumed_end_time_cutoff
-                ):
-                    # If the match started over ASSUMED_COMPLETION_MINUTES ago and is still SCHEDULED,
-                    # assume it's finished even without a score update, and set to 0-0.
-                    # We still trigger settlement because we need to handle this case and it's better than leaving it open.
-                    fixture.status = FootballFixture.FixtureStatus.FINISHED
-                    fixture.home_team_score = 0  # Assume 0-0 if no score available
-                    fixture.away_team_score = 0
-                    logger.warning(f"Assuming completion for fixture {fixture.id} due to time elapsed. Setting score to 0-0.")
-                if score_item.get('scores') and api_home_team_name and api_away_team_name:
-                    for score in score_item['scores']:
-                        if score['name'] == api_home_team_name:
-                            home_s = score['score']
-                        elif score['name'] == api_away_team_name:
-                            away_s = score['score']
-                # Update scores regardless of completion status, keeping existing score if new one is None
-                if fixture.status != FootballFixture.FixtureStatus.FINISHED:  # Don't update scores if we've already assumed completion
-                    fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
-                    fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
-                # --- End Universal Score Parsing Logic ---
-                # Now, handle status update and save, ensuring we don't overwrite assumed completion
-                if fixture.status != FootballFixture.FixtureStatus.FINISHED and score_item.get('completed', False):
-                    fixture.status = FootballFixture.FixtureStatus.FINISHED
-                    fixture.last_score_update = timezone.now()
-                    fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
-                    logger.info(f"Fixture {fixture.id} marked as FINISHED. Final Score: {home_s}-{away_s}. Triggering settlement.")
+        processed_api_ids = set()
+
+        if not scores_data:
+            logger.info(f"[Scores] The Odds API returned no score data for league {league_id}. Proceeding to check for overdue fixtures.")
+        else:
+            for score_item in scores_data:
+                processed_api_ids.add(score_item['id'])
+                try:
+                    with transaction.atomic():
+                        fixture = FootballFixture.objects.select_for_update().get(api_id=score_item['id'])
+                        if fixture.status == FootballFixture.FixtureStatus.FINISHED:
+                            continue
+
+                        home_s, away_s = None, None
+                        if score_item.get('scores'):
+                            for score in score_item['scores']:
+                                if score['name'] == score_item.get('home_team'): home_s = score['score']
+                                elif score['name'] == score_item.get('away_team'): away_s = score['score']
+
+                        fixture.home_team_score = int(home_s) if home_s is not None else fixture.home_team_score
+                        fixture.away_team_score = int(away_s) if away_s is not None else fixture.away_team_score
+                        fixture.last_score_update = timezone.now()
+
+                        if score_item.get('completed', False):
+                            fixture.status = FootballFixture.FixtureStatus.FINISHED
+                            fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                            logger.info(f"[Scores] Fixture {fixture.id} marked as FINISHED by API. Final Score: {home_s}-{away_s}. Triggering settlement.")
+                            settle_fixture_pipeline_task.delay(fixture.id)
+                        else:
+                            fixture.status = FootballFixture.FixtureStatus.LIVE
+                            fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                            logger.info(f"[Scores] Fixture {fixture.id} is LIVE. Score Updated: {home_s}-{away_s}.")
+                except FootballFixture.DoesNotExist:
+                    logger.warning(f"[Scores] Received score data for an unknown fixture API ID: {score_item['id']}. Skipping.")
+
+        # --- Time-based Fallback Logic ---
+        # Check for any fixtures that we queried but did not get a response for.
+        unprocessed_fixtures = fixtures_to_check_qs.exclude(api_id__in=processed_api_ids)
+
+        for fixture in unprocessed_fixtures:
+            # If a fixture is past its assumed completion time, mark it as finished.
+            if fixture.match_date < assumed_completion_cutoff:
+                with transaction.atomic():
+                    fixture_to_finish = FootballFixture.objects.select_for_update().get(id=fixture.id)
+                    # Double-check status to avoid race conditions
+                    if fixture_to_finish.status == FootballFixture.FixtureStatus.FINISHED:
+                        continue
+
+                    # If scores are missing, default to 0-0 to allow settlement.
+                    if fixture_to_finish.home_team_score is None:
+                        fixture_to_finish.home_team_score = 0
+                    if fixture_to_finish.away_team_score is None:
+                        fixture_to_finish.away_team_score = 0
+
+                    fixture_to_finish.status = FootballFixture.FixtureStatus.FINISHED
+                    fixture_to_finish.last_score_update = timezone.now()
+                    fixture_to_finish.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                    logger.warning(
+                        f"[Scores] Fixture {fixture.id} was not in API response and is past assumed completion time. "
+                        f"Marking as FINISHED. Score: {fixture_to_finish.home_team_score}-{fixture_to_finish.away_team_score}. Triggering settlement."
+                    )
                     settle_fixture_pipeline_task.delay(fixture.id)
-                else:
-                    # For live games, update status if needed and save everything
-                    fixture.status = FootballFixture.FixtureStatus.LIVE
-                    fixture.last_score_update = timezone.now()
-                    fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
-                    logger.info(f"Fixture {fixture.id} is LIVE. Score Updated: {home_s}-{away_s}.")
+
     except League.DoesNotExist:
-        logger.error(f"League {league_id} not found for score update.")
+        logger.error(f"[Scores] League {league_id} not found for score update.")
     except TheOddsAPIException as e:
         if e.status_code == 401:
-            logger.warning(f"API key has insufficient quota. Aborting scores fetch for league {league_id}.")
+            logger.warning(f"[Scores] API key has insufficient quota. Aborting scores fetch for league {league_id}.")
             return
-        logger.exception(f"API error fetching scores for league {league_id}: {e}")
+        logger.exception(f"[Scores] API error fetching scores for league {league_id}: {e}")
         raise self.retry(exc=e)
 
 @shared_task(name="football_data_app.settle_fixture_pipeline")
@@ -461,6 +478,33 @@ def settle_outcomes_for_fixture_task(self, fixture_id):
                     if ((outcome.outcome_name == 'Yes' and home_score > 0 and away_score > 0) or
                         (outcome.outcome_name == 'No' and not (home_score > 0 and away_score > 0))):
                         new_status = 'WON'
+                elif market.api_market_key in ['spreads', 'asian_handicap'] and hasattr(outcome, 'point_value') and outcome.point_value is not None:
+                    # Handicap (Spreads) logic
+                    point = outcome.point_value
+                    if outcome.outcome_name == fixture.home_team.name:
+                        # Handicap on home team
+                        if home_score + point > away_score:
+                            new_status = 'WON'
+                        elif home_score + point == away_score:
+                            new_status = 'PUSH'
+                    elif outcome.outcome_name == fixture.away_team.name:
+                        # Handicap on away team
+                        if away_score + point > home_score:
+                            new_status = 'WON'
+                        elif away_score + point == home_score:
+                            new_status = 'PUSH'
+                elif market.api_market_key in ['exact_score', 'correct_score']:
+                    # Correct Score logic
+                    try:
+                        # Assumes score format is "HomeScore-AwayScore", e.g., "2-1"
+                        predicted_scores = outcome.outcome_name.split('-')
+                        if len(predicted_scores) == 2:
+                            predicted_home = int(predicted_scores[0])
+                            predicted_away = int(predicted_scores[1])
+                            if home_score == predicted_home and away_score == predicted_away:
+                                new_status = 'WON'
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Could not parse correct score outcome '{outcome.outcome_name}' for fixture {fixture.id}: {e}")
 
                 if new_status != 'PENDING':
                     outcome.result_status = new_status
