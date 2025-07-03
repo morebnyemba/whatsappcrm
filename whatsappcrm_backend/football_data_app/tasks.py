@@ -320,14 +320,46 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 def reconcile_and_settle_pending_items_task(self):
     """
     A periodic task to find and settle any bets or tickets that might have been missed
-    by the event-driven settlement pipeline. This acts as a robust cleanup mechanism.
+    by the event-driven settlement pipeline. It also force-settles "stuck" fixtures.
 
     This task should be scheduled to run periodically (e.g., every 5-10 minutes)
     using a scheduler like Celery Beat.
     """
     logger.info("[Reconciliation] START - Running reconciliation and settlement task.")
 
-    # --- Step 1: Settle individual bets ---
+    # --- Step 0: Find and force-settle stuck fixtures with pending bets ---
+    now = timezone.now()
+    stuck_fixture_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
+
+    stuck_fixtures_qs = FootballFixture.objects.filter(
+        markets__outcomes__bets__status='PENDING'
+    ).filter(
+        status__in=[FootballFixture.FixtureStatus.SCHEDULED, FootballFixture.FixtureStatus.LIVE],
+        match_date__lt=stuck_fixture_cutoff
+    ).distinct()
+
+    stuck_fixtures_triggered_count = 0
+    if stuck_fixtures_qs.exists():
+        logger.warning(f"[Reconciliation] Found {stuck_fixtures_qs.count()} stuck fixtures with pending bets. Forcing settlement check.")
+        for fixture in stuck_fixtures_qs:
+            with transaction.atomic():
+                fixture_to_settle = FootballFixture.objects.select_for_update().get(id=fixture.id)
+                if fixture_to_settle.status not in [FootballFixture.FixtureStatus.SCHEDULED, FootballFixture.FixtureStatus.LIVE]:
+                    continue
+
+                logger.warning(f"[Reconciliation] Force-settling stuck fixture ID: {fixture.id} ({fixture_to_settle}).")
+                if fixture_to_settle.home_team_score is None:
+                    fixture_to_settle.home_team_score = 0
+                if fixture_to_settle.away_team_score is None:
+                    fixture_to_settle.away_team_score = 0
+                
+                fixture_to_settle.status = FootballFixture.FixtureStatus.FINISHED
+                fixture_to_settle.save(update_fields=['status', 'home_team_score', 'away_team_score'])
+                
+                settle_fixture_pipeline_task.delay(fixture_to_settle.id)
+                stuck_fixtures_triggered_count += 1
+
+    # --- Step 1: Settle individual bets whose outcomes are now resolved ---
     # Find all pending bets whose outcomes are already settled.
     bets_to_settle_qs = Bet.objects.filter(
         status='PENDING',
@@ -340,23 +372,23 @@ def reconcile_and_settle_pending_items_task(self):
 
     bets_updated_count = 0
     if bets_to_settle_qs.exists():
-        bets_to_update_list = []
-        for bet in bets_to_settle_qs:
-            bet.status = bet.market_outcome.result_status
-            bets_to_update_list.append(bet)
-        
-        if bets_to_update_list:
-            Bet.objects.bulk_update(bets_to_update_list, ['status'])
-            bets_updated_count = len(bets_to_update_list)
-            logger.info(f"[Reconciliation] Settled {bets_updated_count} individual bets whose outcomes were resolved.")
+        with transaction.atomic():
+            bets_to_update_list = []
+            for bet in bets_to_settle_qs:
+                bet.status = bet.market_outcome.result_status
+                bets_to_update_list.append(bet)
+            
+            if bets_to_update_list:
+                Bet.objects.bulk_update(bets_to_update_list, ['status'])
+                bets_updated_count = len(bets_to_update_list)
+                logger.info(f"[Reconciliation] Settled {bets_updated_count} individual bets whose outcomes were resolved.")
 
-    # --- Step 2: Settle bet tickets and trigger notifications ---
+    # --- Step 2: Settle bet tickets that are now fully resolved ---
     # Find all pending tickets and check if they are now fully resolved.
     tickets_to_check = BetTicket.objects.filter(status='PENDING').prefetch_related('bets')
 
     tickets_settled_count = 0
     if tickets_to_check.exists():
-        logger.info(f"[Reconciliation] Checking {tickets_to_check.count()} pending tickets for settlement.")
         for ticket in tickets_to_check:
             has_pending_bets = any(bet.status == 'PENDING' for bet in ticket.bets.all())
 
@@ -364,11 +396,8 @@ def reconcile_and_settle_pending_items_task(self):
                 ticket.settle_ticket()
                 send_bet_ticket_settlement_notification_task.delay(ticket.id)
                 tickets_settled_count += 1
-    
-    if tickets_settled_count > 0:
-        logger.info(f"[Reconciliation] Settled and triggered notifications for {tickets_settled_count} bet tickets that became fully resolved.")
 
-    logger.info(f"[Reconciliation] FINISHED - Bets updated: {bets_updated_count}, Tickets settled: {tickets_settled_count}.")
+    logger.info(f"[Reconciliation] FINISHED - Stuck Fixtures Triggered: {stuck_fixtures_triggered_count}, Bets updated: {bets_updated_count}, Tickets settled: {tickets_settled_count}.")
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
 
