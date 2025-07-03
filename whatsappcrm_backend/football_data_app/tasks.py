@@ -548,17 +548,31 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
 @shared_task(bind=True)
 def settle_tickets_for_fixture_task(self, fixture_id: int):
     """Settles bet tickets based on bet statuses."""
-    if not fixture_id: return
+    if not fixture_id:
+        return
     logger.info(f"Settling tickets for fixture ID: {fixture_id}")
     try:
-        ticket_ids = BetTicket.objects.filter(
-            bets__market_outcome__market__fixture_id=fixture_id # Updated field name
-        ).distinct().values_list('id', flat=True)
+        # Find all PENDING tickets that contain a bet related to the just-finished fixture.
+        # We prefetch all related bets to avoid N+1 queries inside the loop.
+        # This is much more efficient than the previous implementation.
+        tickets_to_check = BetTicket.objects.filter(
+            status='PENDING',
+            bets__market_outcome__market__fixture_id=fixture_id
+        ).distinct().prefetch_related('bets')
 
-        for ticket_id in ticket_ids:
-            ticket = BetTicket.objects.prefetch_related('bets').get(id=ticket_id)
-            if ticket.status == 'PENDING' and not ticket.bets.filter(status='PENDING').exists():
+        tickets_settled_count = 0
+        for ticket in tickets_to_check:
+            # Using the prefetched data, check if any bets on this ticket are still pending.
+            # This check is now done efficiently in Python memory, not with a new DB query.
+            has_pending_bets = any(bet.status == 'PENDING' for bet in ticket.bets.all())
+
+            # If no bets are pending, the entire ticket can be settled.
+            if not has_pending_bets:
                 ticket.settle_ticket()
+                tickets_settled_count += 1
+
+        if tickets_settled_count > 0:
+            logger.info(f"Successfully settled {tickets_settled_count} tickets related to fixture {fixture_id}.")
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}")
         raise self.retry(exc=e)
