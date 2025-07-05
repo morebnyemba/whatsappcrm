@@ -59,15 +59,21 @@ def process_bet_ticket_submission(
                 }
 
             # Fetch and validate MarketOutcomes
-            valid_outcomes = []
+            int_market_outcome_ids = [int(i) for i in market_outcome_ids]
+            valid_outcomes = list(MarketOutcome.objects.filter(id__in=int_market_outcome_ids).select_related(
+                'market__fixture__home_team',
+                'market__fixture__away_team',
+                'market__category'
+            ))
+
+            if len(valid_outcomes) != len(int_market_outcome_ids):
+                found_ids = {str(o.id) for o in valid_outcomes}
+                missing_ids = [i for i in market_outcome_ids if i not in found_ids]
+                return {"success": False, "message": f"Invalid or unavailable market outcome IDs found: {', '.join(missing_ids)}"}
+
             total_odds = Decimal('1.0')
-            for outcome_id in market_outcome_ids:
-                try:
-                    outcome = MarketOutcome.objects.get(id=int(outcome_id))
-                    valid_outcomes.append(outcome)
-                    total_odds *= outcome.odds
-                except MarketOutcome.DoesNotExist:
-                    return {"success": False, "message": f"Invalid market outcome ID found: {outcome_id}"}
+            for outcome in valid_outcomes:
+                total_odds *= outcome.odds
 
             if not valid_outcomes:
                 return {"success": False, "message": "No valid market outcomes to place a bet."}
@@ -110,9 +116,26 @@ def process_bet_ticket_submission(
             # after the deduction made inside place_ticket().
             user_wallet.refresh_from_db()
 
+            # Build the detailed success message, not truncated
+            success_message = f"✅ Ticket #{bet_ticket.id} placed successfully!\n\n"
+            success_message += f"Stake: ${float(bet_ticket.total_stake):.2f}\n"
+            success_message += f"Potential Winnings: ${float(bet_ticket.potential_winnings):.2f}\n"
+            success_message += "-------------------\n\n"
+            success_message += "*Your Selections:*\n"
+
+            # The `valid_outcomes` list already has the prefetched data
+            for outcome in valid_outcomes:
+                fixture = outcome.market.fixture
+                fixture_name = f"{fixture.home_team.name} vs {fixture.away_team.name}"
+                success_message += f"  - Match: {fixture_name}\n"
+                success_message += f"    Selection: {outcome.outcome_name} ({outcome.market.category.name})\n"
+                success_message += f"    Odds: {float(outcome.odds):.2f}\n\n"
+
+            success_message += f"Your new balance is: ${float(user_wallet.balance):.2f}"
+
             return {
                 "success": True,
-                "message": f"Betting ticket (ID: {bet_ticket.id}) successfully placed. Potential winnings: {float(potential_winnings):.2f}. New balance: {float(user_wallet.balance):.2f}.",
+                "message": success_message,
                 "ticket_id": str(bet_ticket.id),
                 "potential_winnings": float(potential_winnings),
                 "new_balance": float(user_wallet.balance)
