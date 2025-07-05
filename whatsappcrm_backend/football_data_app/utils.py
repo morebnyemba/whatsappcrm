@@ -65,9 +65,12 @@ def get_formatted_football_data(
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} fixtures (scheduled & live).")
 
         def format_match_time(fixture):  
-            if fixture.status == FootballFixture.FixtureStatus.LIVE:  
-                return "LIVE"  
-            else:  
+            if fixture.status == FootballFixture.FixtureStatus.LIVE:
+                # Calculate elapsed time in minutes
+                elapsed_time = timezone.now() - fixture.match_date
+                minutes = int(elapsed_time.total_seconds() // 60)
+                return f"LIVE ({minutes}')" # e.g., LIVE (45')
+            else:
                 match_time_local = timezone.localtime(fixture.match_date)  
                 return match_time_local.strftime('%a, %b %d - %I:%M %p')
 
@@ -76,7 +79,12 @@ def get_formatted_football_data(
 
             line = f"\n🏆 *{fixture.league.name}* (ID: {fixture.id})"
             line += f"\n🗓️ {time_str}"
-            line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}" # Access name from related Team objects
+            
+            # Add score for live matches
+            if fixture.status == FootballFixture.FixtureStatus.LIVE and fixture.home_team_score is not None:
+                line += f"\n{fixture.home_team.name} *{fixture.home_team_score} - {fixture.away_team_score}* {fixture.away_team.name}"
+            else:
+                line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}"
 
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             for market in fixture.markets.all():
