@@ -89,16 +89,16 @@ def process_bet_ticket_submission(
 
             # Create individual Bets for the ticket
             for outcome in valid_outcomes:
-                # The amount for a single bet is the full stake. For a multiple, the
-                # existing logic divides it, which is more like a system bet. We'll
-                # follow this for now to fix the immediate error, but it's a point for review.
-                bet_amount = Decimal(str(stake)) if bet_type == 'SINGLE' else Decimal(str(stake)) / len(valid_outcomes)
+                # For both SINGLE and MULTIPLE, the amount on the bet leg can be considered the full stake.
+                # The potential winnings of the leg is based on its own odds. The ticket's potential
+                # winnings will be based on the combined odds.
+                bet_amount = Decimal(str(stake))
                 potential_winnings_for_bet = bet_amount * outcome.odds
 
                 Bet.objects.create(
                     ticket=bet_ticket,
                     market_outcome=outcome,
-                    amount=bet_amount,
+                    amount=bet_amount, # Use the full stake
                     potential_winnings=potential_winnings_for_bet, # Provide the value here
                     status='PENDING'
                 )

@@ -151,14 +151,13 @@ class BetTicket(models.Model):
     """
     BetTicket model to group multiple bets together.
     """
-    TICKET_STATUS = [
-        ('PLACED', 'Placed'),
-        ('PENDING', 'Pending'),
-        ('WON', 'Won'),
-        ('LOST', 'Lost'),
-        ('PARTIAL_WIN', 'Partial Win'),
-        ('REFUNDED', 'Refunded'),
-    ]
+    class TicketStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        PLACED = 'PLACED', 'Placed'
+        WON = 'WON', 'Won'
+        LOST = 'LOST', 'Lost'
+        PARTIAL_WIN = 'PARTIAL_WIN', 'Partial Win' # For system bets, not used in current logic
+        REFUNDED = 'REFUNDED', 'Refunded'
 
     BET_TYPES = [
         ('SINGLE', 'Single Bet'),
@@ -169,7 +168,7 @@ class BetTicket(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bet_tickets',null=True,blank=True	)
     total_stake = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
-    status = models.CharField(max_length=20, choices=TICKET_STATUS, default='PENDING')
+    status = models.CharField(max_length=20, choices=TicketStatus.choices, default=TicketStatus.PENDING)
     bet_type = models.CharField(max_length=20, choices=BET_TYPES, default='SINGLE')
     total_odds = models.DecimalField(max_digits=10, decimal_places=3, default=Decimal('1.000'))
     created_at = models.DateTimeField(auto_now_add=True)
@@ -192,19 +191,7 @@ class BetTicket(models.Model):
             for bet in bets:
                 total_odds *= bet.market_outcome.odds
             return total_odds
-        elif self.bet_type == 'SYSTEM':
-            total_odds = Decimal('0.000')
-            bet_odds = [bet.market_outcome.odds for bet in bets]
-            
-            from itertools import combinations
-            for r in range(2, len(bet_odds) + 1):
-                for combo in combinations(bet_odds, r):
-                    combo_odds = Decimal('1.000')
-                    for odds in combo:
-                        combo_odds *= odds
-                    total_odds += combo_odds
-            
-            return total_odds
+        # System bet logic would be more complex and is omitted for now.
 
     def calculate_potential_winnings(self):
         """Calculate total potential winnings for all bets in the ticket"""
@@ -225,60 +212,46 @@ class BetTicket(models.Model):
         
         for bet in self.bets.all():
             bet.place_bet()
-        self.status = 'PLACED' # Update status after placing
+        self.status = self.TicketStatus.PLACED # Update status after placing
         self.save()
         return self
 
     def settle_ticket(self):
-        """Settle all bets in the ticket and update status"""
-        if self.status != 'PLACED':
-            raise ValueError("Ticket is not in a PLACED state and cannot be settled.")
+        """Settle the ticket based on the outcomes of its bets."""
+        if self.status not in [self.TicketStatus.PLACED, self.TicketStatus.PENDING]:
+            raise ValueError(f"Ticket is not in a settlable state (current: {self.status}).")
 
         if not self.user:
             raise ValueError("A ticket must have a user to be settled.")
 
         bets = self.bets.select_related('market_outcome').all()
         if not bets:
-            raise ValueError("No bets found in ticket")
+            raise ValueError("Cannot settle a ticket with no bets.")
         
-        if not all(bet.status != 'PENDING' for bet in bets):
-            raise ValueError("Not all bets are settled")
-        
-        if all(bet.status == 'WON' for bet in bets): # All individual bets won
-            self.status = 'WON'
-            # Add total potential winnings to wallet
-            self.user.wallet.add_funds(self.potential_winnings, f"Won bet ticket #{self.id}", 'BET_WON')
-        elif all(bet.status == 'LOST' for bet in bets):
-            self.status = 'LOST'
-        elif any(bet.status == 'WON' for bet in bets):
-            self.status = 'PARTIAL_WIN'
-            if self.bet_type == 'SINGLE':
-                # The logic here should be to sum up winnings from all WON bets
-                partial_winnings = sum(bet.potential_winnings for bet in bets if bet.status == 'WON')
-            elif self.bet_type == 'MULTIPLE':
-                winning_bets = [bet for bet in bets if bet.status == 'WON']
-                partial_odds = Decimal('1.000')
-                for bet in winning_bets:
-                    partial_odds *= bet.market_outcome.odds
-                partial_winnings = self.total_stake * partial_odds
-            elif self.bet_type == 'SYSTEM':
-                winning_bets = [bet for bet in bets if bet.status == 'WON']
-                from itertools import combinations
-                partial_winnings = Decimal('0.000')
-                # Assuming system bets are at least 2-folds
-                for r in range(2, len(winning_bets) + 1): 
-                    for combo in combinations(winning_bets, r):
-                        combo_odds = Decimal('1.000')
-                        for bet in combo:
-                            combo_odds *= bet.market_outcome.odds
-                        partial_winnings += (self.total_stake / len(bets)) * combo_odds
+        if any(bet.status == Bet.BetStatus.PENDING for bet in bets):
+            raise ValueError("Not all bets in the ticket are settled yet.")
 
-            self.user.wallet.add_funds(partial_winnings, f"Partial win on bet ticket #{self.id}", 'BET_WON')
-        
-        # If any bet is refunded, the whole ticket might be refunded or partially refunded.
-        # This logic needs to be more robust based on specific betting rules.
-        if any(bet.status == 'REFUNDED' for bet in bets) and self.status not in ['WON', 'LOST', 'PARTIAL_WIN']: 
+        # For MULTIPLE or SINGLE bets, one loss means the whole ticket is lost.
+        if any(b.status == Bet.BetStatus.LOST for b in bets):
+            self.status = self.TicketStatus.LOST
+            self.save()
+            return self
+
+        # If we reach here, no bets are LOST. They are either WON or PUSH.
+        final_odds = Decimal('1.0')
+        for bet in bets:
+            if bet.status == Bet.BetStatus.WON:
+                final_odds *= bet.market_outcome.odds
+            # For PUSH, we do nothing, as multiplying by 1.0 is the default.
+
+        if final_odds > Decimal('1.0'):
+            self.status = self.TicketStatus.WON
+            winnings = self.total_stake * final_odds
+            self.user.wallet.add_funds(winnings, f"Won bet ticket #{self.id}", 'BET_WON')
+        else: # This happens if all bets were PUSH, resulting in odds of 1.0
+            self.status = self.TicketStatus.REFUNDED
             self.user.wallet.add_funds(self.total_stake, f"Refunded bet ticket #{self.id}", 'BET_REFUNDED')
+
         self.save()
         return self
 
@@ -289,18 +262,18 @@ class Bet(models.Model):
     """
     Bet model to track individual bets on market outcomes.
     """
-    BET_STATUS = [
-        ('PENDING', 'Pending'),
-        ('WON', 'Won'),
-        ('LOST', 'Lost'),
-        ('REFUNDED', 'Refunded'),
-    ]
+    class BetStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        WON = 'WON', 'Won'
+        LOST = 'LOST', 'Lost'
+        PUSH = 'REFUNDED', 'Refunded' # Renamed from REFUNDED to PUSH for clarity
+
 
     ticket = models.ForeignKey(BetTicket, on_delete=models.CASCADE, related_name='bets')
     market_outcome = models.ForeignKey('football_data_app.MarketOutcome', on_delete=models.CASCADE, related_name='bets')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20, choices=BET_STATUS, default='PENDING')
+    status = models.CharField(max_length=20, choices=BetStatus.choices, default=BetStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
