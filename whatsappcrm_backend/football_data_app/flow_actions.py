@@ -31,7 +31,7 @@ def handle_football_betting_action(
     raw_bet_string: str = None, # For place_ticket and parse_and_confirm_ticket
     league_code: Optional[str] = None,
     days_ahead: int = 10,
-    days_past: int = 2,
+    days_past: int = 4,
     **kwargs
 ) -> dict:
     """
