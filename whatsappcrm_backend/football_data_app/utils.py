@@ -19,7 +19,7 @@ def get_formatted_football_data(
     data_type: str,
     league_code: Optional[str] = None,
     days_ahead: int = 10,
-    days_past: int = 2
+    days_past: int = 4
 ) -> Optional[List[str]]: # MODIFIED: Return type can now be None
     """
     Fetches and formats football data for display.
@@ -43,13 +43,13 @@ def get_formatted_football_data(
         end_date = now + timedelta(days=days_ahead)
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
         # Use FootballFixture.FixtureStatus.SCHEDULED and match_date
-        fixtures_qs = FootballFixture.objects.filter(
-            status=FootballFixture.FixtureStatus.SCHEDULED,
-            match_date__gte=start_date,
-            match_date__lte=end_date
-        ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            'markets__outcomes'
+        fixtures_qs = FootballFixture.objects.filter(  
+            Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
+            Q(status=FootballFixture.FixtureStatus.LIVE)  
+        ).select_related('home_team', 'away_team', 'league').prefetch_related(  
+            'markets__outcomes'  
         ).order_by('match_date')
+
 
         if league_code:
             logger.debug(f"Filtering scheduled fixtures by league_code: {league_code}.")
@@ -62,11 +62,17 @@ def get_formatted_football_data(
             return None
 
         num_fixtures_to_display = 40
-        logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} scheduled fixtures.")
+        logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} fixtures (scheduled & live).")
+
+        def format_match_time(fixture):  
+            if fixture.status == FootballFixture.FixtureStatus.LIVE:  
+                return "LIVE"  
+            else:  
+                match_time_local = timezone.localtime(fixture.match_date)  
+                return match_time_local.strftime('%a, %b %d - %I:%M %p')
 
         for fixture in fixtures_qs[:num_fixtures_to_display]:
-            match_time_local = timezone.localtime(fixture.match_date) # Use match_date
-            time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
+            time_str = format_match_time(fixture)
 
             line = f"\n🏆 *{fixture.league.name}* (ID: {fixture.id})"
             line += f"\n🗓️ {time_str}"
