@@ -60,7 +60,7 @@ INSTALLED_APPS = [
     'flows.apps.FlowsConfig',
     'customer_data.apps.CustomerDataConfig',
     "paynow_integration",# Ensure this is added if you have a Paynow integration app
-    "refferals",
+    "referals",
 ]
 
 MIDDLEWARE = [
