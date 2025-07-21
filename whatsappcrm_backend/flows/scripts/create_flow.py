@@ -74,6 +74,7 @@ def run():
         ('flows.registration_flow', 'create_registration_flow'),
         ('flows.withdrawal_flow', 'create_withdrawal_flow'),
         ('flows.betting_flow', 'create_betting_flow'),
+        ('referrals.flows', 'create_referral_flow'), # Add the referral flow
     ]
 
     with transaction.atomic():
