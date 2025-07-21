@@ -19,7 +19,7 @@ from paynow_integration.services import PaynowService # Import the new service
 # Conditional import for the new referrals app
 REFERRALS_ENABLED = False
 try:
-    from referrals.utils import link_referral, apply_referral_bonus
+    from referrals.utils import link_referral, check_and_apply_first_deposit_bonus
     REFERRALS_ENABLED = True
 except ImportError:
     pass
@@ -490,6 +490,11 @@ def process_paynow_ipn(ipn_data: Dict[str, Any]) -> dict:
                     transaction_reference=internal_ref,
                     currency_symbol="$" # Pass the currency symbol
                 )
+
+                # Check for and apply first deposit referral bonus
+                if REFERRALS_ENABLED:
+                    check_and_apply_first_deposit_bonus(user=wallet.user)
+
             elif status.lower() in ['cancelled', 'failed', 'disputed']:
                 pending_tx.status = 'CANCELLED' if status.lower() == 'cancelled' else 'FAILED'
                 pending_tx.description = f"Paynow transaction status: {status}. Paynow Ref: {paynow_ref}"
@@ -540,6 +545,11 @@ def process_manual_deposit_approval(transaction_reference: str) -> dict:
                 transaction_reference=transaction_reference,
                 currency_symbol="$" # Assuming default currency symbol
             )
+
+            # Check for and apply first deposit referral bonus
+            if REFERRALS_ENABLED:
+                check_and_apply_first_deposit_bonus(user=wallet.user)
+
             return {"success": True, "message": f"Manual deposit {transaction_reference} approved successfully."}
 
     except WalletTransaction.DoesNotExist:

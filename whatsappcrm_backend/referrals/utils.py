@@ -6,7 +6,8 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 
 from .models import ReferralProfile
-from customer_data.models import UserWallet # We need the wallet to apply the bonus
+from customer_data.models import UserWallet, WalletTransaction
+from .tasks import send_bonus_notification_task
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -49,18 +50,60 @@ def link_referral(new_user: User, referral_code: str):
 def apply_referral_bonus(new_user: User):
     """
     Applies a referral bonus to the new user and the referrer.
-    This can be called after a specific action, e.g., first deposit.
+    This is an internal function called by check_and_apply_first_deposit_bonus.
     """
     profile = get_or_create_referral_profile(new_user)
     if not profile.referred_by or profile.referral_bonus_applied:
         return {"success": False, "message": "No referrer or bonus already applied."}
 
+    referrer_user = profile.referred_by
+
     with transaction.atomic():
         # Use the add_funds method from UserWallet for proper transaction logging
-        new_user.wallet.add_funds(REFERRAL_BONUS_AMOUNT, description=f"Referral bonus from {profile.referred_by.username}", transaction_type='BONUS')
-        profile.referred_by.wallet.add_funds(REFERRAL_BONUS_AMOUNT, description=f"Referral bonus for referring {new_user.username}", transaction_type='BONUS')
+        new_user.wallet.add_funds(REFERRAL_BONUS_AMOUNT, description=f"Referral bonus from {referrer_user.username}", transaction_type='BONUS')
+        referrer_user.wallet.add_funds(REFERRAL_BONUS_AMOUNT, description=f"Referral bonus for referring {new_user.username}", transaction_type='BONUS')
+        
         profile.referral_bonus_applied = True
         profile.save(update_fields=['referral_bonus_applied'])
 
-    logger.info(f"Applied referral bonus of {REFERRAL_BONUS_AMOUNT} to {new_user.username} and referrer {profile.referred_by.username}")
+    logger.info(f"Applied referral bonus of {REFERRAL_BONUS_AMOUNT} to {new_user.username} and referrer {referrer_user.username}")
+
+    # Send notifications via Celery tasks
+    new_user_message = f"🎉 Congratulations! You've received a ${REFERRAL_BONUS_AMOUNT:.2f} referral bonus from your friend {referrer_user.username}!"
+    send_bonus_notification_task.delay(user_id=new_user.id, message=new_user_message)
+
+    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit. You've received a ${REFERRAL_BONUS_AMOUNT:.2f} referral bonus!"
+    send_bonus_notification_task.delay(user_id=referrer_user.id, message=referrer_message)
+
     return {"success": True, "message": f"Successfully applied a ${REFERRAL_BONUS_AMOUNT} bonus to you and your friend!"}
+
+def check_and_apply_first_deposit_bonus(user: User):
+    """
+    Checks if a user is eligible for a first-deposit referral bonus and applies it.
+    This should be called after any successful deposit transaction is completed.
+    """
+    try:
+        profile = get_or_create_referral_profile(user)
+
+        # Condition 1: User must have been referred by someone.
+        if not profile.referred_by:
+            return
+
+        # Condition 2: The bonus must not have been applied already.
+        if profile.referral_bonus_applied:
+            return
+
+        # Condition 3: This must be the user's first completed deposit.
+        # We check if there is exactly one completed deposit transaction for this user.
+        completed_deposits_count = WalletTransaction.objects.filter(
+            wallet__user=user,
+            transaction_type='DEPOSIT',
+            status='COMPLETED'
+        ).count()
+
+        if completed_deposits_count == 1:
+            logger.info(f"User {user.username} has made their first deposit. Applying referral bonus.")
+            apply_referral_bonus(user)
+
+    except Exception as e:
+        logger.error(f"Error in check_and_apply_first_deposit_bonus for user {user.username}: {e}", exc_info=True)

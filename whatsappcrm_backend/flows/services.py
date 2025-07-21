@@ -59,7 +59,7 @@ except ImportError as e:
 # Conditional import for the new referrals app
 REFERRALS_ENABLED = False
 try:
-    from referrals.utils import get_or_create_referral_profile, apply_referral_bonus
+    from referrals.utils import get_or_create_referral_profile
     REFERRALS_ENABLED = True
 except ImportError:
     logger.warning("referrals app not found or could not be imported. Referral actions will not work.")
@@ -283,7 +283,6 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     PERFORM_WITHDRAWAL = "perform_withdrawal"
     HANDLE_BETTING_ACTION = "handle_betting_action"
     GENERATE_REFERRAL_CODE = "generate_referral_code"
-    APPLY_REFERRAL_BONUS = "apply_referral_bonus"
 
 class SetContextVariableConfig(BasePydanticConfig):
     action_type: Literal["set_context_variable"] = "set_context_variable"
@@ -359,10 +358,6 @@ class GenerateReferralCodeConfig(BasePydanticConfig):
     action_type: Literal["generate_referral_code"] = "generate_referral_code"
     output_variable_name: str
 
-class ApplyReferralBonusConfig(BasePydanticConfig):
-    action_type: Literal["apply_referral_bonus"] = "apply_referral_bonus"
-    # The action will apply the bonus to the current contact's profile
-
 
 # This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
@@ -379,8 +374,7 @@ class ActionItem(BaseModel):
         PerformDepositConfig,
         PerformWithdrawalConfig,
         HandleBettingActionConfig,
-        GenerateReferralCodeConfig,
-        ApplyReferralBonusConfig
+        GenerateReferralCodeConfig
     ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
@@ -1367,20 +1361,6 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                             logger.error(f"Step '{step.name}': Cannot generate referral code, no User linked to CustomerProfile for contact {contact.id}.")
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot generate referral code, CustomerProfile does not exist for contact {contact.id}.")
-
-                elif action_type == ActionType.APPLY_REFERRAL_BONUS:
-                    if not REFERRALS_ENABLED:
-                        logger.error(f"Step '{step.name}': 'apply_referral_bonus' action called, but referrals app not available.")
-                        continue
-                    try:
-                        user = contact.customerprofile.user
-                        if user:
-                            result = apply_referral_bonus(user)
-                            current_step_context['referral_bonus_status'] = result['success']
-                            current_step_context['referral_bonus_message'] = result['message']
-                            logger.info(f"Applied referral bonus for user {user.username}. Success: {result['success']}")
-                    except (CustomerProfile.DoesNotExist, CustomerProfile.user.RelatedObjectDoesNotExist):
-                        logger.error(f"Step '{step.name}': Cannot apply referral bonus, no User/CustomerProfile for contact {contact.id}.")
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:
