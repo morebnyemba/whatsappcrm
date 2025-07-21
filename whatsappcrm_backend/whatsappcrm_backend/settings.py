@@ -59,7 +59,7 @@ INSTALLED_APPS = [
     'conversations.apps.ConversationsConfig',
     'flows.apps.FlowsConfig',
     'customer_data.apps.CustomerDataConfig',
-    "paynow_integration"# Ensure this is added if you have a Paynow integration app
+    "paynow_integration",# Ensure this is added if you have a Paynow integration app
     "refferals",
 ]
 
