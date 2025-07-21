@@ -27,7 +27,7 @@ def create_referral_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "generate_and_send_code",
+                        "to_step": "generate_code",
                         "priority": 1,
                         "condition_config": {
                             "type": "variable_exists",
@@ -42,22 +42,26 @@ def create_referral_flow():
                 ]
             },
             {
-                "name": "generate_and_send_code",
+                "name": "generate_code",
                 "step_type": "action",
                 "config": {
                     "actions_to_run": [
                         {
                             "action_type": "generate_referral_code",
                             "output_variable_name": "referral_code"
-                        },
-                        {
-                            "action_type": "send_message",
-                            "message_type": "text",
-                            "text": {
-                                "body": "Share your referral code with friends! When they sign up and make their first deposit, you both get a bonus!\n\nYour code: *{{ flow_context.referral_code }}*\n\nShare this message:\nHey! I'm using this awesome WhatsApp betting app. Sign up with my code *{{ flow_context.referral_code }}* and we both get a bonus! 🎉"
-                            }
                         }
                     ]
+                },
+                "transitions": [{"to_step": "send_code_message", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "send_code_message",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "Share your referral code with friends! When they sign up and make their first deposit, you both get a bonus!\n\nYour code: *{{ flow_context.referral_code }}*\n\nShare this message:\nHey! I'm using this awesome WhatsApp betting app. Sign up with my code *{{ flow_context.referral_code }}* and we both get a bonus! 🎉"
+                    }
                 },
                 "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
             },
