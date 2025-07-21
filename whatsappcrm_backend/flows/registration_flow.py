@@ -329,13 +329,69 @@ def create_registration_flow() -> Dict[str, Any]:
                 },
                 "transitions": [
                     {
+                        "to_step": "ask_if_has_referral_code",
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # --- NEW: Referral Code Path ---
+            {
+                "name": "ask_if_has_referral_code",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "Do you have a referral code?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "has_referral_yes", "title": "Yes, I have a code"}},
+                                    {"type": "reply", "reply": {"id": "has_referral_no", "title": "No, continue"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "has_referral_response",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "ask_for_referral_code", "condition_config": {"type": "interactive_reply_id_equals", "value": "has_referral_yes"}},
+                    {"to_step": "create_account_step", "condition_config": {"type": "interactive_reply_id_equals", "value": "has_referral_no"}}
+                ]
+            },
+            {
+                "name": "ask_for_referral_code",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "text",
+                        "text": {"body": "Great! Please enter the referral code:"}
+                    },
+                    "reply_config": {
+                        "save_to_variable": "provided_referral_code",
+                        "expected_type": "text"
+                    },
+                    "fallback_config": {
+                        "max_retries": 1,
+                        "re_prompt_message_text": "Please enter the code you received.",
+                        "action_after_max_retries": "end_flow",
+                        "end_flow_message_text": "Let's continue for now. You can contact support later to add a referral code."
+                    }
+                },
+                "transitions": [
+                    {
                         "to_step": "create_account_step",
                         "priority": 1,
                         "condition_config": {"type": "always_true"}
                     }
                 ]
             },
-            # 12. Create the account (convergence point)
+            # --- End Referral Code Path ---
+            # 12. Create the account (convergence point for all paths)
             {
                 "name": "create_account_step",
                 "step_type": "action",
@@ -345,7 +401,8 @@ def create_registration_flow() -> Dict[str, Any]:
                             "action_type": "create_account",
                             "email_template": "{{ flow_context.provided_email }}",
                             "first_name_template": "{{ flow_context.provided_first_name }}",
-                            "last_name_template": "{{ flow_context.provided_last_name }}"
+                            "last_name_template": "{{ flow_context.provided_last_name }}",
+                            "referral_code_template": "{{ flow_context.provided_referral_code }}"
                         }
                     ]
                 },
