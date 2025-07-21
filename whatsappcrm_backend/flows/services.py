@@ -56,6 +56,14 @@ try:
 except ImportError as e:
     logger.warning(f"customer_data.utils could not be imported. Account/Wallet actions will not work. Error: {e}")
 
+# Conditional import for the new referrals app
+REFERRALS_ENABLED = False
+try:
+    from referrals.utils import get_or_create_referral_profile, apply_referral_bonus
+    REFERRALS_ENABLED = True
+except ImportError:
+    logger.warning("referrals app not found or could not be imported. Referral actions will not work.")
+
 
 # --- Pydantic Models ---
 class BasePydanticConfig(BaseModel):
@@ -274,6 +282,8 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     PERFORM_DEPOSIT = "perform_deposit"
     PERFORM_WITHDRAWAL = "perform_withdrawal"
     HANDLE_BETTING_ACTION = "handle_betting_action"
+    GENERATE_REFERRAL_CODE = "generate_referral_code"
+    APPLY_REFERRAL_BONUS = "apply_referral_bonus"
 
 class SetContextVariableConfig(BasePydanticConfig):
     action_type: Literal["set_context_variable"] = "set_context_variable"
@@ -308,6 +318,7 @@ class CreateAccountConfig(BasePydanticConfig):
     first_name_template: Optional[str] = None
     last_name_template: Optional[str] = None
     acquisition_source_template: Optional[str] = "WhatsApp Flow"
+    referral_code_template: Optional[str] = None # For linking to a referrer
     initial_balance: float = 0.0
 
 class PerformDepositConfig(BasePydanticConfig):
@@ -344,6 +355,14 @@ class HandleBettingActionConfig(BasePydanticConfig):
     days_past: Optional[int] = Field(default=2) # For view_results
     days_ahead: Optional[int] = Field(default=7) # For view_matches
 
+class GenerateReferralCodeConfig(BasePydanticConfig):
+    action_type: Literal["generate_referral_code"] = "generate_referral_code"
+    output_variable_name: str
+
+class ApplyReferralBonusConfig(BasePydanticConfig):
+    action_type: Literal["apply_referral_bonus"] = "apply_referral_bonus"
+    # The action will apply the bonus to the current contact's profile
+
 
 # This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
@@ -359,7 +378,9 @@ class ActionItem(BaseModel):
         CreateAccountConfig,
         PerformDepositConfig,
         PerformWithdrawalConfig,
-        HandleBettingActionConfig
+        HandleBettingActionConfig,
+        GenerateReferralCodeConfig,
+        ApplyReferralBonusConfig
     ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
@@ -1161,6 +1182,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     first_name = _resolve_value(action_item_root.first_name_template, current_step_context, contact) if hasattr(action_item_root, 'first_name_template') else None
                     last_name = _resolve_value(action_item_root.last_name_template, current_step_context, contact) if hasattr(action_item_root, 'last_name_template') else None
                     acquisition_source = _resolve_value(action_item_root.acquisition_source_template, current_step_context, contact) if hasattr(action_item_root, 'acquisition_source_template') else None
+                    referral_code = _resolve_value(action_item_root.referral_code_template, current_step_context, contact) if hasattr(action_item_root, 'referral_code_template') else None
                     initial_balance = action_item_root.initial_balance if hasattr(action_item_root, 'initial_balance') else 0.0
 
                     result = customer_data_utils.create_or_get_customer_account(
@@ -1170,7 +1192,8 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         first_name=first_name,
                         last_name=last_name,
                         acquisition_source=acquisition_source,
-                        initial_balance=initial_balance
+                        initial_balance=initial_balance,
+                        referral_code=referral_code # Pass the code to the util function
                     )
                     current_step_context['account_creation_status'] = result['success']
                     current_step_context['account_creation_message'] = result['message']
@@ -1328,6 +1351,36 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         logger.info(f"Betting action '{action_item_root.betting_action}' successful for {contact.whatsapp_id}.")
                     else:
                         logger.error(f"Betting action '{action_item_root.betting_action}' failed for {contact.whatsapp_id}: {result['message']}")
+
+                elif action_type == ActionType.GENERATE_REFERRAL_CODE:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'generate_referral_code' action called, but referrals app not available.")
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            referral_profile = get_or_create_referral_profile(user)
+                            code = referral_profile.referral_code
+                            current_step_context[action_item_root.output_variable_name] = code
+                            logger.info(f"Generated and saved referral code '{code}' to context variable '{action_item_root.output_variable_name}'.")
+                        else:
+                            logger.error(f"Step '{step.name}': Cannot generate referral code, no User linked to CustomerProfile for contact {contact.id}.")
+                    except CustomerProfile.DoesNotExist:
+                        logger.error(f"Step '{step.name}': Cannot generate referral code, CustomerProfile does not exist for contact {contact.id}.")
+
+                elif action_type == ActionType.APPLY_REFERRAL_BONUS:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'apply_referral_bonus' action called, but referrals app not available.")
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            result = apply_referral_bonus(user)
+                            current_step_context['referral_bonus_status'] = result['success']
+                            current_step_context['referral_bonus_message'] = result['message']
+                            logger.info(f"Applied referral bonus for user {user.username}. Success: {result['success']}")
+                    except (CustomerProfile.DoesNotExist, CustomerProfile.user.RelatedObjectDoesNotExist):
+                        logger.error(f"Step '{step.name}': Cannot apply referral bonus, no User/CustomerProfile for contact {contact.id}.")
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:

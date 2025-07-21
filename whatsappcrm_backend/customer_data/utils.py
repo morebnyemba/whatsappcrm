@@ -16,6 +16,14 @@ from typing import Optional, Dict, Any
 
 from paynow_integration.services import PaynowService # Import the new service
 
+# Conditional import for the new referrals app
+REFERRALS_ENABLED = False
+try:
+    from referrals.utils import link_referral, apply_referral_bonus
+    REFERRALS_ENABLED = True
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
@@ -46,7 +54,8 @@ def create_or_get_customer_account(
     first_name: str = None,
     last_name: str = None,
     acquisition_source: str = None,
-    initial_balance: float = 0.0
+    initial_balance: float = 0.0,
+    referral_code: str = None # Add referral_code parameter
 ) -> dict:
     """
     Creates or retrieves a Contact, CustomerProfile, and UserWallet.
@@ -60,6 +69,7 @@ def create_or_get_customer_account(
         last_name (str, optional): Last name for CustomerProfile. Defaults to None.
         acquisition_source (str, optional): How the customer was acquired. Defaults to None.
         initial_balance (float, optional): Initial wallet balance. Defaults to 0.0.
+        referral_code (str, optional): The referral code from another user. Defaults to None.
 
     Returns:
         dict: A dictionary containing the contact, customer_profile, user,
@@ -128,6 +138,13 @@ def create_or_get_customer_account(
                 user_was_created_in_this_call = True
                 customer_profile.user = user
                 customer_profile.save()
+
+                # If a referral code was provided, link the new user
+                if REFERRALS_ENABLED and referral_code:
+                    link_referral(new_user=user, referral_code=referral_code)
+                    # You might want to apply the bonus here, or after a first deposit
+                    # apply_referral_bonus(new_user=user)
+
                 logger.info(f"Automated User account created for {whatsapp_id} with username: {username}")
                 # In a real system, you might securely store this password or email it to the user.
                 # For a WhatsApp bot, you might just rely on the linked user for internal operations.
