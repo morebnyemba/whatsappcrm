@@ -89,10 +89,48 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Share your referral code with friends! When they sign up and make their first deposit, you both get a bonus!\n\nYour code: *{{ flow_context.referral_code }}*\n\nShare this message:\nHey! I'm using this awesome WhatsApp betting app. Sign up with my code *{{ flow_context.referral_code }}* and we both get a bonus! 🎉"
+                        "body": "Your personal referral code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and make their first deposit, you both get a $5.00 bonus! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
                     }
                 },
-                "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "send_shareable_referral_message", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "send_shareable_referral_message",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "Hey! 🌟 Join me on BetBlitz, the best betting platform on WhatsApp!\n\nSign up using my personal referral code: *{{ flow_context.referral_code }}*\n\nClick this link to start and get your welcome bonus:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20referral%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
+                    }
+                },
+                "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "ask_next_action_after_referral",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "What would you like to do next?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "referral_main_menu", "title": "Main Menu"}},
+                                    {"type": "reply", "reply": {"id": "referral_done", "title": "I'm Done"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "referral_next_action",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "switch_to_main_menu_from_referral", "condition_config": {"type": "interactive_reply_id_equals", "value": "referral_main_menu"}},
+                    {"to_step": "end_referral_flow", "condition_config": {"type": "interactive_reply_id_equals", "value": "referral_done"}}
+                ]
             },
             {
                 "name": "get_total_referrals",
@@ -141,6 +179,14 @@ def create_referral_flow():
                     }
                 },
                 "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "switch_to_main_menu_from_referral",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "menu"}]
+                },
+                "transitions": []
             },
             {
                 "name": "prompt_to_create_account",
