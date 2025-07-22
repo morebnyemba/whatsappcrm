@@ -1446,11 +1446,21 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "Referral system unavailable."}
                         continue
                     
-                    referral_code = _get_value_from_context_or_contact(action_item_root.input_variable_name, current_step_context, contact)
+                    input_string = _get_value_from_context_or_contact(action_item_root.input_variable_name, current_step_context, contact)
                     
-                    if not referral_code or not isinstance(referral_code, str):
-                        logger.warning(f"Step '{step.name}': Input variable '{action_item_root.input_variable_name}' for get_referrer_details is missing or not a string. Value: {referral_code}")
+                    if not input_string or not isinstance(input_string, str):
+                        logger.warning(f"Step '{step.name}': Input variable '{action_item_root.input_variable_name}' for get_referrer_details is missing or not a string. Value: {input_string}")
                         current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "No referral code provided to check."}
+                        continue
+
+                    # Extract the code from the string. This regex looks for a common pattern.
+                    # It's case-insensitive and handles optional colon and various spacing.
+                    match = re.search(r"referral code:?\s*([a-zA-Z0-9]{6,10})\b", input_string, re.IGNORECASE)
+                    referral_code = match.group(1) if match else None
+                    
+                    if not referral_code:
+                        logger.warning(f"Step '{step.name}': Could not extract referral code from input string: '{input_string}'")
+                        current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "Could not find a referral code in the message."}
                         continue
                         
                     details = get_referrer_details_from_code(referral_code)

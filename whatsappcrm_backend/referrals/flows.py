@@ -167,7 +167,7 @@ def create_referral_flow():
                         "body": "You have a total of *{{ flow_context.total_referrals_count }}* successful referral(s). Keep up the great work! 🚀"
                     }
                 },
-                "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
             },
             {
                 "name": "get_pending_referrals",
@@ -191,7 +191,7 @@ def create_referral_flow():
                         "body": "You have *{{ flow_context.pending_referrals_count }}* pending referral(s). A referral becomes successful once your friend makes their first deposit."
                     }
                 },
-                "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
             },
             {
                 "name": "switch_to_main_menu_from_referral",

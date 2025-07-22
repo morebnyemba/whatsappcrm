@@ -65,6 +65,7 @@ def get_referrer_details_from_code(referral_code: str) -> dict:
         return {
             "success": True,
             "referrer_name": referrer_name,
+            "referral_code": referrer_profile.referral_code, # Also return the code itself
             "message": f"Referrer found: {referrer_name}"
         }
     except (ReferralProfile.DoesNotExist, CustomerProfile.DoesNotExist):
