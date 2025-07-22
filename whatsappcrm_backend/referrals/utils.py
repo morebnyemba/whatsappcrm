@@ -78,10 +78,10 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
     logger.info(f"Applied referral bonus of ${bonus_amount:.2f} to {new_user.username} and referrer {referrer_user.username} based on a deposit of ${first_deposit_amount:.2f}")
 
     # Send notifications via Celery tasks
-    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} referral bonus from your friend {referrer_user.username}!"
+    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} referral bonus from your friend {referrer_user.username}! As a thank you, they've received a bonus too."
     send_bonus_notification_task.delay(user_id=new_user.id, message=new_user_message)
 
-    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit of ${first_deposit_amount:.2f}. You've received a ${bonus_amount:.2f} referral bonus!"
+    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit of ${first_deposit_amount:.2f}. As a thank you, you've both received a ${bonus_amount:.2f} bonus!"
     send_bonus_notification_task.delay(user_id=referrer_user.id, message=referrer_message)
 
     return {"success": True, "message": f"Successfully applied a ${bonus_amount:.2f} bonus to you and your friend!"}

@@ -89,7 +89,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Your personal referral code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and make their first deposit, you'll get 25% and they'll get 25% of their deposit amount as a bonus! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
+                        "body": "Your personal referral code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and make their first deposit, you will *each* receive a bonus equal to 25% of their deposit amount! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
                     }
                 },
                 "transitions": [{"to_step": "send_shareable_referral_message", "condition_config": {"type": "always_true"}}]
@@ -100,7 +100,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my referral code when you sign up, and we'll *both* get a *25% bonus* on your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20referral%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
+                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my referral code when you sign up, and we will *each* get a bonus equal to *25%* of your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20referral%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
