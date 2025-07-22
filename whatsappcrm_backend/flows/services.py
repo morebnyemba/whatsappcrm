@@ -60,6 +60,7 @@ except ImportError as e:
 REFERRALS_ENABLED = False
 try:
     from referrals.utils import get_or_create_referral_profile
+    from referrals.models import ReferralProfile
     REFERRALS_ENABLED = True
 except ImportError:
     logger.warning("referrals app not found or could not be imported. Referral actions will not work.")
@@ -283,6 +284,8 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     PERFORM_WITHDRAWAL = "perform_withdrawal"
     HANDLE_BETTING_ACTION = "handle_betting_action"
     GENERATE_REFERRAL_CODE = "generate_referral_code"
+    GET_TOTAL_REFERRALS = "get_total_referrals"
+    GET_PENDING_REFERRALS = "get_pending_referrals"
 
 class SetContextVariableConfig(BasePydanticConfig):
     action_type: Literal["set_context_variable"] = "set_context_variable"
@@ -358,6 +361,14 @@ class GenerateReferralCodeConfig(BasePydanticConfig):
     action_type: Literal["generate_referral_code"] = "generate_referral_code"
     output_variable_name: str
 
+class GetTotalReferralsConfig(BasePydanticConfig):
+    action_type: Literal["get_total_referrals"] = "get_total_referrals"
+    output_variable_name: str
+
+class GetPendingReferralsConfig(BasePydanticConfig):
+    action_type: Literal["get_pending_referrals"] = "get_pending_referrals"
+    output_variable_name: str
+
 
 # This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
@@ -374,7 +385,9 @@ class ActionItem(BaseModel):
         PerformDepositConfig,
         PerformWithdrawalConfig,
         HandleBettingActionConfig,
-        GenerateReferralCodeConfig
+        GenerateReferralCodeConfig,
+        GetTotalReferralsConfig,
+        GetPendingReferralsConfig
     ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
@@ -1361,6 +1374,44 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                             logger.error(f"Step '{step.name}': Cannot generate referral code, no User linked to CustomerProfile for contact {contact.id}.")
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot generate referral code, CustomerProfile does not exist for contact {contact.id}.")
+                
+                elif action_type == ActionType.GET_TOTAL_REFERRALS:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'get_total_referrals' action called, but referrals app not available.")
+                        current_step_context[action_item_root.output_variable_name] = 0
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            # A "total" or "successful" referral is one where the bonus has been applied.
+                            count = ReferralProfile.objects.filter(referred_by=user, referral_bonus_applied=True).count()
+                            current_step_context[action_item_root.output_variable_name] = count
+                            logger.info(f"Found {count} total referrals for user {user.username}. Saved to '{action_item_root.output_variable_name}'.")
+                        else:
+                            logger.error(f"Step '{step.name}': Cannot get total referrals, no User linked to CustomerProfile for contact {contact.id}.")
+                            current_step_context[action_item_root.output_variable_name] = 0
+                    except CustomerProfile.DoesNotExist:
+                        logger.error(f"Step '{step.name}': Cannot get total referrals, CustomerProfile does not exist for contact {contact.id}.")
+                        current_step_context[action_item_root.output_variable_name] = 0
+
+                elif action_type == ActionType.GET_PENDING_REFERRALS:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'get_pending_referrals' action called, but referrals app not available.")
+                        current_step_context[action_item_root.output_variable_name] = 0
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            # A "pending" referral is one where the bonus has NOT yet been applied.
+                            count = ReferralProfile.objects.filter(referred_by=user, referral_bonus_applied=False).count()
+                            current_step_context[action_item_root.output_variable_name] = count
+                            logger.info(f"Found {count} pending referrals for user {user.username}. Saved to '{action_item_root.output_variable_name}'.")
+                        else:
+                            logger.error(f"Step '{step.name}': Cannot get pending referrals, no User linked to CustomerProfile for contact {contact.id}.")
+                            current_step_context[action_item_root.output_variable_name] = 0
+                    except CustomerProfile.DoesNotExist:
+                        logger.error(f"Step '{step.name}': Cannot get pending referrals, CustomerProfile does not exist for contact {contact.id}.")
+                        current_step_context[action_item_root.output_variable_name] = 0
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:
