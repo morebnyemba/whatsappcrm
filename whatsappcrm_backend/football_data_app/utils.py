@@ -2,6 +2,7 @@
 
 import re
 import logging
+from django.db import transaction
 from django.db.models import Q
 from django.apps import apps
 from django.utils import timezone
@@ -9,6 +10,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Optional, Dict, List, Any, Union
 from football_data_app.models import *
+from .tasks import send_bet_ticket_settlement_notification_task
 
 logger = logging.getLogger(__name__)
 
@@ -374,3 +376,84 @@ def parse_betting_string(betting_string: str) -> dict:
         "stake": float(stake_amount),
         "message": "Betting string parsed successfully."
     }
+
+
+def settle_ticket(ticket_id: int):
+    """
+    Checks the status of all bets on a ticket and updates the ticket's status.
+    If the ticket is won, it processes the payout. Handles PUSHed bets correctly.
+    Triggers a notification to the user if the status changes.
+    """
+    with transaction.atomic():
+        # Lock the ticket to prevent race conditions
+        try:
+            ticket = BetTicket.objects.select_for_update().get(pk=ticket_id)
+        except BetTicket.DoesNotExist:
+            logger.error(f"settle_ticket failed: BetTicket with ID {ticket_id} not found.")
+            return
+
+        # Only process tickets that are currently PENDING
+        if ticket.status != 'PENDING':
+            logger.info(f"Ticket {ticket_id} is already settled with status '{ticket.status}'. Skipping.")
+            return
+
+        bets = ticket.bets.all()
+        if not bets.exists():
+            logger.warning(f"Ticket {ticket_id} has no bets. Marking as LOST.")
+            ticket.status = 'LOST'
+            ticket.save(update_fields=['status'])
+            send_bet_ticket_settlement_notification_task.delay(ticket_id=ticket.id, new_status='LOST')
+            return
+
+        bet_statuses = {bet.status for bet in bets}
+
+        # If any bet is still pending, the ticket is not ready for settlement.
+        if 'PENDING' in bet_statuses:
+            logger.info(f"Ticket {ticket_id} still has pending bets. No status change.")
+            return
+
+        # Determine the final ticket status
+        new_status = ''
+        winnings = Decimal('0.00')
+
+        if 'LOST' in bet_statuses:
+            new_status = 'LOST'
+        elif 'WON' in bet_statuses:
+            new_status = 'WON'
+            # Calculate winnings, treating PUSH odds as 1
+            total_odds = Decimal('1.0')
+            for bet in bets:
+                if bet.status == 'WON':
+                    total_odds *= bet.market_outcome.odds
+            
+            winnings = ticket.stake * total_odds
+            ticket.winnings = winnings
+            
+            # Payout to user's wallet
+            ticket.user.wallet.add_funds(
+                amount=winnings,
+                description=f"Winnings from bet ticket ID: {ticket.id}",
+                transaction_type='WINNINGS'
+            )
+            logger.info(f"Paid out ${winnings:.2f} to user {ticket.user.username} for winning ticket {ticket.id}.")
+        else: # All non-lost bets are PUSH
+            new_status = 'PUSH'
+            winnings = ticket.stake # Refund stake
+            ticket.winnings = winnings
+            ticket.user.wallet.add_funds(
+                amount=winnings,
+                description=f"Stake refund for pushed bet ticket ID: {ticket.id}",
+                transaction_type='REFUND'
+            )
+            logger.info(f"Refunded stake of ${winnings:.2f} to user {ticket.user.username} for pushed ticket {ticket.id}.")
+
+        ticket.status = new_status
+        ticket.save(update_fields=['status', 'winnings'])
+        logger.info(f"BetTicket {ticket.id} status updated to {new_status}.")
+
+        # Trigger notification task
+        send_bet_ticket_settlement_notification_task.delay(
+            ticket_id=ticket.id,
+            new_status=new_status,
+            winnings=f"{winnings:.2f}"
+        )

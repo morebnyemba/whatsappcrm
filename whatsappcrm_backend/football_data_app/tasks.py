@@ -10,11 +10,12 @@ from typing import List, Dict, Any
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
+from .utils import settle_ticket # Import the new utility function
 from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 from meta_integration.models import MetaAppConfig
-from meta_integration.tasks import send_whatsapp_message_task as meta_send_task
-from conversations.models import Message, Contact
+# Use the direct utility for sending messages for consistency
+from meta_integration.utils import send_whatsapp_message, create_text_message_data
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,20 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 
 # --- PIPELINE 3: Reconciliation and Cleanup ---
 
+@shared_task(name="football_data_app.process_ticket_settlement_task")
+def process_ticket_settlement_task(ticket_id: int):
+    """
+    Celery task to process the settlement of a single bet ticket.
+    This should be called after any bet on the ticket is updated.
+    It calls the main settlement utility function.
+    """
+    logger.info(f"Starting settlement process for BetTicket ID: {ticket_id}")
+    try:
+        # This function now contains all the logic for checking, settling, and paying out.
+        settle_ticket(ticket_id)
+    except Exception as e:
+        logger.error(f"Error during settlement for BetTicket ID {ticket_id}: {e}", exc_info=True)
+
 @shared_task(bind=True, name="football_data_app.reconcile_and_settle_pending_items")
 def reconcile_and_settle_pending_items_task(self):
     """
@@ -385,17 +400,14 @@ def reconcile_and_settle_pending_items_task(self):
 
     # --- Step 2: Settle bet tickets that are now fully resolved ---
     # Find all pending tickets and check if they are now fully resolved.
-    tickets_to_check = BetTicket.objects.filter(status='PENDING').prefetch_related('bets')
+    # We only need the IDs, as the settlement task will fetch the full object.
+    ticket_ids_to_check = BetTicket.objects.filter(status='PENDING').values_list('id', flat=True)
 
     tickets_settled_count = 0
-    if tickets_to_check.exists():
-        for ticket in tickets_to_check:
-            has_pending_bets = any(bet.status == 'PENDING' for bet in ticket.bets.all())
-
-            if not has_pending_bets:
-                ticket.settle_ticket()
-                send_bet_ticket_settlement_notification_task.delay(ticket.id)
-                tickets_settled_count += 1
+    if ticket_ids_to_check:
+        for ticket_id in ticket_ids_to_check:
+            process_ticket_settlement_task.delay(ticket_id)
+        tickets_settled_count = len(ticket_ids_to_check)
 
     logger.info(f"[Reconciliation] FINISHED - Stuck Fixtures Triggered: {stuck_fixtures_triggered_count}, Bets updated: {bets_updated_count}, Tickets settled: {tickets_settled_count}.")
 
@@ -635,63 +647,39 @@ def settle_bets_for_fixture_task(self, fixture_id: int):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=120)
-def send_bet_ticket_settlement_notification_task(self, ticket_id: int):
+def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_status: str, winnings: str = "0.00"):
     """
-    Fetches a settled bet ticket, creates a Message object, and triggers
-    the meta_integration task to send a WhatsApp notification.
+    Sends a WhatsApp notification to the user about their ticket's status change.
     """
-    logger.info(f"[Notification] Preparing to send settlement notification for ticket ID: {ticket_id}")
+    logger.info(f"Sending settlement notification for BetTicket ID: {ticket_id}, Status: {new_status}")
     try:
-        # Get the active Meta configuration for sending messages
-        active_config = MetaAppConfig.objects.get_active_config()
-
-        # Assuming BetTicket has a 'customer' foreign key with contact details.
-        ticket = BetTicket.objects.select_related('customer').get(id=ticket_id)
-
-        if not ticket.customer or not getattr(ticket.customer, 'phone_number', None):
-             logger.warning(f"[Notification] Cannot send notification for ticket {ticket_id}. Customer or phone number missing.")
-             return
-
-        if ticket.status == 'WON':
-            # Assuming a CURRENCY_SYMBOL is defined in settings for display
-            currency_symbol = getattr(settings, 'CURRENCY_SYMBOL', '$')
-            message_text = (
-                f"Congratulations! Your bet ticket #{ticket.id} has won! 🎉\n"
-                f"You've won {currency_symbol}{ticket.potential_payout:.2f}."
+        # Correctly fetch the ticket and related user/contact info
+        ticket = BetTicket.objects.select_related('user__customer_profile__contact', 'user__wallet').get(pk=ticket_id)
+        contact = ticket.user.customer_profile.contact
+        
+        if new_status == 'WON':
+            message_body = (
+                f"🎉 Congratulations! Your bet ticket (ID: {ticket.id}) has WON!\n\n"
+                f"Amount Won: ${Decimal(winnings):.2f}\n"
+                f"Your wallet has been credited. Your new balance is ${ticket.user.wallet.balance:.2f}."
             )
-        elif ticket.status == 'LOST':
-            message_text = (
-                f"Unfortunately, your bet ticket #{ticket.id} has been settled as lost. Better luck next time!"
+        elif new_status == 'LOST':
+            message_body = (
+                f"😔 Unfortunately, your bet ticket (ID: {ticket.id}) has lost.\n\n"
+                f"Better luck next time! Type 'fixtures' to see upcoming matches."
             )
         else:
-            # For PUSH or other statuses, we might not send a notification, or could send a different one.
-            logger.info(f"[Notification] Ticket {ticket_id} settled with status '{ticket.status}'. No notification will be sent.")
+            logger.warning(f"send_bet_settlement_notification_task called with unhandled status '{new_status}' for ticket {ticket_id}.")
             return
 
-        # --- Integration with meta_integration app ---
-        contact, _ = Contact.objects.get_or_create(whatsapp_id=ticket.customer.phone_number)
-
-        outgoing_message = Message.objects.create(
-            contact=contact,
-            direction='out',
-            message_type='text',
-            content_payload={'body': message_text},
-            status='pending'
-        )
-
-        meta_send_task.delay(
-            outgoing_message_id=outgoing_message.id,
-            active_config_id=active_config.id
-        )
-        logger.info(f"[Notification] Successfully dispatched WhatsApp notification task for ticket {ticket_id} via meta_integration.")
+        # Use the direct utility to send the message
+        message_data = create_text_message_data(text_body=message_body)
+        send_whatsapp_message(to_phone_number=contact.whatsapp_id, message_type='text', data=message_data)
+        logger.info(f"Successfully sent settlement notification to {contact.whatsapp_id} for ticket {ticket_id}.")
 
     except BetTicket.DoesNotExist:
         logger.error(f"[Notification] BetTicket with ID {ticket_id} not found for sending notification.")
         # Don't retry if the ticket doesn't exist.
-    except (MetaAppConfig.DoesNotExist, MetaAppConfig.MultipleObjectsReturned) as e:
-        logger.error(f"[Notification] Critical error with MetaAppConfig: {e}. Cannot send notification for ticket {ticket_id}.")
-        # This is a system-level issue, retry might be appropriate
-        raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Notification] Error sending notification for ticket {ticket_id}: {e}")
         raise self.retry(exc=e)
@@ -702,30 +690,23 @@ def settle_tickets_for_fixture_task(self, fixture_id: int):
     if not fixture_id:
         return
     logger.info(f"Settling tickets for fixture ID: {fixture_id}")
+    # Find all unique PENDING ticket IDs that contain a bet related to the just-finished fixture.
     try:
-        # Find all PENDING tickets that contain a bet related to the just-finished fixture.
-        # We prefetch all related bets to avoid N+1 queries inside the loop.
-        # This is much more efficient than the previous implementation.
-        tickets_to_check = BetTicket.objects.filter(
+        affected_ticket_ids = BetTicket.objects.filter(
             status='PENDING',
             bets__market_outcome__market__fixture_id=fixture_id
-        ).distinct().prefetch_related('bets')
+        ).distinct().values_list('id', flat=True)
 
-        tickets_settled_count = 0
-        for ticket in tickets_to_check:
-            # Using the prefetched data, check if any bets on this ticket are still pending.
-            # This check is now done efficiently in Python memory, not with a new DB query.
-            has_pending_bets = any(bet.status == 'PENDING' for bet in ticket.bets.all())
+        if not affected_ticket_ids:
+            logger.info(f"No pending tickets found for fixture {fixture_id} that need settlement checks.")
+            return
 
-            # If no bets are pending, the entire ticket can be settled.
-            if not has_pending_bets:
-                ticket.settle_ticket()
-                # Dispatch a notification task now that the ticket is settled.
-                send_bet_ticket_settlement_notification_task.delay(ticket.id)
-                tickets_settled_count += 1
+        # For each affected ticket, trigger the settlement task.
+        # The task will handle the full logic of checking if it's ready to be settled.
+        for ticket_id in affected_ticket_ids:
+            process_ticket_settlement_task.delay(ticket_id)
 
-        if tickets_settled_count > 0:
-            logger.info(f"Successfully settled {tickets_settled_count} tickets related to fixture {fixture_id}.")
+        logger.info(f"Dispatched settlement check tasks for {len(affected_ticket_ids)} tickets related to fixture {fixture_id}.")
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}")
         raise self.retry(exc=e)
