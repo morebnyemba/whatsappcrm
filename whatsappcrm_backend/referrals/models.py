@@ -2,6 +2,7 @@
 
 from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator, MaxValueValidator
 import string
 import random
 
@@ -36,3 +37,31 @@ class ReferralProfile(models.Model):
 
     def __str__(self):
         return f"Referral Profile for {self.user.username}"
+
+class ReferralSettings(models.Model):
+    """
+    A singleton model to store global settings for the referral program.
+    """
+    bonus_percentage_each = models.DecimalField(
+        max_digits=5,
+        decimal_places=4, # Allow for percentages like 2.5% (0.0250)
+        default=Decimal('0.2500'),
+        help_text="The bonus percentage (e.g., 0.25 for 25%) given to both the referrer and the referred user.",
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('1.00'))]
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Referral Program Settings"
+
+    def save(self, *args, **kwargs):
+        """
+        Ensure that only one instance of ReferralSettings can be created.
+        """
+        self.pk = 1
+        super(ReferralSettings, self).save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, created = cls.objects.get_or_create(pk=1)
+        return obj

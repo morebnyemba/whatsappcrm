@@ -4,16 +4,12 @@ import logging
 from django.db import transaction
 from decimal import Decimal
 from django.contrib.auth import get_user_model
-
-from .models import ReferralProfile
+from .models import ReferralProfile, ReferralSettings
 from customer_data.models import UserWallet, WalletTransaction
 from .tasks import send_bonus_notification_task
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
-
-# The percentage of the first deposit to be awarded as a bonus to EACH person (referrer and referred).
-REFERRAL_BONUS_PERCENTAGE_EACH = Decimal('0.25') # 25%
 
 def get_or_create_referral_profile(user: User) -> ReferralProfile:
     """
@@ -62,8 +58,9 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
     if first_deposit_amount <= 0:
         return {"success": False, "message": "First deposit amount is zero or less."}
 
-    # Calculate the bonus amount for each person (25% of the deposit)
-    bonus_amount = first_deposit_amount * REFERRAL_BONUS_PERCENTAGE_EACH
+    # Calculate the bonus amount for each person from the settings
+    settings = ReferralSettings.load()
+    bonus_amount = first_deposit_amount * settings.bonus_percentage_each
 
     referrer_user = profile.referred_by
 
@@ -77,11 +74,12 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
 
     logger.info(f"Applied referral bonus of ${bonus_amount:.2f} to {new_user.username} and referrer {referrer_user.username} based on a deposit of ${first_deposit_amount:.2f}")
 
+    bonus_percentage_display = f"{settings.bonus_percentage_each:.2%}"
     # Send notifications via Celery tasks
-    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} referral bonus from your friend {referrer_user.username}! As a thank you, they've received a bonus too."
+    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} ({bonus_percentage_display}) referral bonus from your friend {referrer_user.username}! As a thank you, they've received a bonus too."
     send_bonus_notification_task.delay(user_id=new_user.id, message=new_user_message)
 
-    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit of ${first_deposit_amount:.2f}. As a thank you, you've both received a ${bonus_amount:.2f} bonus!"
+    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit of ${first_deposit_amount:.2f}. As a thank you, you've both received a ${bonus_amount:.2f} ({bonus_percentage_display}) bonus!"
     send_bonus_notification_task.delay(user_id=referrer_user.id, message=referrer_message)
 
     return {"success": True, "message": f"Successfully applied a ${bonus_amount:.2f} bonus to you and your friend!"}

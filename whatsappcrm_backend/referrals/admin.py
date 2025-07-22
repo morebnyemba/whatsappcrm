@@ -1,6 +1,6 @@
 # whatsappcrm_backend/referrals/admin.py
 from django.contrib import admin
-from .models import ReferralProfile
+from .models import ReferralProfile, ReferralSettings
 
 @admin.register(ReferralProfile)
 class ReferralProfileAdmin(admin.ModelAdmin):
@@ -21,3 +21,20 @@ class ReferralProfileAdmin(admin.ModelAdmin):
         if obj.referred_by:
             return obj.referred_by.username
         return "N/A"
+
+@admin.register(ReferralSettings)
+class ReferralSettingsAdmin(admin.ModelAdmin):
+    """
+    Admin view for the ReferralSettings singleton model.
+    """
+    list_display = ('id', 'get_bonus_percentage_display', 'updated_at')
+
+    def get_bonus_percentage_display(self, obj):
+        return f"{obj.bonus_percentage_each:.2%}" # Format as percentage
+    get_bonus_percentage_display.short_description = "Bonus Percentage (Each)"
+
+    def has_add_permission(self, request):
+        return not ReferralSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False

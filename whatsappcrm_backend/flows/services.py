@@ -60,7 +60,7 @@ except ImportError as e:
 REFERRALS_ENABLED = False
 try:
     from referrals.utils import get_or_create_referral_profile
-    from referrals.models import ReferralProfile
+    from referrals.models import ReferralProfile, ReferralSettings
     REFERRALS_ENABLED = True
 except ImportError:
     logger.warning("referrals app not found or could not be imported. Referral actions will not work.")
@@ -286,6 +286,7 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     GENERATE_REFERRAL_CODE = "generate_referral_code"
     GET_TOTAL_REFERRALS = "get_total_referrals"
     GET_PENDING_REFERRALS = "get_pending_referrals"
+    GET_REFERRAL_SETTINGS = "get_referral_settings"
 
 class SetContextVariableConfig(BasePydanticConfig):
     action_type: Literal["set_context_variable"] = "set_context_variable"
@@ -369,6 +370,10 @@ class GetPendingReferralsConfig(BasePydanticConfig):
     action_type: Literal["get_pending_referrals"] = "get_pending_referrals"
     output_variable_name: str
 
+class GetReferralSettingsConfig(BasePydanticConfig):
+    action_type: Literal["get_referral_settings"] = "get_referral_settings"
+    output_variable_name: str
+
 
 # This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
@@ -387,7 +392,8 @@ class ActionItem(BaseModel):
         HandleBettingActionConfig,
         GenerateReferralCodeConfig,
         GetTotalReferralsConfig,
-        GetPendingReferralsConfig
+        GetPendingReferralsConfig,
+        GetReferralSettingsConfig
     ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
@@ -1412,6 +1418,20 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot get pending referrals, CustomerProfile does not exist for contact {contact.id}.")
                         current_step_context[action_item_root.output_variable_name] = 0
+
+                elif action_type == ActionType.GET_REFERRAL_SETTINGS:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'get_referral_settings' action called, but referrals app not available.")
+                        current_step_context[action_item_root.output_variable_name] = {}
+                        continue
+                    
+                    settings = ReferralSettings.load()
+                    settings_data = {
+                        'bonus_percentage_each': settings.bonus_percentage_each,
+                        'bonus_percentage_display': f"{settings.bonus_percentage_each:.2%}"
+                    }
+                    current_step_context[action_item_root.output_variable_name] = settings_data
+                    logger.info(f"Loaded referral settings into context variable '{action_item_root.output_variable_name}'.")
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:
