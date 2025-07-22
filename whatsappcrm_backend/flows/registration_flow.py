@@ -14,28 +14,120 @@ def create_registration_flow() -> Dict[str, Any]:
         "is_active": True,
         "steps": [
             # 1. Entry point, immediately checks for email
+            # MODIFIED: This is now the main entry point that decides the registration path.
             {
                 "name": "start_registration",
-                "step_type": "action", # Use action step for conditional transitions without user interaction
+                "step_type": "action",
                 "is_entry_point": True,
                 "config": {
-                    "actions_to_run": [] # No actions, just for transitions
+                    "actions_to_run": [
+                        {
+                            "action_type": "set_context_variable",
+                            "variable_name": "initial_message_body",
+                            "value_template": "{{ contact.latest_message.text_body }}"
+                        }
+                    ]
                 },
+                "transitions": [
+                    {
+                        "to_step": "handle_linked_referral",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "user_reply_contains_keyword",
+                            "keyword": "referral code",
+                            "case_sensitive": False
+                        }
+                    },
+                    {
+                        "to_step": "check_if_email_exists",
+                        "priority": 2,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # --- Path for users who clicked a referral link ---
+            {
+                "name": "handle_linked_referral",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "get_referrer_details",
+                            "input_variable_name": "flow_context.initial_message_body",
+                            "output_variable_name": "referrer_details"
+                        }
+                    ]
+                },
+                "transitions": [
+                    {"to_step": "confirm_referrer", "condition_config": {"type": "variable_equals", "variable_name": "flow_context.referrer_details.success", "value": True}},
+                    {"to_step": "invalid_linked_code", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "invalid_linked_code",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "The referral code in your message seems to be invalid. Let's proceed with registration, and you can enter a code manually later if you have one."}
+                },
+                "transitions": [{"to_step": "check_if_email_exists", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "confirm_referrer",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "Welcome! It looks like you were referred by *{{ flow_context.referrer_details.referrer_name }}*. Is this correct?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "referrer_confirm_yes", "title": "Yes, that's right"}},
+                                    {"type": "reply", "reply": {"id": "referrer_confirm_no", "title": "No, that's wrong"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "referrer_confirmation",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "save_confirmed_code", "condition_config": {"type": "interactive_reply_id_equals", "value": "referrer_confirm_yes"}},
+                    {"to_step": "check_if_email_exists", "condition_config": {"type": "interactive_reply_id_equals", "value": "referrer_confirm_no"}}
+                ]
+            },
+            {
+                "name": "save_confirmed_code",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "set_context_variable",
+                            "variable_name": "provided_referral_code",
+                            "value_template": "{{ flow_context.referrer_details.referral_code }}"
+                        }
+                    ]
+                },
+                "transitions": [{"to_step": "check_if_email_exists", "condition_config": {"type": "always_true"}}]
+            },
+            # --- Start of standard data collection, now a convergence point ---
+            {
+                "name": "check_if_email_exists",
+                "step_type": "action",
+                "config": {"actions_to_run": []},
                 "transitions": [
                     {
                         "to_step": "create_account_step",
                         "priority": 1,
-                        "condition_config": {
-                            "type": "variable_exists",
-                            "variable_name": "customer_profile.email"
-                        }
+                        "condition_config": {"type": "variable_exists", "variable_name": "customer_profile.email"}
                     },
                     {
                         "to_step": "ask_for_email",
                         "priority": 2,
-                        "condition_config": {
-                            "type": "always_true"
-                        }
+                        "condition_config": {"type": "always_true"}
                     }
                 ]
             },
@@ -329,13 +421,22 @@ def create_registration_flow() -> Dict[str, Any]:
                 },
                 "transitions": [
                     {
-                        "to_step": "ask_if_has_referral_code",
+                        "to_step": "check_if_code_already_provided",
                         "priority": 1,
                         "condition_config": {"type": "always_true"}
                     }
                 ]
             },
-            # --- NEW: Referral Code Path ---
+            # --- Referral Code Path (Manual Entry) ---
+            {
+                "name": "check_if_code_already_provided",
+                "step_type": "action",
+                "config": {"actions_to_run": []},
+                "transitions": [
+                    {"to_step": "create_account_step", "condition_config": {"type": "variable_exists", "variable_name": "flow_context.provided_referral_code"}},
+                    {"to_step": "ask_if_has_referral_code", "condition_config": {"type": "always_true"}}
+                ]
+            },
             {
                 "name": "ask_if_has_referral_code",
                 "step_type": "question",
