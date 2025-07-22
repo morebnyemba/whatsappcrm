@@ -5,7 +5,7 @@ from django.db import transaction
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from .models import ReferralProfile, ReferralSettings
-from customer_data.models import UserWallet, WalletTransaction
+from customer_data.models import UserWallet, WalletTransaction, CustomerProfile
 from .tasks import send_bonus_notification_task
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,35 @@ def link_referral(new_user: User, referral_code: str):
         logger.info(f"User {new_user.username} was successfully referred by {referrer_profile.user.username}")
     except ReferralProfile.DoesNotExist:
         logger.warning(f"Invalid referral code '{referral_code}' used by user {new_user.username}.")
+
+def get_referrer_details_from_code(referral_code: str) -> dict:
+    """
+    Finds a referrer by their code and returns their details for confirmation.
+    """
+    if not referral_code:
+        return {"success": False, "message": "No code provided."}
+
+    try:
+        # Find the profile with the given code
+        referrer_profile = ReferralProfile.objects.select_related('user__customer_profile').get(referral_code__iexact=referral_code)
+        
+        # Get the referrer's user and customer profile
+        referrer_user = referrer_profile.user
+        referrer_customer_profile = referrer_user.customer_profile
+        
+        # Construct the name to display, preferring first_name
+        referrer_name = referrer_customer_profile.first_name or referrer_user.username
+        
+        return {
+            "success": True,
+            "referrer_name": referrer_name,
+            "message": f"Referrer found: {referrer_name}"
+        }
+    except (ReferralProfile.DoesNotExist, CustomerProfile.DoesNotExist):
+        return {"success": False, "message": "Invalid referral code."}
+    except Exception as e:
+        logger.error(f"Error getting referrer details for code {referral_code}: {e}", exc_info=True)
+        return {"success": False, "message": "An unexpected error occurred."}
 
 def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction):
     """
