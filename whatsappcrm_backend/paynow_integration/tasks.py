@@ -121,66 +121,78 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
     Polls Paynow to get the transaction status and updates the WalletTransaction accordingly.
     """
     logger.info(f"Polling Paynow status for transaction reference: {transaction_reference}")
+    # Use a transaction.atomic block to ensure the initial get-and-lock is atomic.
     try:
-        pending_tx = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
-        paynow_service = PaynowService()
+        with transaction.atomic():
+            # FIX: Lock the WalletTransaction row to prevent race conditions.
+            # If a second task tries this, it will wait. When it gets the lock,
+            # the status will no longer be 'PENDING', and it will raise DoesNotExist.
+            pending_tx = WalletTransaction.objects.select_for_update().get(reference=transaction_reference, status='PENDING')
+            
+            paynow_service = PaynowService()
+            poll_url = pending_tx.payment_details.get('poll_url')
+            if not poll_url:
+                logger.error(f"Poll URL not found for transaction {transaction_reference}. Failing transaction.")
+                _fail_transaction_and_notify_user(pending_tx, "Could not poll status: Poll URL missing.")
+                return # Stop execution
 
-        # Retrieve the poll_url from payment_details
-        poll_url = pending_tx.payment_details.get('poll_url')
-        if not poll_url:
-            logger.error(f"Poll URL not found in payment_details for transaction {transaction_reference}. Cannot poll status.")
-            raise ValueError("Poll URL missing for transaction.")
+            status_response = paynow_service.check_transaction_status(poll_url)
+            
+            if status_response['success']:
+                status = status_response['status']
+                logger.info(f"Paynow status for {transaction_reference}: {status}")
 
-        # Get the status from Paynow using the correct method and poll_url
-        status_response = paynow_service.check_transaction_status(poll_url)
-        
-        if status_response['success']:
-            status = status_response['status']
-            logger.info(f"Paynow status for {transaction_reference}: {status}")
-
-            if status.lower() == 'paid':
-                # --- BUG FIX: Update existing transaction instead of creating a new one ---
-                wallet = pending_tx.wallet
-                with transaction.atomic(): # Atomic transaction to prevent race conditions
-                    # Lock the wallet row to prevent race conditions while updating balance
+                if status.lower() == 'paid':
+                    wallet = pending_tx.wallet
+                    # This second lock is good for protecting the wallet from other simultaneous operations.
                     wallet_to_update = UserWallet.objects.select_for_update().get(pk=wallet.pk)
                     wallet_to_update.balance += pending_tx.amount
                     wallet_to_update.save(update_fields=['balance', 'updated_at'])
 
-                    # Now, update the original transaction to completed
                     pending_tx.status = 'COMPLETED'
                     pending_tx.description = f"Paynow deposit successful. Paynow Ref: {pending_tx.external_reference}"
                     pending_tx.save(update_fields=['status', 'description', 'updated_at'])
-                
-                wallet.refresh_from_db()
-                logger.info(f"Successfully processed deposit for Ref {transaction_reference}. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
-                
-                # Send success notification
-                send_deposit_confirmation_whatsapp.delay(
-                    whatsapp_id=wallet.user.customer_profile.contact.whatsapp_id,
-                    amount=str(pending_tx.amount),
-                    new_balance=f"{wallet.balance:.2f}",
-                    transaction_reference=transaction_reference,
-                    currency_symbol="$"
-                )
+                    
+                    wallet.refresh_from_db()
+                    logger.info(f"Successfully processed deposit for Ref {transaction_reference}. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
+                    
+                    send_deposit_confirmation_whatsapp.delay(
+                        whatsapp_id=wallet.user.customer_profile.contact.whatsapp_id,
+                        amount=str(pending_tx.amount),
+                        new_balance=f"{wallet.balance:.2f}",
+                        transaction_reference=transaction_reference,
+                        currency_symbol="$"
+                    )
+                    return # Task is complete
 
-            elif status.lower() in ['cancelled', 'failed', 'disputed']:
-                reason = f"Paynow transaction status was '{status}'."
-                _fail_transaction_and_notify_user(pending_tx, reason)
+                elif status.lower() in ['cancelled', 'failed', 'disputed']:
+                    reason = f"Paynow transaction status was '{status}'."
+                    _fail_transaction_and_notify_user(pending_tx, reason)
+                    return # Task is complete
 
+                else: # 'pending', 'created', etc.
+                    logger.info(f"Transaction {transaction_reference} is still pending. Retrying...")
+                    self.retry(exc=Exception(f"Transaction is still pending. Current status: {status}"))
             else:
-                # Status is still pending, retry the task
-                logger.info(f"Transaction {transaction_reference} is still pending. Retrying...")
-                self.retry(exc=Exception(f"Transaction is still pending.  Current status: {status}"))
-        else:
-            logger.error(f"Failed to get Paynow status for {transaction_reference}: {status_response.get('message')}")
-            self.retry(exc=Exception(f"Failed to get Paynow status: {status_response.get('message')}"))
+                logger.error(f"Failed to get Paynow status for {transaction_reference}: {status_response.get('message')}")
+                self.retry(exc=Exception(f"Failed to get Paynow status: {status_response.get('message')}"))
 
     except WalletTransaction.DoesNotExist:
-        logger.error(f"Transaction with reference {transaction_reference} not found during polling.")
+        # This is now an expected, non-error outcome for a concurrent task.
+        logger.info(f"Transaction {transaction_reference} not found or not PENDING. It was likely processed by another task. Stopping poll.")
     except Exception as e:
         logger.error(f"Error polling Paynow for {transaction_reference}: {e}", exc_info=True)
-        self.retry(exc=e)
+        try:
+            self.retry(exc=e)
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries exceeded for polling transaction {transaction_reference}. Attempting to fail it.")
+            try:
+                tx_to_fail = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
+                _fail_transaction_and_notify_user(tx_to_fail, f"Polling failed after max retries: {str(e)[:100]}")
+            except WalletTransaction.DoesNotExist:
+                logger.warning(f"Could not find transaction {transaction_reference} to fail after max retries (it might have been processed or failed already).")
+            except Exception as final_fail_exc:
+                logger.critical(f"Could not fail transaction {transaction_reference} after max retries: {final_fail_exc}")
 
 @shared_task(name="paynow_integration.send_innbucks_authorization_message")
 def send_innbucks_authorization_message(transaction_reference: str):

@@ -21,7 +21,10 @@ def paynow_return_view(request: HttpRequest) -> HttpResponse:
     reference = request.GET.get('reference')
     paynow_reference = request.GET.get('paynowreference')
     
-    logger.info(f"Paynow Return URL hit. Status: {status}, Reference: {reference}, PaynowRef: {paynow_reference}")
+    logger.info(
+        f"Paynow Return URL hit for transaction reference: {reference}. "
+        f"Status: '{status}', PaynowRef: '{paynow_reference}'"
+    )
     
     # You might want to redirect the user to a specific page in your app
     # based on the status (e.g., success page, pending page, failed page).
