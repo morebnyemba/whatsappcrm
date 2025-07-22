@@ -60,7 +60,7 @@ except ImportError as e:
 REFERRALS_ENABLED = False
 try:
     from referrals.utils import get_or_create_referral_profile, get_referrer_details_from_code
-    from referrals.models import ReferralProfile, ReferralSettings, CustomerProfile
+    from referrals.models import ReferralProfile, ReferralSettings
     REFERRALS_ENABLED = True
 except ImportError:
     logger.warning("referrals app not found or could not be imported. Referral actions will not work.")
