@@ -16,7 +16,8 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
     Internal helper to mark a transaction as FAILED and notify the user.
     This is not a Celery task itself but a utility function.
     """
-    logger.warning(f"Attempting to fail transaction {transaction_obj.reference}. Reason: {reason}")
+    log_prefix = f"[Fail Helper - Ref: {transaction_obj.reference}]"
+    logger.warning(f"{log_prefix} Attempting to fail transaction. Reason: {reason}")
 
     tx_to_fail = None
     try:
@@ -38,8 +39,8 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
         # (e.g., COMPLETED by an IPN) between when the fail task was called
         # and when this lock was acquired.
         logger.info(
-            f"Transaction {transaction_obj.reference} was not in PENDING state "
-            f"when attempting to fail it. It was likely already processed. No action taken."
+            f"{log_prefix} Transaction was not in PENDING state "
+            "when attempting to fail. It was likely already processed. No action taken."
         )
         return # Exit without doing anything further
 
@@ -48,12 +49,13 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
     if tx_to_fail:
         try:
             contact_to_notify = tx_to_fail.wallet.user.customer_profile.contact
+            logger.info(f"{log_prefix} Queuing failure notification to user {contact_to_notify.whatsapp_id}.")
             failure_message = f"❌ We're sorry, but your payment could not be processed. Please try again later. (Ref: {tx_to_fail.reference})"
             message_data = create_text_message_data(text_body=failure_message)
             send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
-            logger.info(f"Successfully notified user {contact_to_notify.whatsapp_id} about payment failure for {tx_to_fail.reference}.")
+            logger.info(f"{log_prefix} Successfully sent failure notification to user {contact_to_notify.whatsapp_id}.")
         except Exception as notify_exc:
-            logger.error(f"Error notifying user about failed transaction {tx_to_fail.reference}: {notify_exc}", exc_info=True)
+            logger.error(f"{log_prefix} Error notifying user about failed transaction: {notify_exc}", exc_info=True)
 
 @shared_task(name="paynow_integration.initiate_paynow_express_checkout_task", bind=True, max_retries=3, default_retry_delay=90)
 def initiate_paynow_express_checkout_task(self, transaction_reference: str):
@@ -61,7 +63,8 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
     Asynchronously initiates a Paynow Express Checkout payment.
     This task is called after a PENDING WalletTransaction has been created.
     """
-    logger.info(f"Celery task started: initiate_paynow_express_checkout_task for reference {transaction_reference}")
+    log_prefix = f"[Initiate Task - Ref: {transaction_reference}]"
+    logger.info(f"{log_prefix} Celery task started.")
     try:
         # Find the pending transaction
         pending_tx = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
@@ -78,6 +81,12 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
 
         if not all([phone_number, paynow_method_type]):
             raise ValueError("Phone number or Paynow method type missing in transaction payment_details.")
+
+        logger.debug(
+            f"{log_prefix} Preparing to call Paynow service with: "
+            f"Amount={amount}, Phone={phone_number}, Method={paynow_method_type}, "
+            f"Email={email}, Description='{pending_tx.description}'"
+        )
 
         paynow_service = PaynowService()
         paynow_response = paynow_service.initiate_express_checkout_payment(
@@ -105,7 +114,7 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
                 pending_tx.payment_details['otpreference'] = otpreference
                 pending_tx.payment_details['remoteotpurl'] = remoteotpurl
                 pending_tx.save(update_fields=['external_reference', 'payment_details'])
-                logger.info(f"O'mari payment initiated for {transaction_reference}. OTP required. Not scheduling polling yet.")
+                logger.info(f"{log_prefix} O'mari payment initiated. OTP required. Not scheduling polling yet.")
                 # The flow will need to ask for OTP, then a new action/task will submit it.
                 # Polling will only start after successful OTP submission.
             elif paynow_method_type == 'innbucks':
@@ -119,26 +128,26 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
                 # Schedule sending the specific InnBucks message
                 send_innbucks_authorization_message.delay(transaction_reference=transaction_reference)
                 poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
-                logger.info(f"InnBucks payment initiated for {transaction_reference}. Authorization code: {authorizationcode}. Polling scheduled.")
+                logger.info(f"{log_prefix} InnBucks payment initiated. Authorization code: {authorizationcode}. Polling scheduled.")
             else: # Default for EcoCash and other direct mobile money methods
                 pending_tx.save(update_fields=['external_reference', 'payment_details'])
                 poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
-                logger.info(f"Successfully initiated Paynow payment for {transaction_reference} and scheduled polling.")
+                logger.info(f"{log_prefix} Successfully initiated Paynow payment and scheduled polling.")
         else:
             raise Exception(paynow_response.get('message', 'Unknown error from Paynow'))
     
     except (WalletTransaction.DoesNotExist, ValueError) as e:
         # These are permanent, non-recoverable errors. Do not retry.
-        logger.error(f"Permanent error initiating Paynow for {transaction_reference}, will not retry: {e}", exc_info=True)
+        logger.error(f"{log_prefix} Permanent error during initiation, will not retry: {e}", exc_info=True)
         fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=str(e)[:200])
     except Exception as e:
         # These are potentially transient errors (e.g., network timeout, Paynow 500 error).
-        logger.warning(f"Transient error initiating Paynow for {transaction_reference}, will retry ({self.request.retries + 1}/{self.max_retries}): {e}")
+        logger.warning(f"{log_prefix} Transient error during initiation, will retry ({self.request.retries + 1}/{self.max_retries}): {e}")
         try:
             # Retry the task with the default delay.
             self.retry(exc=e)
         except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for initiating payment {transaction_reference}. Failing transaction.")
+            logger.error(f"{log_prefix} Max retries exceeded for initiating payment. Failing transaction.")
             fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=f"Failed after multiple retries: {str(e)[:150]}")
 
 @shared_task(name="paynow_integration.poll_paynow_transaction_status", bind=True, max_retries=10, default_retry_delay=120)
@@ -146,7 +155,8 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
     """
     Polls Paynow to get the transaction status and updates the WalletTransaction accordingly.
     """
-    logger.info(f"Polling Paynow status for transaction reference: {transaction_reference}")
+    log_prefix = f"[Poll Task - Ref: {transaction_reference}]"
+    logger.info(f"{log_prefix} Polling Paynow status. Attempt {self.request.retries + 1}/{self.max_retries + 1}.")
     # Use a transaction.atomic block to ensure the initial get-and-lock is atomic.
     try:
         with transaction.atomic():
@@ -158,15 +168,16 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
             paynow_service = PaynowService()
             poll_url = pending_tx.payment_details.get('poll_url')
             if not poll_url:
-                logger.error(f"Poll URL not found for transaction {transaction_reference}. Failing transaction.")
+                logger.error(f"{log_prefix} Poll URL not found. Failing transaction.")
                 _fail_transaction_and_notify_user(pending_tx, "Could not poll status: Poll URL missing.")
                 return # Stop execution
 
+            logger.debug(f"{log_prefix} Checking poll URL: {poll_url}")
             status_response = paynow_service.check_transaction_status(poll_url)
             
             if status_response['success']:
                 status = status_response['status']
-                logger.info(f"Paynow status for {transaction_reference}: {status}")
+                logger.info(f"{log_prefix} Paynow status received: '{status}'.")
 
                 if status.lower() == 'paid':
                     wallet = pending_tx.wallet
@@ -180,7 +191,7 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                     pending_tx.save(update_fields=['status', 'description', 'updated_at'])
                     
                     wallet.refresh_from_db()
-                    logger.info(f"Successfully processed deposit for Ref {transaction_reference}. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
+                    logger.info(f"{log_prefix} Successfully processed deposit. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
                     
                     send_deposit_confirmation_whatsapp.delay(
                         whatsapp_id=wallet.user.customer_profile.contact.whatsapp_id,
@@ -193,39 +204,42 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
 
                 elif status.lower() in ['cancelled', 'failed', 'disputed']:
                     reason = f"Paynow transaction status was '{status}'."
+                    logger.warning(f"{log_prefix} Failing transaction due to status: '{status}'.")
                     _fail_transaction_and_notify_user(pending_tx, reason)
                     return # Task is complete
 
-                else: # 'pending', 'created', etc.
-                    logger.info(f"Transaction {transaction_reference} is still pending. Retrying...")
+                else: # 'pending', 'created', 'sent', etc.
+                    logger.info(f"{log_prefix} Transaction is still pending with status '{status}'. Retrying task.")
                     self.retry(exc=Exception(f"Transaction is still pending. Current status: {status}"))
             else:
-                logger.error(f"Failed to get Paynow status for {transaction_reference}: {status_response.get('message')}")
-                self.retry(exc=Exception(f"Failed to get Paynow status: {status_response.get('message')}"))
+                error_msg = status_response.get('message', 'Unknown API error')
+                logger.error(f"{log_prefix} Failed to get Paynow status: {error_msg}. Retrying task.")
+                self.retry(exc=Exception(f"Failed to get Paynow status: {error_msg}"))
 
     except WalletTransaction.DoesNotExist:
         # This is now an expected, non-error outcome for a concurrent task.
-        logger.info(f"Transaction {transaction_reference} not found or not PENDING. It was likely processed by another task. Stopping poll.")
+        logger.info(f"{log_prefix} Transaction not found or not PENDING. It was likely processed by another task. Stopping poll.")
     except Exception as e:
-        logger.error(f"Error polling Paynow for {transaction_reference}: {e}", exc_info=True)
+        logger.error(f"{log_prefix} Unhandled error during polling: {e}", exc_info=True)
         try:
             self.retry(exc=e)
         except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for polling transaction {transaction_reference}. Attempting to fail it.")
+            logger.error(f"{log_prefix} Max retries exceeded. Attempting to fail transaction.")
             try:
                 tx_to_fail = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
                 _fail_transaction_and_notify_user(tx_to_fail, f"Polling failed after max retries: {str(e)[:100]}")
             except WalletTransaction.DoesNotExist:
-                logger.warning(f"Could not find transaction {transaction_reference} to fail after max retries (it might have been processed or failed already).")
+                logger.warning(f"{log_prefix} Could not find transaction to fail after max retries (it might have been processed or failed already).")
             except Exception as final_fail_exc:
-                logger.critical(f"Could not fail transaction {transaction_reference} after max retries: {final_fail_exc}")
+                logger.critical(f"{log_prefix} Could not fail transaction after max retries: {final_fail_exc}")
 
 @shared_task(name="paynow_integration.send_innbucks_authorization_message")
 def send_innbucks_authorization_message(transaction_reference: str):
     """
     Sends a WhatsApp message to the user with InnBucks authorization details.
     """
-    logger.info(f"Preparing to send InnBucks authorization message for transaction {transaction_reference}")
+    log_prefix = f"[InnBucks Msg - Ref: {transaction_reference}]"
+    logger.info(f"{log_prefix} Preparing to send authorization message.")
     try:
         transaction_obj = WalletTransaction.objects.get(reference=transaction_reference)
         
@@ -234,7 +248,7 @@ def send_innbucks_authorization_message(transaction_reference: str):
         whatsapp_id = transaction_obj.wallet.user.customer_profile.contact.whatsapp_id
 
         if not authorization_code:
-            logger.error(f"InnBucks authorization code not found for transaction {transaction_reference}. Cannot send message.")
+            logger.error(f"{log_prefix} Authorization code not found. Cannot send message.")
             return
 
         message_body = (
