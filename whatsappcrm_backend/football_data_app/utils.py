@@ -9,8 +9,9 @@ from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
 from typing import Optional, Dict, List, Any, Union
-from football_data_app.models import *
-from .tasks import send_bet_ticket_settlement_notification_task
+
+# NOTE: All model and task imports are now done inside the functions that use them.
+# This is the standard and correct way to resolve circular dependencies in Django.
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,14 @@ def get_formatted_football_data(
     league_code: Optional[str] = None,
     days_ahead: int = 10,
     days_past: int = 4
-) -> Optional[List[str]]: # MODIFIED: Return type can now be None
+) -> Optional[List[str]]:
     """
     Fetches and formats football data for display.
     This function now returns a list of strings (message parts) OR None if no data is found.
     """
+    # --- Local Import to Prevent Circular Dependency ---
+    from football_data_app.models import FootballFixture, MarketOutcome
+
     logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past})")
 
     now = timezone.now()
@@ -44,12 +48,11 @@ def get_formatted_football_data(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
-        # Use FootballFixture.FixtureStatus.SCHEDULED and match_date
-        fixtures_qs = FootballFixture.objects.filter(  
+        fixtures_qs = FootballFixture.objects.filter(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
-            Q(status=FootballFixture.FixtureStatus.LIVE)  
-        ).select_related('home_team', 'away_team', 'league').prefetch_related(  
-            'markets__outcomes'  
+            Q(status=FootballFixture.FixtureStatus.LIVE)
+        ).select_related('home_team', 'away_team', 'league').prefetch_related(
+            'markets__outcomes'
         ).order_by('match_date')
 
 
@@ -57,7 +60,6 @@ def get_formatted_football_data(
             logger.debug(f"Filtering scheduled fixtures by league_code: {league_code}.")
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
 
-        # ---MODIFIED BEHAVIOR---
         if not fixtures_qs.exists():
             league_info = f" in {league_code}" if league_code else ""
             logger.info(f"No {data_type_label.lower()} found{league_info} for the specified criteria. Returning None.")
@@ -66,14 +68,13 @@ def get_formatted_football_data(
         num_fixtures_to_display = 40
         logger.debug(f"Formatting details for up to {min(fixtures_qs.count(), num_fixtures_to_display)} fixtures (scheduled & live).")
 
-        def format_match_time(fixture):  
+        def format_match_time(fixture):
             if fixture.status == FootballFixture.FixtureStatus.LIVE:
-                # Calculate elapsed time in minutes
                 elapsed_time = timezone.now() - fixture.match_date
                 minutes = int(elapsed_time.total_seconds() // 60)
                 return f"LIVE ({minutes}')" # e.g., LIVE (45')
             else:
-                match_time_local = timezone.localtime(fixture.match_date)  
+                match_time_local = timezone.localtime(fixture.match_date)
                 return match_time_local.strftime('%a, %b %d - %I:%M %p')
 
         for fixture in fixtures_qs[:num_fixtures_to_display]:
@@ -82,7 +83,6 @@ def get_formatted_football_data(
             line = f"\n🏆 *{fixture.league.name}* (ID: {fixture.id})"
             line += f"\n🗓️ {time_str}"
             
-            # Add score for live matches
             if fixture.status == FootballFixture.FixtureStatus.LIVE and fixture.home_team_score is not None:
                 line += f"\n{fixture.home_team.name} *{fixture.home_team_score} - {fixture.away_team_score}* {fixture.away_team.name}"
             else:
@@ -177,7 +177,6 @@ def get_formatted_football_data(
             logger.debug(f"Filtering finished results by league_code: {league_code}.")
             fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
         
-        # ---MODIFIED BEHAVIOR---
         if not fixtures_qs.exists():
             league_info = f" in {league_code}" if league_code else ""
             logger.info(f"No {data_type_label.lower()} found{league_info} for the specified criteria. Returning None.")
@@ -210,7 +209,7 @@ def get_formatted_football_data(
     # Assemble message parts
     all_message_parts: List[str] = []
     current_part_items: List[str] = []
-    current_part_length = 0 # Length of content in current_part_items
+    current_part_length = 0
     header_allowance = len(main_header) + len("\n\n")
 
     for i, item_str in enumerate(individual_item_strings):
@@ -254,6 +253,9 @@ def parse_betting_string(betting_string: str) -> dict:
     Parses a free-form betting string into a list of market outcome IDs and a stake,
     where each bet line specifies a fixture ID (Django's auto-incrementing PK) and an outcome option.
     """
+    # --- Local Import to Prevent Circular Dependency ---
+    from football_data_app.models import FootballFixture, MarketOutcome
+
     lines = [line.strip() for line in betting_string.split('\n') if line.strip()]
     market_outcome_ids = []
     stake_amount = Decimal('0.0')
@@ -311,7 +313,6 @@ def parse_betting_string(betting_string: str) -> dict:
                         outcome_name_to_find = 'over' if bet_type.startswith('o') else 'under'
 
                         for outcome in outcomes_for_fixture:
-                            # Compare point_value as Decimal for precision
                             if outcome.market.api_market_key in ['totals', 'alternate_totals'] and \
                                outcome.point_value is not None and Decimal(str(outcome.point_value)) == point_val and \
                                outcome_name_to_find in outcome.outcome_name.lower():
@@ -321,8 +322,6 @@ def parse_betting_string(betting_string: str) -> dict:
                 # 3. BTTS (Both Teams To Score) matching e.g., "btts yes", "gg"
                 if not found_outcome:
                     btts_text = option_text.lower().replace(" ", "")
-                    # REMOVED 'yes' and 'no' to avoid ambiguity with other markets.
-                    # User should be more specific, e.g., "btts yes" or "gg".
                     if btts_text in ['bttsyes', 'gg']:
                         outcome_name_to_find = 'Yes'
                     elif btts_text in ['bttsno', 'ng']:
@@ -384,9 +383,13 @@ def settle_ticket(ticket_id: int):
     If the ticket is won, it processes the payout. Handles PUSHed bets correctly.
     Triggers a notification to the user if the status changes.
     """
+    # --- Local Imports to Prevent Circular Dependency ---
+    from football_data_app.models import BetTicket
+    from .tasks import send_bet_ticket_settlement_notification_task
+
     with transaction.atomic():
-        # Lock the ticket to prevent race conditions
         try:
+            # Lock the ticket to prevent race conditions
             ticket = BetTicket.objects.select_for_update().get(pk=ticket_id)
         except BetTicket.DoesNotExist:
             logger.error(f"settle_ticket failed: BetTicket with ID {ticket_id} not found.")

@@ -16,28 +16,46 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
     Internal helper to mark a transaction as FAILED and notify the user.
     This is not a Celery task itself but a utility function.
     """
-    logger.warning(f"Failing transaction {transaction_obj.reference}. Reason: {reason}")
+    logger.warning(f"Attempting to fail transaction {transaction_obj.reference}. Reason: {reason}")
 
-    with transaction.atomic():
-        tx_to_fail = WalletTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
-        if tx_to_fail.status == 'COMPLETED':
-            logger.warning(f"Attempted to fail transaction {tx_to_fail.reference} which is already COMPLETED. Aborting failure process.")
-            return
-        
-        tx_to_fail.status = 'FAILED'
-        tx_to_fail.description = reason[:255] # Truncate reason to fit model field
-        tx_to_fail.save(update_fields=['status', 'description'])
-
+    tx_to_fail = None
     try:
-        contact_to_notify = tx_to_fail.wallet.user.customer_profile.contact
-        failure_message = f"❌ We're sorry, but your payment could not be processed. Please try again later. (Ref: {tx_to_fail.reference})"
-        message_data = create_text_message_data(text_body=failure_message)
-        send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
-        logger.info(f"Successfully notified user {contact_to_notify.whatsapp_id} about payment failure for {tx_to_fail.reference}.")
-    except Exception as notify_exc:
-        logger.error(f"Error notifying user about failed transaction {tx_to_fail.reference}: {notify_exc}", exc_info=True)
+        with transaction.atomic():
+            # Atomically fetch and lock the transaction ONLY if it's still PENDING.
+            # This prevents a race condition where an IPN completes the transaction
+            # just before this function tries to fail it.
+            tx_to_fail = WalletTransaction.objects.select_for_update().get(
+                pk=transaction_obj.pk,
+                status='PENDING'
+            )
+            
+            tx_to_fail.status = 'FAILED'
+            tx_to_fail.description = reason[:255] # Truncate reason to fit model field
+            tx_to_fail.save(update_fields=['status', 'description'])
+            
+    except WalletTransaction.DoesNotExist:
+        # This is not an error. It means the transaction was already processed
+        # (e.g., COMPLETED by an IPN) between when the fail task was called
+        # and when this lock was acquired.
+        logger.info(
+            f"Transaction {transaction_obj.reference} was not in PENDING state "
+            f"when attempting to fail it. It was likely already processed. No action taken."
+        )
+        return # Exit without doing anything further
 
-@shared_task(name="paynow_integration.initiate_paynow_express_checkout_task", bind=True, max_retries=3, default_retry_delay=60)
+    # If we successfully failed the transaction, now notify the user.
+    # This is outside the atomic block to avoid holding locks during network calls.
+    if tx_to_fail:
+        try:
+            contact_to_notify = tx_to_fail.wallet.user.customer_profile.contact
+            failure_message = f"❌ We're sorry, but your payment could not be processed. Please try again later. (Ref: {tx_to_fail.reference})"
+            message_data = create_text_message_data(text_body=failure_message)
+            send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
+            logger.info(f"Successfully notified user {contact_to_notify.whatsapp_id} about payment failure for {tx_to_fail.reference}.")
+        except Exception as notify_exc:
+            logger.error(f"Error notifying user about failed transaction {tx_to_fail.reference}: {notify_exc}", exc_info=True)
+
+@shared_task(name="paynow_integration.initiate_paynow_express_checkout_task", bind=True, max_retries=3, default_retry_delay=90)
 def initiate_paynow_express_checkout_task(self, transaction_reference: str):
     """
     Asynchronously initiates a Paynow Express Checkout payment.
@@ -108,12 +126,20 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
                 logger.info(f"Successfully initiated Paynow payment for {transaction_reference} and scheduled polling.")
         else:
             raise Exception(paynow_response.get('message', 'Unknown error from Paynow'))
-
-    except WalletTransaction.DoesNotExist:
-        logger.error(f"Task failed: WalletTransaction with reference {transaction_reference} not found.")
-    except Exception as e: # Catch Paynow initiation failure
-        logger.error(f"Error initiating Paynow for {transaction_reference}: {e}", exc_info=True)
-        fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=str(e)[:200]) # Notify immediately
+    
+    except (WalletTransaction.DoesNotExist, ValueError) as e:
+        # These are permanent, non-recoverable errors. Do not retry.
+        logger.error(f"Permanent error initiating Paynow for {transaction_reference}, will not retry: {e}", exc_info=True)
+        fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=str(e)[:200])
+    except Exception as e:
+        # These are potentially transient errors (e.g., network timeout, Paynow 500 error).
+        logger.warning(f"Transient error initiating Paynow for {transaction_reference}, will retry ({self.request.retries + 1}/{self.max_retries}): {e}")
+        try:
+            # Retry the task with the default delay.
+            self.retry(exc=e)
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries exceeded for initiating payment {transaction_reference}. Failing transaction.")
+            fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=f"Failed after multiple retries: {str(e)[:150]}")
 
 @shared_task(name="paynow_integration.poll_paynow_transaction_status", bind=True, max_retries=10, default_retry_delay=120)
 def poll_paynow_transaction_status(self, transaction_reference: str):
