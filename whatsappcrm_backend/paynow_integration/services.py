@@ -89,3 +89,19 @@ class PaynowService:
         except Exception as e:
             logger.error(f"Error during Paynow SDK check_transaction_status for {poll_url}: {type(e).__name__}: {e}", exc_info=True)
             return {"success": False, "message": f"Error checking status: {type(e).__name__} - {e}"}
+
+    def verify_ipn_hash(self, ipn_data: Dict[str, Any]) -> bool:
+        """
+        Verifies the hash of an incoming IPN message to ensure it's authentic.
+        Delegates the actual hash generation and comparison to the PaynowSDK.
+        """
+        if not self.paynow_sdk:
+            logger.error("Paynow SDK not initialized when verify_ipn_hash was called.")
+            return False
+        
+        logger.debug(f"Verifying IPN hash for reference: {ipn_data.get('reference')}")
+        try:
+            return self.paynow_sdk.verify_ipn_hash(ipn_data)
+        except Exception as e:
+            logger.error(f"Error during Paynow SDK verify_ipn_hash: {e}", exc_info=True)
+            return False

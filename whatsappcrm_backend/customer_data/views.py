@@ -7,12 +7,12 @@ from django.utils import timezone
 from django.http import Http404
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-
+from urllib.parse import parse_qs
 
 from .models import CustomerProfile
 from .serializers import CustomerProfileSerializer
 from conversations.models import Contact # To ensure contact exists for profile creation/retrieval
-from .utils import process_paynow_ipn
+from paynow_integration.tasks import process_paynow_ipn_task
 
 import logging
 logger = logging.getLogger(__name__)
@@ -73,24 +73,31 @@ class CustomerProfileViewSet(viewsets.ModelViewSet):
 @method_decorator(csrf_exempt, name='dispatch')
 class PaynowIPNWebhookView(APIView):
     """
-    Receives Instant Payment Notifications (IPN) from Paynow.
-    This endpoint should be publicly accessible.
+    Handles Instant Payment Notifications (IPNs) from Paynow.
+    This endpoint is public and receives status updates for transactions.
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny] # Paynow needs to access this without authentication
 
     def post(self, request, *args, **kwargs):
-        # Paynow sends data as form-urlencoded
-        ipn_data = request.data.dict()
-        logger.info(f"Received Paynow IPN webhook request. Data: {ipn_data}")
+        log_prefix = "[Paynow IPN]" # Default prefix
+        try:
+            post_data_str = request.body.decode('utf-8')
 
-        # Offload processing to a utility function
-        result = process_paynow_ipn(ipn_data)
+            # Try to get reference for logging context, but don't fail if it's malformed yet
+            parsed_for_log = parse_qs(post_data_str)
+            ref_for_log = parsed_for_log.get('reference', ['N/A'])[0]
+            log_prefix = f"[Paynow IPN - Ref: {ref_for_log}]"
+            logger.info(f"{log_prefix} Received raw IPN data.")
 
-        if result["success"]:
-            # Paynow expects an empty 200 OK to acknowledge receipt.
+            ipn_data = {k: v[0] for k, v in parsed_for_log.items()}
+
+            if not ipn_data.get('reference'):
+                logger.warning(f"{log_prefix} IPN is missing 'reference' field. Discarding.")
+                return Response(status=status.HTTP_400_BAD_REQUEST)
+
+            logger.info(f"{log_prefix} Queuing IPN for processing via Celery task.")
+            process_paynow_ipn_task.delay(ipn_data)
             return Response(status=status.HTTP_200_OK)
-        else:
-            # Even on failure, we return 200 OK so Paynow doesn't keep retrying.
-            # The error is logged on our side for investigation.
-            logger.error(f"Failed to process Paynow IPN. Reason: {result['message']}. Data: {ipn_data}")
+        except Exception as e:
+            logger.error(f"{log_prefix} Unhandled error processing incoming IPN: {e}", exc_info=True)
             return Response(status=status.HTTP_200_OK)

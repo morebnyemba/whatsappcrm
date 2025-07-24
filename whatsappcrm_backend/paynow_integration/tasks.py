@@ -1,6 +1,7 @@
 # paynow_integration/tasks.py
 import logging
 from celery import shared_task
+import random
 from django.db import transaction
 from django.utils import timezone
 
@@ -209,11 +210,16 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                     return # Task is complete
 
                 else: # 'pending', 'created', 'sent', etc.
-                    logger.info(f"{log_prefix} Transaction is still pending with status '{status}'. Retrying task.")
-                    self.retry(exc=Exception(f"Transaction is still pending. Current status: {status}"))
+                    # Implement exponential backoff with jitter to reduce load on Paynow's servers.
+                    # Retries will happen at approx. 60s, 120s, 240s, etc.
+                    retry_delay = 60 * (2 ** self.request.retries)
+                    retry_delay_with_jitter = retry_delay + random.randint(0, 15) # Add some randomness
+                    logger.info(f"{log_prefix} Transaction is still pending with status '{status}'. Retrying in {retry_delay_with_jitter} seconds.")
+                    self.retry(exc=Exception(f"Transaction is still pending. Current status: {status}"), countdown=retry_delay_with_jitter)
             else:
                 error_msg = status_response.get('message', 'Unknown API error')
                 logger.error(f"{log_prefix} Failed to get Paynow status: {error_msg}. Retrying task.")
+                # For API errors, we can use the default retry delay.
                 self.retry(exc=Exception(f"Failed to get Paynow status: {error_msg}"))
 
     except WalletTransaction.DoesNotExist:
@@ -286,3 +292,36 @@ def fail_pending_transaction_and_notify(transaction_reference: str, error_messag
         logger.error(f"Transaction with reference {transaction_reference} not found (or not PENDING) while attempting to mark as failed.")
     except Exception as e:
         logger.error(f"Error in fail_pending_transaction_and_notify task for {transaction_reference}: {e}", exc_info=True)
+
+
+@shared_task(name="paynow_integration.process_paynow_ipn_task")
+def process_paynow_ipn_task(ipn_data: dict):
+    """
+    Processes a Paynow IPN message. It verifies the IPN hash, then triggers
+    the polling task to confirm the transaction status before updating the database.
+    """
+    reference = ipn_data.get('reference')
+    if not reference:
+        logger.error("[IPN Task] Received IPN data without a reference. Cannot process.")
+        return
+
+    log_prefix = f"[IPN Task - Ref: {reference}]"
+    logger.info(f"{log_prefix} Starting to process IPN data: {ipn_data}")
+
+    paynow_service = PaynowService()
+    if not paynow_service.verify_ipn_hash(ipn_data):
+        logger.error(f"{log_prefix} IPN hash verification failed. Discarding message.")
+        return
+
+    logger.info(f"{log_prefix} IPN hash verified successfully. Triggering status poll.")
+
+    try:
+        # Check if the transaction is still in a state that needs processing.
+        if WalletTransaction.objects.filter(reference=reference, status='PENDING').exists():
+            poll_paynow_transaction_status.delay(transaction_reference=reference)
+            logger.info(f"{log_prefix} Polling task has been scheduled to finalize the transaction.")
+        else:
+            logger.info(f"{log_prefix} Transaction is not in PENDING state. It was likely already processed. No action taken.")
+
+    except Exception as e:
+        logger.error(f"{log_prefix} An unexpected error occurred while triggering the poll task: {e}", exc_info=True)
