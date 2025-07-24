@@ -1,10 +1,12 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim-buster
+# Use "bullseye" which is a more recent and supported Debian version than "buster"
+FROM python:3.10-slim-bullseye
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV DJANGO_SETTINGS_MODULE whatsappcrm_backend.settings # Good practice to set a default
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+# Good practice to set a default settings module
+ENV DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
 
 # Set work directory
 WORKDIR /app
