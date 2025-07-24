@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-# Use "bullseye" which is a more recent and supported Debian version than "buster"
+# Use "bullseye" which is a more recent and supported Debian version than "buster".
 FROM python:3.10-slim-bullseye
 
 # Set environment variables
@@ -40,6 +40,12 @@ RUN mkdir -p /app/whatsapp_media_assets # Assuming this is your MEDIA_ROOT
 
 # Expose port (ensure this matches what Gunicorn/Daphne will run on)
 EXPOSE 8000
+
+# Add a healthcheck to ensure the application is running correctly.
+# This command will be run inside the container to check its health.
+# The /admin/login/ endpoint is a good default as it's lightweight.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:8000/admin/login/ || exit 1
 
 # Command to run the application (default for services using this image, like 'backend')
 # This will be overridden by the 'command' in docker-compose.yml for celery_worker and celery_beat.
