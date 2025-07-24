@@ -1,5 +1,6 @@
 # paynow_integration/tasks.py
 import logging
+from typing import Optional
 from celery import shared_task
 import random
 from django.db import transaction
@@ -12,13 +13,13 @@ from customer_data.tasks import send_deposit_confirmation_whatsapp
 
 logger = logging.getLogger(__name__)
 
-def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason: str):
+def _fail_transaction_in_db(transaction_obj: WalletTransaction, reason: str) -> Optional[WalletTransaction]:
     """
-    Internal helper to mark a transaction as FAILED and notify the user.
-    This is not a Celery task itself but a utility function.
+    Internal helper to mark a transaction as FAILED in the database.
+    This is NOT a Celery task. It returns the failed transaction on success, or None.
     """
-    log_prefix = f"[Fail Helper - Ref: {transaction_obj.reference}]"
-    logger.warning(f"{log_prefix} Attempting to fail transaction. Reason: {reason}")
+    log_prefix = f"[DB Fail Helper - Ref: {transaction_obj.reference}]"
+    logger.warning(f"{log_prefix} Attempting to fail transaction in DB. Reason: {reason}")
 
     tx_to_fail = None
     try:
@@ -33,7 +34,8 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
             
             tx_to_fail.status = 'FAILED'
             tx_to_fail.description = reason[:255] # Truncate reason to fit model field
-            tx_to_fail.save(update_fields=['status', 'description'])
+            tx_to_fail.save(update_fields=['status', 'description', 'updated_at'])
+            logger.info(f"{log_prefix} Successfully marked transaction as FAILED in the database.")
             
     except WalletTransaction.DoesNotExist:
         # This is not an error. It means the transaction was already processed
@@ -43,20 +45,30 @@ def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason
             f"{log_prefix} Transaction was not in PENDING state "
             "when attempting to fail. It was likely already processed. No action taken."
         )
-        return # Exit without doing anything further
+        return None
 
-    # If we successfully failed the transaction, now notify the user.
-    # This is outside the atomic block to avoid holding locks during network calls.
-    if tx_to_fail:
-        try:
-            contact_to_notify = tx_to_fail.wallet.user.customer_profile.contact
-            logger.info(f"{log_prefix} Queuing failure notification to user {contact_to_notify.whatsapp_id}.")
-            failure_message = f"❌ We're sorry, but your payment could not be processed. Please try again later. (Ref: {tx_to_fail.reference})"
-            message_data = create_text_message_data(text_body=failure_message)
-            send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
-            logger.info(f"{log_prefix} Successfully sent failure notification to user {contact_to_notify.whatsapp_id}.")
-        except Exception as notify_exc:
-            logger.error(f"{log_prefix} Error notifying user about failed transaction: {notify_exc}", exc_info=True)
+    return tx_to_fail
+
+@shared_task(name="paynow_integration.send_payment_failure_notification_task")
+def send_payment_failure_notification_task(transaction_reference: str):
+    """
+    Sends a WhatsApp message to the user notifying them of a failed transaction.
+    """
+    log_prefix = f"[Failure Notif Task - Ref: {transaction_reference}]"
+    logger.info(f"{log_prefix} Preparing to send failure notification.")
+    try:
+        # We don't need to lock here, just read the data.
+        tx = WalletTransaction.objects.get(reference=transaction_reference)
+        contact_to_notify = tx.wallet.user.customer_profile.contact
+        
+        failure_message = f"❌ We're sorry, but your payment could not be processed. Please try again later. (Ref: {tx.reference})"
+        message_data = create_text_message_data(text_body=failure_message)
+        send_whatsapp_message(to_phone_number=contact_to_notify.whatsapp_id, message_type='text', data=message_data)
+        logger.info(f"{log_prefix} Successfully sent failure notification to user {contact_to_notify.whatsapp_id}.")
+    except WalletTransaction.DoesNotExist:
+        logger.error(f"{log_prefix} Could not find transaction to send failure notification.")
+    except Exception as e:
+        logger.error(f"{log_prefix} Error sending failure notification: {e}", exc_info=True)
 
 @shared_task(name="paynow_integration.initiate_paynow_express_checkout_task", bind=True, max_retries=3, default_retry_delay=90)
 def initiate_paynow_express_checkout_task(self, transaction_reference: str):
@@ -140,7 +152,6 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
     except (WalletTransaction.DoesNotExist, ValueError) as e:
         # These are permanent, non-recoverable errors. Do not retry.
         logger.error(f"{log_prefix} Permanent error during initiation, will not retry: {e}", exc_info=True)
-        fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=str(e)[:200])
     except Exception as e:
         # These are potentially transient errors (e.g., network timeout, Paynow 500 error).
         logger.warning(f"{log_prefix} Transient error during initiation, will retry ({self.request.retries + 1}/{self.max_retries}): {e}")
