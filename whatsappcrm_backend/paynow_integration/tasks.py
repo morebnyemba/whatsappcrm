@@ -49,6 +49,27 @@ def _fail_transaction_in_db(transaction_obj: WalletTransaction, reason: str) -> 
 
     return tx_to_fail
 
+def _fail_transaction_and_notify_user(transaction_obj: WalletTransaction, reason: str):
+    """
+    Internal helper to fail a transaction in the DB and notify the user.
+    This is NOT a Celery task.
+    """
+    log_prefix = f"[Fail & Notify Helper - Ref: {transaction_obj.reference}]"
+    logger.info(f"{log_prefix} Starting process to fail transaction and notify user. Reason: {reason}")
+    
+    # First, try to fail the transaction in the database.
+    # _fail_transaction_in_db is atomic and handles race conditions.
+    # It returns the failed transaction object if it successfully marked it as FAILED,
+    # or None if the transaction was already processed.
+    failed_tx = _fail_transaction_in_db(transaction_obj, reason)
+    
+    # Only send a notification if the transaction was actually marked as FAILED by this process.
+    if failed_tx:
+        logger.info(f"{log_prefix} Transaction successfully failed. Triggering user notification.")
+        send_payment_failure_notification_task.delay(transaction_reference=failed_tx.reference)
+    else:
+        logger.info(f"{log_prefix} Transaction was not failed by this process (likely already processed). No notification will be sent.")
+
 @shared_task(name="paynow_integration.send_payment_failure_notification_task")
 def send_payment_failure_notification_task(transaction_reference: str):
     """

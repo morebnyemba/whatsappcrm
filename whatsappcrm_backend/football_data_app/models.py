@@ -108,8 +108,8 @@ class MarketCategory(models.Model):
 class Market(models.Model):
     """A specific betting market available for a fixture from a bookmaker."""
     fixture = models.ForeignKey(FootballFixture, on_delete=models.CASCADE, related_name='markets')
-    bookmaker = models.ForeignKey(Bookmaker, on_delete=models.CASCADE, related_name='markets')
-    category = models.ForeignKey(MarketCategory, on_delete=models.CASCADE, related_name='markets')
+    bookmaker = models.ForeignKey(Bookmaker, on_delete=models.CASCADE, related_name='bookmaker_markets')
+    category = models.ForeignKey(MarketCategory, on_delete=models.CASCADE, related_name='category_markets')
     api_market_key = models.CharField(max_length=50, help_text="The market key from the API, e.g., 'h2h', 'totals'.")
     last_updated_odds_api = models.DateTimeField(help_text="Timestamp of the market update from the API.")
     is_active = models.BooleanField(default=True)
