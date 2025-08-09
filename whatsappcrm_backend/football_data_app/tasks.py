@@ -287,8 +287,27 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
         # The data structure is a single event object
         with transaction.atomic():
             # Re-fetch fixture with lock to prevent race conditions during update
-            fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
+            fixture_for_update = FootballFixture.objects.select_for_update().select_related('home_team', 'away_team').get(id=fixture.id)
 
+            # --- TEAM NAME SYNC FIX ---
+            # The odds endpoint is the source of truth for team names used in market outcomes.
+            # This ensures that fixture team names match the names in the odds data (e.g., "Man Utd" vs "Manchester United").
+            api_home_team_name = odds_data.get('home_team')
+            api_away_team_name = odds_data.get('away_team')
+            team_fields_to_update = []
+
+            if api_home_team_name and fixture_for_update.home_team.name != api_home_team_name:
+                logger.warning(f"[TeamSync] Mismatch for fixture {fixture.id}: DB home team '{fixture_for_update.home_team.name}' vs API odds home team '{api_home_team_name}'. Syncing.")
+                correct_home_team, _ = Team.objects.get_or_create(name=api_home_team_name)
+                fixture_for_update.home_team = correct_home_team
+                team_fields_to_update.append('home_team')
+            
+            if api_away_team_name and fixture_for_update.away_team.name != api_away_team_name:
+                logger.warning(f"[TeamSync] Mismatch for fixture {fixture.id}: DB away team '{fixture_for_update.away_team.name}' vs API odds away team '{api_away_team_name}'. Syncing.")
+                correct_away_team, _ = Team.objects.get_or_create(name=api_away_team_name)
+                fixture_for_update.away_team = correct_away_team
+                team_fields_to_update.append('away_team')
+            # --- END TEAM NAME SYNC FIX ---
             # Get a list of bookmaker keys present in the new API data
             bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
 
@@ -309,8 +328,9 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
                 _process_bookmaker_data(fixture_for_update, bookmaker_data)
 
             fixture_for_update.last_odds_update = timezone.now()
-            fixture_for_update.save(update_fields=['last_odds_update'])
-            logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}.")
+            fields_to_save = ['last_odds_update'] + team_fields_to_update
+            fixture_for_update.save(update_fields=fields_to_save)
+            logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}. Updated fields: {fields_to_save}")
             return {"fixture_id": fixture.id, "status": "success"}
 
     except FootballFixture.DoesNotExist:
