@@ -7,6 +7,8 @@ from dateutil import parser
 from datetime import timedelta
 from decimal import Decimal
 from typing import List, Dict, Any
+import random
+import time
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
@@ -246,6 +248,12 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_single_event_task(self, fixture_id: int):
     """Fetches all available markets for a single fixture using the dedicated event odds endpoint."""
+    # --- PERFORMANCE FIX: Add jitter to spread out API requests ---
+    # This prevents overwhelming the API with a large burst of simultaneous requests.
+    # Since gevent is used, time.sleep is non-blocking.
+    time.sleep(random.uniform(0.5, 3.0))
+    # --- END FIX ---
+
     try:
         fixture = FootballFixture.objects.select_related('league').get(id=fixture_id)
         logger.info(f"[SingleEventOdds] START - Fetching odds for fixture ID: {fixture.id} (API Event ID: {fixture.api_id})")
@@ -331,6 +339,19 @@ def process_ticket_settlement_task(ticket_id: int):
     except Exception as e:
         logger.error(f"Error during settlement for BetTicket ID {ticket_id}: {e}", exc_info=True)
 
+@shared_task(name="football_data_app.process_ticket_settlement_batch_task")
+def process_ticket_settlement_batch_task(ticket_ids: List[int]):
+    """
+    Processes a batch of bet tickets for settlement.
+    This is more efficient than creating one task per ticket.
+    """
+    logger.info(f"Processing settlement for a batch of {len(ticket_ids)} tickets.")
+    for ticket_id in ticket_ids:
+        try:
+            settle_ticket(ticket_id)
+        except Exception as e:
+            logger.error(f"Error during batch settlement for BetTicket ID {ticket_id}: {e}", exc_info=True)
+
 @shared_task(bind=True, name="football_data_app.reconcile_and_settle_pending_items")
 def reconcile_and_settle_pending_items_task(self):
     """
@@ -400,16 +421,16 @@ def reconcile_and_settle_pending_items_task(self):
 
     # --- Step 2: Settle bet tickets that are now fully resolved ---
     # Find all pending tickets and check if they are now fully resolved.
-    # We only need the IDs, as the settlement task will fetch the full object.
-    ticket_ids_to_check = BetTicket.objects.filter(status='PENDING').values_list('id', flat=True)
+    ticket_ids_to_check = list(BetTicket.objects.filter(status='PENDING').values_list('id', flat=True))
 
     tickets_settled_count = 0
     if ticket_ids_to_check:
-        for ticket_id in ticket_ids_to_check:
-            process_ticket_settlement_task.delay(ticket_id)
+        # PERFORMANCE FIX: Use chunks to batch process tickets, avoiding a "task storm".
+        process_ticket_settlement_batch_task.chunks(zip(ticket_ids_to_check), 100).apply_async()
         tickets_settled_count = len(ticket_ids_to_check)
+        logger.info(f"[Reconciliation] Dispatched {tickets_settled_count} tickets for settlement in batches of 100.")
 
-    logger.info(f"[Reconciliation] FINISHED - Stuck Fixtures Triggered: {stuck_fixtures_triggered_count}, Bets updated: {bets_updated_count}, Tickets settled: {tickets_settled_count}.")
+    logger.info(f"[Reconciliation] FINISHED - Stuck Fixtures Triggered: {stuck_fixtures_triggered_count}, Bets updated: {bets_updated_count}, Tickets dispatched for settlement: {tickets_settled_count}.")
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
 
@@ -685,17 +706,17 @@ def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_statu
         raise self.retry(exc=e)
 
 @shared_task(bind=True)
-def settle_tickets_for_fixture_task(self, fixture_id: int):
+def settle_tickets_for_fixture_task(self, fixture_id: int): # No change to signature
     """Settles bet tickets based on bet statuses."""
     if not fixture_id:
         return
     logger.info(f"Settling tickets for fixture ID: {fixture_id}")
     # Find all unique PENDING ticket IDs that contain a bet related to the just-finished fixture.
     try:
-        affected_ticket_ids = BetTicket.objects.filter(
+        affected_ticket_ids = list(BetTicket.objects.filter(
             status='PENDING',
             bets__market_outcome__market__fixture_id=fixture_id
-        ).distinct().values_list('id', flat=True)
+        ).distinct().values_list('id', flat=True))
 
         if not affected_ticket_ids:
             logger.info(f"No pending tickets found for fixture {fixture_id} that need settlement checks.")
@@ -703,10 +724,10 @@ def settle_tickets_for_fixture_task(self, fixture_id: int):
 
         # For each affected ticket, trigger the settlement task.
         # The task will handle the full logic of checking if it's ready to be settled.
-        for ticket_id in affected_ticket_ids:
-            process_ticket_settlement_task.delay(ticket_id)
+        # PERFORMANCE FIX: Use chunks to batch process tickets, avoiding a "task storm".
+        process_ticket_settlement_batch_task.chunks(zip(affected_ticket_ids), 100).apply_async()
 
-        logger.info(f"Dispatched settlement check tasks for {len(affected_ticket_ids)} tickets related to fixture {fixture_id}.")
+        logger.info(f"Dispatched settlement check tasks for {len(affected_ticket_ids)} tickets related to fixture {fixture_id} in batches of 100.")
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}")
         raise self.retry(exc=e)

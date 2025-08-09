@@ -250,124 +250,132 @@ def get_formatted_football_data(
 
 def parse_betting_string(betting_string: str) -> dict:
     """
-    Parses a free-form betting string into a list of market outcome IDs and a stake,
-    where each bet line specifies a fixture ID (Django's auto-incrementing PK) and an outcome option.
+    Parses a free-form betting string into a list of market outcome IDs and a stake.
+    This version is optimized to reduce database queries for multi-line bet slips.
     """
     # --- Local Import to Prevent Circular Dependency ---
     from football_data_app.models import FootballFixture, MarketOutcome
 
     lines = [line.strip() for line in betting_string.split('\n') if line.strip()]
-    market_outcome_ids = []
+    parsed_bets = []
     stake_amount = Decimal('0.0')
+    fixture_ids_to_fetch = set()
 
     stake_pattern = re.compile(r"Stake\s*\$?\s*([\d\.,]+)", re.IGNORECASE)
     bet_line_pattern = re.compile(r"(\d+)\s+(.*)", re.IGNORECASE)
 
+    # --- First Pass: Parse lines and collect fixture IDs ---
     for line in lines:
         stake_match = stake_pattern.match(line)
         if stake_match:
             try:
                 stake_str = stake_match.group(1).replace(',', '')
                 stake_amount = Decimal(stake_str)
-            except ValueError:
+            except (ValueError, TypeError):
                 return {"success": False, "message": f"Invalid stake amount: {stake_match.group(1)}"}
             continue
 
         bet_line_match = bet_line_pattern.match(line)
         if bet_line_match:
-            fixture_id_str = bet_line_match.group(1).strip()
-            option_text = bet_line_match.group(2).strip()
-
             try:
-                matched_fixture = None
-                try:
-                    matched_fixture = FootballFixture.objects.get(id=int(fixture_id_str))
-                except (ValueError, FootballFixture.DoesNotExist):
-                    pass
-
-                if not matched_fixture:
-                    return {"success": False, "message": f"Could not find a fixture for ID '{fixture_id_str}'."}
-
-                found_outcome = None
-                
-                outcomes_for_fixture = MarketOutcome.objects.filter(
-                    market__fixture_id=matched_fixture.id,
-                    is_active=True
-                ).select_related('market')
-
-                # --- Enhanced Outcome Matching Logic ---
-
-                # 1. Try exact outcome_name match first (e.g., "Draw", "Yes", "No")
-                if not found_outcome:
-                    for outcome in outcomes_for_fixture:
-                        if outcome.outcome_name.lower() == option_text.lower():
-                            found_outcome = outcome
-                            break
-
-                # 2. Totals (Over/Under) matching e.g., "over 2.5", "u2.5"
-                if not found_outcome:
-                    totals_match = re.match(r"(over|under|o|u)\s*(\d+\.?\d*)", option_text, re.IGNORECASE)
-                    if totals_match:
-                        bet_type = totals_match.group(1).lower()
-                        point_val = Decimal(totals_match.group(2))
-                        outcome_name_to_find = 'over' if bet_type.startswith('o') else 'under'
-
-                        for outcome in outcomes_for_fixture:
-                            if outcome.market.api_market_key in ['totals', 'alternate_totals'] and \
-                               outcome.point_value is not None and Decimal(str(outcome.point_value)) == point_val and \
-                               outcome_name_to_find in outcome.outcome_name.lower():
-                                found_outcome = outcome
-                                break
-
-                # 3. BTTS (Both Teams To Score) matching e.g., "btts yes", "gg"
-                if not found_outcome:
-                    btts_text = option_text.lower().replace(" ", "")
-                    if btts_text in ['bttsyes', 'gg']:
-                        outcome_name_to_find = 'Yes'
-                    elif btts_text in ['bttsno', 'ng']:
-                        outcome_name_to_find = 'No'
-                    else:
-                        outcome_name_to_find = None
-                    
-                    if outcome_name_to_find:
-                        for outcome in outcomes_for_fixture:
-                            if outcome.market.api_market_key == 'btts' and outcome.outcome_name == outcome_name_to_find:
-                                found_outcome = outcome
-                                break
-                
-                # 4. H2H (Home/Away/Draw) matching e.g., "home", "away", "draw", "1", "x", "2"
-                if not found_outcome:
-                    h2h_text = option_text.lower()
-                    outcome_name_to_find = None
-                    if h2h_text in ['home', '1', matched_fixture.home_team.name.lower()]:
-                        outcome_name_to_find = matched_fixture.home_team.name
-                    elif h2h_text in ['away', '2', matched_fixture.away_team.name.lower()]:
-                        outcome_name_to_find = matched_fixture.away_team.name
-                    elif h2h_text in ['draw', 'x']:
-                        outcome_name_to_find = 'Draw'
-                    
-                    if outcome_name_to_find:
-                        for outcome in outcomes_for_fixture:
-                            if outcome.market.api_market_key == 'h2h' and outcome.outcome_name == outcome_name_to_find:
-                                found_outcome = outcome
-                                break
-
-                if found_outcome:
-                    market_outcome_ids.append(str(found_outcome.id))
-                else:
-                    return {"success": False, "message": f"Could not find a valid betting option for '{option_text}' in fixture '{matched_fixture.home_team.name} vs {matched_fixture.away_team.name}' (ID: {matched_fixture.id})."}
-
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                return {"success": False, "message": f"Error during bet option lookup for '{fixture_id_str} {option_text}': {str(e)}"}
+                fixture_id = int(bet_line_match.group(1).strip())
+                option_text = bet_line_match.group(2).strip()
+                fixture_ids_to_fetch.add(fixture_id)
+                parsed_bets.append({'fixture_id': fixture_id, 'option_text': option_text, 'original_line': line})
+            except (ValueError, TypeError):
+                return {"success": False, "message": f"Invalid fixture ID in line: '{line}'"}
         else:
             return {"success": False, "message": f"Unrecognized betting line format: '{line}'"}
 
-    if not market_outcome_ids:
+    if not parsed_bets:
         return {"success": False, "message": "No valid betting options found in the message."}
     if stake_amount <= 0:
         return {"success": False, "message": "Stake amount not found or is invalid. Please specify 'Stake $AMOUNT'."}
+
+    # --- Bulk Fetch Data ---
+    fixtures_map = {f.id: f for f in FootballFixture.objects.filter(id__in=fixture_ids_to_fetch).select_related('home_team', 'away_team')}
+    
+    outcomes_qs = MarketOutcome.objects.filter(
+        market__fixture_id__in=fixture_ids_to_fetch,
+        is_active=True
+    ).select_related('market')
+
+    outcomes_by_fixture = {}
+    for outcome in outcomes_qs:
+        fid = outcome.market.fixture_id
+        if fid not in outcomes_by_fixture:
+            outcomes_by_fixture[fid] = []
+        outcomes_by_fixture[fid].append(outcome)
+
+    # --- Second Pass: Match outcomes using in-memory data ---
+    market_outcome_ids = []
+    for bet in parsed_bets:
+        fixture_id = bet['fixture_id']
+        option_text = bet['option_text']
+        
+        matched_fixture = fixtures_map.get(fixture_id)
+        if not matched_fixture:
+            return {"success": False, "message": f"Could not find a fixture for ID '{fixture_id}'."}
+
+        outcomes_for_fixture = outcomes_by_fixture.get(fixture_id, [])
+        if not outcomes_for_fixture:
+            return {"success": False, "message": f"No active betting markets found for fixture ID '{fixture_id}'."}
+
+        found_outcome = None
+        
+        # --- Enhanced Outcome Matching Logic (applied to in-memory list) ---
+        # 1. Try exact outcome_name match first
+        for outcome in outcomes_for_fixture:
+            if outcome.outcome_name.lower() == option_text.lower():
+                found_outcome = outcome
+                break
+        
+        # 2. Totals (Over/Under) matching
+        if not found_outcome:
+            totals_match = re.match(r"(over|under|o|u)\s*(\d+\.?\d*)", option_text, re.IGNORECASE)
+            if totals_match:
+                bet_type, point_val_str = totals_match.groups()
+                point_val = Decimal(point_val_str)
+                outcome_name_to_find = 'over' if bet_type.lower().startswith('o') else 'under'
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key in ['totals', 'alternate_totals'] and \
+                       outcome.point_value is not None and Decimal(str(outcome.point_value)) == point_val and \
+                       outcome_name_to_find in outcome.outcome_name.lower():
+                        found_outcome = outcome
+                        break
+        
+        # 3. BTTS (Both Teams To Score) matching
+        if not found_outcome:
+            btts_text = option_text.lower().replace(" ", "")
+            outcome_name_to_find = None
+            if btts_text in ['bttsyes', 'gg']: outcome_name_to_find = 'Yes'
+            elif btts_text in ['bttsno', 'ng']: outcome_name_to_find = 'No'
+            if outcome_name_to_find:
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key == 'btts' and outcome.outcome_name == outcome_name_to_find:
+                        found_outcome = outcome
+                        break
+        
+        # 4. H2H (Home/Away/Draw) matching
+        if not found_outcome:
+            h2h_text = option_text.lower()
+            outcome_name_to_find = None
+            if h2h_text in ['home', '1', matched_fixture.home_team.name.lower()]:
+                outcome_name_to_find = matched_fixture.home_team.name
+            elif h2h_text in ['away', '2', matched_fixture.away_team.name.lower()]:
+                outcome_name_to_find = matched_fixture.away_team.name
+            elif h2h_text in ['draw', 'x']:
+                outcome_name_to_find = 'Draw'
+            if outcome_name_to_find:
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key == 'h2h' and outcome.outcome_name == outcome_name_to_find:
+                        found_outcome = outcome
+                        break
+
+        if found_outcome:
+            market_outcome_ids.append(str(found_outcome.id))
+        else:
+            return {"success": False, "message": f"Could not find a valid betting option for '{option_text}' in fixture '{matched_fixture.home_team.name} vs {matched_fixture.away_team.name}' (ID: {matched_fixture.id})."}
 
     return {
         "success": True,

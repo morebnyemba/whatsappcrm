@@ -1,9 +1,15 @@
 # IMPORTANT: gevent monkey-patching must happen before anything else.
 # This makes standard libraries (like sockets, requests) cooperative.
-import gevent.monkey
-gevent.monkey.patch_all()
-
 import os
+import sys
+
+# Only apply gevent monkey-patching if the process is a Celery worker.
+# This prevents import-time side effects when running other management commands
+# like 'migrate' or 'shell', which was causing a RuntimeError.
+if 'celery' in ' '.join(sys.argv):
+    import gevent.monkey
+    gevent.monkey.patch_all()
+
 from celery import Celery
 import django
 
