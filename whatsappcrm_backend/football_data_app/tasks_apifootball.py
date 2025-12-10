@@ -752,6 +752,12 @@ def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_statu
     logger.info(f"Sending settlement notification for BetTicket ID: {ticket_id}, Status: {new_status}")
     try:
         ticket = BetTicket.objects.select_related('user__customer_profile__contact', 'user__wallet').get(pk=ticket_id)
+        
+        # Check if user has customer profile and contact
+        if not hasattr(ticket.user, 'customer_profile') or not ticket.user.customer_profile.contact:
+            logger.warning(f"Cannot send notification - no contact found for ticket {ticket_id}.")
+            return
+        
         contact = ticket.user.customer_profile.contact
         
         if new_status == 'WON':
@@ -765,6 +771,12 @@ def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_statu
                 f"😔 Unfortunately, your bet ticket (ID: {ticket.id}) has lost.\n\n"
                 f"Better luck next time! Type 'fixtures' to see upcoming matches."
             )
+        elif new_status == 'REFUNDED':
+            message_body = (
+                f"ℹ️ Your bet ticket (ID: {ticket.id}) has been refunded.\n\n"
+                f"The match result was a push/void. Your stake of ${Decimal(winnings):.2f} has been returned to your wallet.\n"
+                f"New balance: ${ticket.user.wallet.balance:.2f}"
+            )
         else:
             logger.warning(f"Unhandled status '{new_status}' for ticket {ticket_id}.")
             return
@@ -775,6 +787,8 @@ def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_statu
     
     except BetTicket.DoesNotExist:
         logger.error(f"BetTicket {ticket_id} not found for notification.")
+    except AttributeError as e:
+        logger.error(f"Missing attribute when sending notification for ticket {ticket_id}: {e}", exc_info=True)
     except Exception as e:
         logger.exception(f"Error sending notification for ticket {ticket_id}: {e}")
         raise self.retry(exc=e)

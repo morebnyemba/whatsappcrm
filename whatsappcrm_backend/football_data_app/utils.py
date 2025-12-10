@@ -398,86 +398,103 @@ def settle_ticket(ticket_id: int):
     log_prefix = f"[Settle Ticket - ID: {ticket_id}]"
     logger.info(f"{log_prefix} Starting settlement process.")
 
-    with transaction.atomic():
-        try:
-            # Lock the ticket to prevent race conditions
-            ticket = BetTicket.objects.select_for_update().get(pk=ticket_id)
-        except BetTicket.DoesNotExist:
-            logger.error(f"{log_prefix} Failed: BetTicket not found in database.")
-            return
+    try:
+        with transaction.atomic():
+            try:
+                # Lock the ticket to prevent race conditions
+                ticket = BetTicket.objects.select_for_update().get(pk=ticket_id)
+            except BetTicket.DoesNotExist:
+                logger.error(f"{log_prefix} Failed: BetTicket not found in database.")
+                return
 
-        # Only process tickets that are currently PENDING
-        if ticket.status != 'PENDING':
-            logger.info(f"{log_prefix} Skipping: Ticket is already settled with status '{ticket.status}'.")
-            return
+            # Only process tickets that are currently PENDING or PLACED
+            if ticket.status not in ['PENDING', 'PLACED']:
+                logger.info(f"{log_prefix} Skipping: Ticket is already settled with status '{ticket.status}'.")
+                return
 
-        bets = ticket.bets.all()
-        if not bets.exists():
-            logger.warning(f"{log_prefix} Ticket has no bets. Marking as LOST.")
-            ticket.status = 'LOST'
+            bets = ticket.bets.select_related('market_outcome').all()
+            if not bets.exists():
+                logger.warning(f"{log_prefix} Ticket has no bets. Marking as LOST.")
+                ticket.status = 'LOST'
+                ticket.save(update_fields=['status'])
+                send_bet_ticket_settlement_notification_task.delay(ticket_id=ticket.id, new_status='LOST', winnings="0.00")
+                return
+
+            bet_statuses = {bet.status for bet in bets}
+            logger.debug(f"{log_prefix} Found bet statuses: {bet_statuses}")
+
+            # If any bet is still pending, the ticket is not ready for settlement.
+            if 'PENDING' in bet_statuses:
+                logger.info(f"{log_prefix} Ticket still has pending bets. No status change.")
+                return
+
+            # Determine the final ticket status
+            new_status = ''
+            winnings = Decimal('0.00')
+
+            # Check if any bet lost
+            if 'LOST' in bet_statuses:
+                new_status = 'LOST'
+                logger.info(f"{log_prefix} At least one bet was LOST. Setting ticket status to LOST.")
+            # Check if we have any winning bets (may also have REFUNDED/PUSH bets)
+            elif 'WON' in bet_statuses:
+                new_status = 'WON'
+                # Calculate winnings, treating PUSH/REFUNDED odds as 1
+                total_odds = Decimal('1.0')
+                for bet in bets:
+                    if bet.status == 'WON':
+                        total_odds *= bet.market_outcome.odds
+                    # For REFUNDED/PUSH bets, multiply by 1.0 (no effect)
+                
+                # Calculate actual winnings
+                winnings = ticket.total_stake * total_odds
+                
+                logger.info(f"{log_prefix} Ticket WON. Stake: {ticket.total_stake}, Total Odds: {total_odds:.2f}, Winnings: {winnings:.2f}.")
+                
+                # Payout to user's wallet
+                if ticket.user and hasattr(ticket.user, 'wallet'):
+                    wallet = ticket.user.wallet
+                    wallet.add_funds(
+                        amount=winnings,
+                        description=f"Winnings from bet ticket ID: {ticket.id}",
+                        transaction_type='BET_WON'
+                    )
+                    logger.info(f"{log_prefix} Paid out ${winnings:.2f} to user '{ticket.user.username}' (Wallet ID: {wallet.id}).")
+                else:
+                    logger.error(f"{log_prefix} Cannot payout - user or wallet not found.")
+                    raise ValueError("User or wallet not found for payout")
+            # All bets are PUSH/REFUNDED
+            else:
+                new_status = 'REFUNDED'
+                winnings = ticket.total_stake # Refund stake
+                
+                logger.info(f"{log_prefix} All bets are REFUNDED/PUSH. Refunding stake of ${winnings:.2f}.")
+                
+                # Refund to user's wallet
+                if ticket.user and hasattr(ticket.user, 'wallet'):
+                    wallet = ticket.user.wallet
+                    wallet.add_funds(
+                        amount=winnings,
+                        description=f"Stake refund for pushed bet ticket ID: {ticket.id}",
+                        transaction_type='BET_REFUNDED'
+                    )
+                    logger.info(f"{log_prefix} Refunded stake of ${winnings:.2f} to user '{ticket.user.username}' (Wallet ID: {wallet.id}).")
+                else:
+                    logger.error(f"{log_prefix} Cannot refund - user or wallet not found.")
+                    raise ValueError("User or wallet not found for refund")
+
+            ticket.status = new_status
             ticket.save(update_fields=['status'])
-            send_bet_ticket_settlement_notification_task.delay(ticket_id=ticket.id, new_status='LOST')
-            return
+            logger.info(f"{log_prefix} Final status updated to {new_status} in database.")
 
-        bet_statuses = {bet.status for bet in bets}
-        logger.debug(f"{log_prefix} Found bet statuses: {bet_statuses}")
-
-        # If any bet is still pending, the ticket is not ready for settlement.
-        if 'PENDING' in bet_statuses:
-            logger.info(f"{log_prefix} Ticket still has pending bets. No status change.")
-            return
-
-        # Determine the final ticket status
-        new_status = ''
-        winnings = Decimal('0.00')
-
-        if 'LOST' in bet_statuses:
-            new_status = 'LOST'
-            logger.info(f"{log_prefix} At least one bet was LOST. Setting ticket status to LOST.")
-        elif 'WON' in bet_statuses:
-            new_status = 'WON'
-            # Calculate winnings, treating PUSH odds as 1
-            total_odds = Decimal('1.0')
-            for bet in bets:
-                if bet.status == 'WON':
-                    total_odds *= bet.market_outcome.odds
-            
-            winnings = ticket.stake * total_odds
-            ticket.winnings = winnings
-            
-            logger.info(f"{log_prefix} Ticket WON. Stake: {ticket.stake}, Total Odds: {total_odds:.2f}, Winnings: {winnings:.2f}.")
-            
-            # Payout to user's wallet
-            wallet = ticket.user.wallet
-            wallet.add_funds(
-                amount=winnings,
-                description=f"Winnings from bet ticket ID: {ticket.id}",
-                transaction_type='WINNINGS'
-            )
-            logger.info(f"{log_prefix} Paid out ${winnings:.2f} to user '{ticket.user.username}' (Wallet ID: {wallet.id}).")
-        else: # All non-lost bets are PUSH
-            new_status = 'PUSH'
-            winnings = ticket.stake # Refund stake
-            ticket.winnings = winnings
-            
-            logger.info(f"{log_prefix} All bets are PUSHed. Refunding stake of ${winnings:.2f}.")
-            
-            wallet = ticket.user.wallet
-            wallet.add_funds(
-                amount=winnings,
-                description=f"Stake refund for pushed bet ticket ID: {ticket.id}",
-                transaction_type='REFUND'
-            )
-            logger.info(f"{log_prefix} Refunded stake of ${winnings:.2f} to user '{ticket.user.username}' (Wallet ID: {wallet.id}).")
-
-        ticket.status = new_status
-        ticket.save(update_fields=['status', 'winnings'])
-        logger.info(f"{log_prefix} Final status updated to {new_status} in database.")
-
-        # Trigger notification task
+        # Trigger notification task outside the transaction to avoid issues
         logger.info(f"{log_prefix} Triggering settlement notification task for user.")
         send_bet_ticket_settlement_notification_task.delay(
             ticket_id=ticket.id,
             new_status=new_status,
             winnings=f"{winnings:.2f}"
         )
+    except Exception as e:
+        logger.error(f"{log_prefix} Error during ticket settlement: {str(e)}", exc_info=True)
+        # Re-raise to ensure transaction is rolled back
+        raise
