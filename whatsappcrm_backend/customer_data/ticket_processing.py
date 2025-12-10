@@ -101,12 +101,17 @@ def process_bet_ticket_submission(
             if not valid_outcomes:
                 return {"success": False, "message": "No valid market outcomes to place a bet."}
 
-            # Check that all fixtures are in a bettable state (not finished, cancelled, or postponed)
+            # Define non-bettable fixture statuses
+            NON_BETTABLE_STATUSES = [
+                FootballFixture.FixtureStatus.FINISHED,
+                FootballFixture.FixtureStatus.CANCELLED,
+                FootballFixture.FixtureStatus.POSTPONED
+            ]
+            
+            # Check that all fixtures are in a bettable state
             for outcome in valid_outcomes:
                 fixture = outcome.market.fixture
-                if fixture.status in [FootballFixture.FixtureStatus.FINISHED, 
-                                     FootballFixture.FixtureStatus.CANCELLED, 
-                                     FootballFixture.FixtureStatus.POSTPONED]:
+                if fixture.status in NON_BETTABLE_STATUSES:
                     return {
                         "success": False, 
                         "message": f"Cannot bet on match '{fixture.home_team.name} vs {fixture.away_team.name}' - match status is {fixture.status}."
