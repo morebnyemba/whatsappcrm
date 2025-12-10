@@ -1,35 +1,43 @@
-# Django Core
-django
-drf-nested-routers
+# Django Core - Updated to latest secure version
+django>=5.1.4,<6.0
+drf-nested-routers>=0.95.0
+
 # Environment variable management
-python-dotenv
+python-dotenv>=1.0.0
 
 # Admin interface theme
-django-jazzmin
+django-jazzmin>=3.0.0
 
-# REST API framework
-djangorestframework
-djangorestframework-simplejwt
+# REST API framework - Updated to latest secure versions
+djangorestframework>=3.15.2,<4.0
+djangorestframework-simplejwt>=5.4.0
 
-# CORS handling
-django-extensions
-django-cors-headers
-paynow
-# Celery and related packages
-celery
-django-celery-results
-django-celery-beat
-redis # For Celery broker if using Redis
+# CORS handling and extensions
+django-extensions>=3.2.3
+django-cors-headers>=4.6.0
+paynow>=1.2.0
 
-# Database connector (PostgreSQL)
-psycopg2-binary # Or psycopg2 if you manage build dependencies
+# Celery and related packages - Updated to latest versions
+celery[redis]>=5.4.0,<6.0
+django-celery-results>=2.5.1
+django-celery-beat>=2.7.0
+redis>=5.2.1
 
-# WSGI server for production
-gunicorn
+# Database connector (PostgreSQL) - Updated to latest
+psycopg2-binary>=2.9.10
 
-# ASGI server (since ASGI_APPLICATION is defined)
-daphne
-requests
-pydantic
-djoser
-gevent
+# WSGI server for production - Updated to latest
+gunicorn>=23.0.0
+
+# ASGI server (since ASGI_APPLICATION is defined) - Updated
+daphne>=4.1.2
+
+# HTTP and data validation - Updated to latest secure versions
+requests>=2.32.3
+pydantic>=2.10.5
+
+# Authentication - Updated to latest
+djoser>=2.3.0
+
+# Async support - Updated
+gevent>=24.11.1
