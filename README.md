@@ -223,6 +223,11 @@ whatsappcrm/
    - Admin Panel: http://localhost/admin
    - API: http://localhost/crm-api/
    - NPM Admin UI: http://localhost:81
+   
+   ⚠️ **Security Warning**: Port 81 provides administrative access to NPM. In production, restrict access using:
+   - Firewall rules to allow only trusted IPs
+   - NPM's built-in Access Lists feature
+   - VPN or SSH tunnel for remote access
 
 ## ⚙️ Environment Variables
 
@@ -266,7 +271,10 @@ Nginx Proxy Manager (NPM) provides a user-friendly web interface for managing re
 2. **Default Login Credentials**:
    - Email: `admin@example.com`
    - Password: `changeme`
-3. **⚠️ IMPORTANT**: Change these credentials immediately after first login!
+3. **⚠️ CRITICAL SECURITY STEPS**:
+   - Change default credentials immediately after first login
+   - Restrict port 81 access using firewall rules or Access Lists
+   - Consider using SSH tunnel for remote access: `ssh -L 8081:localhost:81 user@server`
 
 ### Creating Proxy Hosts
 

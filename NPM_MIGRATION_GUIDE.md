@@ -71,7 +71,7 @@ Navigate to: `http://your-server-ip:81`
 Create a new Proxy Host in NPM:
 
 #### Details Tab
-- **Domain Names:** `betblitz.co.zw`, `www.betblitz.co.zw` (or your domains)
+- **Domain Names:** `yourdomain.com`, `www.yourdomain.com`
 - **Scheme:** `http`
 - **Forward Hostname/IP:** `frontend`
 - **Forward Port:** `80`
@@ -153,17 +153,17 @@ location /media/ {
 ### 8. DNS Configuration
 
 Ensure your DNS records point to your server:
-- A Record: `betblitz.co.zw` → `93.127.139.173`
-- A Record: `www.betblitz.co.zw` → `93.127.139.173`
+- A Record: `yourdomain.com` → `YOUR_SERVER_IP`
+- A Record: `www.yourdomain.com` → `YOUR_SERVER_IP`
 
 ### 9. Firewall Rules
 
 Ensure these ports are open:
 - Port 80 (HTTP) - Required for Let's Encrypt validation
 - Port 443 (HTTPS) - Application traffic
-- Port 81 (NPM Admin UI) - **Restrict access via firewall or NPM Access Lists**
+- Port 81 (NPM Admin UI) - **⚠️ CRITICAL: Restrict access via firewall or NPM Access Lists**
 
-**Security Recommendation:** Restrict port 81 access to trusted IPs only:
+**⚠️ Security Requirement:** Port 81 provides full administrative control. Restrict access to trusted IPs only:
 
 ```bash
 # Using ufw (Ubuntu/Debian)
