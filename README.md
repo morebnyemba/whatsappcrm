@@ -6,8 +6,8 @@ A comprehensive WhatsApp Business CRM solution with automated conversational flo
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           Nginx Proxy                               │
-│                    (SSL/TLS, Load Balancing)                        │
+│                     Nginx Proxy Manager                             │
+│              (SSL/TLS, Web UI, Auto SSL Renewal)                    │
 ├────────────────────────────┬────────────────────────────────────────┤
 │                            │                                        │
 │     ┌──────────────────────▼──────────────────────┐                │
@@ -57,7 +57,7 @@ A comprehensive WhatsApp Business CRM solution with automated conversational flo
 
 ### Infrastructure
 - **Containerization**: Docker + Docker Compose
-- **Reverse Proxy**: Nginx (with SSL/TLS support)
+- **Reverse Proxy**: Nginx Proxy Manager (with SSL/TLS support and web UI)
 - **Database**: PostgreSQL 15 Alpine
 - **Cache/Broker**: Redis 7 Alpine
 
@@ -138,7 +138,7 @@ whatsappcrm/
 | **frontend** | Custom (React/Nginx) | Static frontend serving |
 | **celery_worker** | Custom (Django) | Background task processing |
 | **celery_beat** | Custom (Django) | Scheduled task runner |
-| **nginx_proxy** | nginx:1.25-alpine | Reverse proxy with SSL |
+| **nginx_proxy_manager** | jc21/nginx-proxy-manager | Reverse proxy with SSL & web UI |
 
 ## 🔧 Getting Started
 
@@ -175,10 +175,54 @@ whatsappcrm/
    docker-compose exec backend python manage.py createsuperuser
    ```
 
-6. **Access the application**
+6. **Configure Nginx Proxy Manager**
+   - Access NPM Admin UI: http://localhost:81
+   - Default credentials: admin@example.com / changeme
+   - **Important**: Change default credentials on first login!
+
+7. **Set up Proxy Hosts in NPM**
+   
+   Create the following proxy hosts in NPM UI:
+   
+   **Main Application (Frontend + API)**
+   - Domain: yourdomain.com, www.yourdomain.com
+   - Scheme: http
+   - Forward Hostname/IP: frontend
+   - Forward Port: 80
+   - Enable "Websockets Support"
+   - SSL: Request a new SSL certificate via Let's Encrypt
+   
+   **Backend API (Optional - if direct access needed)**
+   - Add custom locations in "Advanced" tab:
+     ```nginx
+     location /crm-api/ {
+         proxy_pass http://backend:8000;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto $scheme;
+         proxy_set_header Host $http_host;
+     }
+     
+     location /admin/ {
+         proxy_pass http://backend:8000;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto $scheme;
+         proxy_set_header Host $http_host;
+     }
+     
+     location /static/ {
+         alias /srv/www/static/;
+     }
+     
+     location /media/ {
+         alias /srv/www/media/;
+     }
+     ```
+
+8. **Access the application**
    - Frontend: http://localhost (or https://yourdomain.com)
    - Admin Panel: http://localhost/admin
    - API: http://localhost/crm-api/
+   - NPM Admin UI: http://localhost:81
 
 ## ⚙️ Environment Variables
 
@@ -212,14 +256,99 @@ CELERY_WORKER_CONCURRENCY=100
 DJANGO_PORT_LOCAL=8000
 ```
 
+## 🔧 Nginx Proxy Manager Configuration
+
+Nginx Proxy Manager (NPM) provides a user-friendly web interface for managing reverse proxy configurations with built-in SSL certificate management.
+
+### Initial Setup
+
+1. **Access Admin UI**: Navigate to `http://your-server:81`
+2. **Default Login Credentials**:
+   - Email: `admin@example.com`
+   - Password: `changeme`
+3. **⚠️ IMPORTANT**: Change these credentials immediately after first login!
+
+### Creating Proxy Hosts
+
+#### Main Application Proxy Host
+
+1. Go to **Hosts** → **Proxy Hosts** → **Add Proxy Host**
+2. **Details Tab**:
+   - Domain Names: `yourdomain.com`, `www.yourdomain.com`
+   - Scheme: `http`
+   - Forward Hostname/IP: `frontend`
+   - Forward Port: `80`
+   - ✅ Cache Assets
+   - ✅ Block Common Exploits
+   - ✅ Websockets Support
+
+3. **SSL Tab**:
+   - ✅ Request a new SSL Certificate
+   - ✅ Force SSL
+   - ✅ HTTP/2 Support
+   - Email: your-email@example.com
+   - ✅ I Agree to the Let's Encrypt Terms of Service
+
+4. **Advanced Tab** (Custom Nginx Configuration):
+   ```nginx
+   # Proxy API requests to Django backend
+   location /crm-api/ {
+       proxy_pass http://backend:8000;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+       proxy_set_header Host $http_host;
+       proxy_redirect off;
+       proxy_buffering off;
+   }
+   
+   # Proxy Django admin
+   location /admin/ {
+       proxy_pass http://backend:8000;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+       proxy_set_header Host $http_host;
+       proxy_redirect off;
+   }
+   
+   # Serve Django static files
+   location /static/ {
+       alias /srv/www/static/;
+       expires 7d;
+       add_header Cache-Control "public, must-revalidate, proxy-revalidate";
+   }
+   
+   # Serve Django media files
+   location /media/ {
+       alias /srv/www/media/;
+       expires 7d;
+       add_header Cache-Control "public, must-revalidate, proxy-revalidate";
+   }
+   ```
+
+### SSL Certificate Management
+
+- **Automatic Renewal**: NPM automatically renews Let's Encrypt certificates
+- **Custom Certificates**: You can upload your own certificates via the SSL Certificates section
+- **View Certificates**: Check certificate status and expiry dates in the SSL Certificates menu
+
+### Benefits of NPM
+
+- ✅ **User-Friendly Interface**: No need to edit nginx config files manually
+- ✅ **Automatic SSL**: Built-in Let's Encrypt integration with auto-renewal
+- ✅ **Access Lists**: Create IP whitelists/blacklists for added security
+- ✅ **Custom Locations**: Add custom nginx configurations per proxy host
+- ✅ **Streams**: Support for TCP/UDP stream forwarding
+- ✅ **404 Hosts**: Custom 404 error pages
+
 ## 🔒 Security Features
 
 - JWT-based authentication
 - CORS protection with django-cors-headers
-- SSL/TLS termination at Nginx
+- SSL/TLS termination at Nginx Proxy Manager
 - Redis password authentication
 - PostgreSQL password authentication
 - Environment variable-based secrets management
+- NPM Access Lists for IP-based restrictions
 
 ## 📚 API Endpoints
 
@@ -260,10 +389,14 @@ cd whatsapp-crm-frontend && npm run lint
 ## 📦 Production Deployment
 
 1. Update `.env` with production values
-2. Configure SSL certificates in `/etc/letsencrypt/`
-3. Update `nginx_proxy/nginx.conf` with your domain
-4. Run `docker-compose up -d --build`
-5. Set up SSL certificate renewal (certbot)
+2. Run `docker-compose up -d --build`
+3. Access Nginx Proxy Manager UI at http://your-server-ip:81
+4. Change default admin credentials immediately
+5. Configure proxy hosts for your domain(s) in NPM
+6. Enable SSL certificates via Let's Encrypt (built into NPM)
+7. SSL certificates are automatically renewed by NPM
+
+**Note**: With Nginx Proxy Manager, you no longer need to manually configure SSL certificates or nginx configuration files. Everything is managed through the web UI.
 
 ## 🤝 Contributing
 
