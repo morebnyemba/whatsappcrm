@@ -111,8 +111,23 @@ class MarketOutcomeAdmin(admin.ModelAdmin):
 @admin.register(Configuration)
 class ConfigurationAdmin(admin.ModelAdmin):
     """Admin configuration for the Configuration model."""
-    list_display = ('provider_name', 'email', 'api_key_display')
+    list_display = ('provider_name', 'email', 'is_active', 'api_key_display', 'updated_at')
+    list_filter = ('provider_name', 'is_active')
     search_fields = ('provider_name', 'email')
+    readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Provider Information', {
+            'fields': ('provider_name', 'email', 'is_active')
+        }),
+        ('API Configuration', {
+            'fields': ('api_key',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
     def api_key_display(self, obj):
         if obj.api_key:

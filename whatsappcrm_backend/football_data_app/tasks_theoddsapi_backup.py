@@ -1,44 +1,25 @@
-"""
-Football data tasks - Now using APIFootball.com by default.
-
-This module imports and re-exports tasks from tasks_apifootball.py for backward compatibility.
-To use the old The Odds API, you can still import from tasks_theoddsapi_backup.py directly.
-"""
-
 import logging
 from django.conf import settings
+from celery import chord, shared_task, chain, group
+from django.db import transaction, models
+from django.utils import timezone
+from dateutil import parser
+from datetime import timedelta
+from decimal import Decimal
+from typing import List, Dict, Any
+import random
+import time
 
-# Import all tasks from the new APIFootball implementation
-from .tasks_apifootball import (
-    # Main pipeline tasks
-    run_apifootball_full_update_task,
-    fetch_and_update_leagues_task,
-    fetch_events_for_league_task,
-    fetch_odds_for_single_event_task,
-    dispatch_odds_fetching_after_events_task,
-    
-    # Score and settlement tasks
-    run_score_and_settlement_task,
-    fetch_scores_for_league_task,
-    settle_fixture_pipeline_task,
-    settle_outcomes_for_fixture_task,
-    settle_bets_for_fixture_task,
-    settle_tickets_for_fixture_task,
-    
-    # Ticket settlement tasks
-    process_ticket_settlement_task,
-    process_ticket_settlement_batch_task,
-    reconcile_and_settle_pending_items_task,
-    send_bet_ticket_settlement_notification_task,
-)
+from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
+from customer_data.models import Bet, BetTicket
+from .utils import settle_ticket # Import the new utility function
+from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
+
+from meta_integration.models import MetaAppConfig
+# Use the direct utility for sending messages for consistency
+from meta_integration.utils import send_whatsapp_message, create_text_message_data
 
 logger = logging.getLogger(__name__)
-
-# Re-export main entry point with original name for backward compatibility
-run_the_odds_api_full_update = run_apifootball_full_update_task
-
-# Log the transition
-logger.info("Football data tasks now using APIFootball.com as the primary provider.")
 
 # --- Configuration ---
 ODDS_LEAD_TIME_DAYS = getattr(settings, 'THE_ODDS_API_LEAD_TIME_DAYS', 7)

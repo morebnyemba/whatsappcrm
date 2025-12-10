@@ -224,6 +224,8 @@ LOGGING = {
         'customer_data': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app.tasks': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app.tasks_apifootball': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app.apifootball_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app.the_odds_api_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
     },
 }
@@ -299,11 +301,27 @@ JAZZMIN_UI_TWEAKS = {
 # CONVERSATION_EXPIRY_DAYS="60"
 # JWT_ACCESS_TOKEN_LIFETIME_MINUTES="60"
 # JWT_REFRESH_TOKEN_LIFETIME_DAYS="7"
-# API Key (ideally from environment variable)
-THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', 'f8aeb105b6d13a774e498b62b9b39a9f') # Replace with your actual key or ensure env var is set
+# --- Football Data API Configuration ---
 
-# Operational Parameters for The Odds API tasks
-# In settings.py
+# APIFootball.com (Primary Provider)
+API_FOOTBALL_KEY = os.environ.get('API_FOOTBALL_KEY')
 
-# A curated list of 10 major bookmakers for a balance of performance and coverage.
+# APIFootball Operational Parameters
+APIFOOTBALL_LEAD_TIME_DAYS = 7  # How many days ahead to fetch fixtures
+APIFOOTBALL_EVENT_DISCOVERY_STALENESS_HOURS = 6  # Hours before refetching events
+APIFOOTBALL_UPCOMING_STALENESS_MINUTES = 60  # Minutes before refetching odds
+APIFOOTBALL_ASSUMED_COMPLETION_MINUTES = 120  # Minutes after scheduled start to assume completion
+
+# Legacy The Odds API Configuration (Backup - kept for reference)
+THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', 'f8aeb105b6d13a774e498b62b9b39a9f')
 THE_ODDS_API_TARGET_BOOKMAKER = 'pinnacle'
+THE_ODDS_API_LEAD_TIME_DAYS = 7
+THE_ODDS_API_DEFAULT_REGIONS = "uk,eu,us,au"
+THE_ODDS_API_DEFAULT_MARKETS = "h2h,totals"
+THE_ODDS_API_ADDITIONAL_MARKETS = "alternate_totals,btts"
+THE_ODDS_API_PREFERRED_BOOKMAKERS = "bet365"
+THE_ODDS_API_EVENT_DISCOVERY_STALENESS_HOURS = 6
+THE_ODDS_API_UPCOMING_STALENESS_MINUTES = 60
+THE_ODDS_API_ASSUMED_COMPLETION_MINUTES = 120
+THE_ODDS_API_MAX_EVENT_RETRIES = 3
+THE_ODDS_API_EVENT_RETRY_DELAY = 300
