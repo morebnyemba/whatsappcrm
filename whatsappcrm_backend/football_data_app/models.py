@@ -10,13 +10,16 @@ USER_MODEL = settings.AUTH_USER_MODEL
 class League(models.Model):
     """Stores information about a single sports league, e.g., English Premier League."""
     name = models.CharField(max_length=100)
-    api_id = models.CharField(max_length=100, unique=True, help_text="The unique key for the league from the API (e.g., 'soccer_epl').")
+    api_id = models.CharField(max_length=100, unique=True, help_text="The unique key for the league from the API (e.g., 'soccer_epl' or league_id from APIFootball).")
     sport_key = models.CharField(max_length=50, help_text="The general sport key, e.g., 'soccer'.")
     sport_group_name = models.CharField(max_length=100, null=True, blank=True, help_text="The general sport group name from the API, e.g., 'Soccer'.")
     short_name = models.CharField(max_length=50, null=True, blank=True, help_text="Short name or title for the league from API (e.g., EPL).")
     api_description = models.TextField(null=True, blank=True, help_text="Full description of the league from the API, if different from name.")
     active = models.BooleanField(default=True, help_text="Whether this league is currently tracked for updates.")
     logo_url = models.URLField(max_length=512, null=True, blank=True, help_text="URL for the league's logo.")
+    country_id = models.CharField(max_length=50, null=True, blank=True, help_text="Country ID from APIFootball.")
+    country_name = models.CharField(max_length=100, null=True, blank=True, help_text="Country name from APIFootball.")
+    league_season = models.CharField(max_length=50, null=True, blank=True, help_text="Current season (e.g., '2023/2024').")
     last_fetched_events = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last successful event fetch for this league.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -34,6 +37,7 @@ class Team(models.Model):
     name = models.CharField(max_length=100, unique=True)
     api_team_id = models.CharField(max_length=100, null=True, blank=True, help_text="Unique team ID from the API, if available. May not always be provided.")
     logo_url = models.URLField(max_length=512, null=True, blank=True, help_text="URL for the team's logo.")
+    badge_url = models.URLField(max_length=512, null=True, blank=True, help_text="Alternative badge/logo URL from APIFootball.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -152,17 +156,30 @@ class MarketOutcome(models.Model):
         ordering = ['market', 'outcome_name']
         
 class Configuration(models.Model):
-    provider_name = models.CharField(max_length=50,default="The Odds API", help_text="For Now We only Support The Odds Api(the-odds-api.com)")
-    email = models.EmailField()
-    api_key = models.CharField(max_length=50)
-
+    """Configuration for football data API providers."""
     
-
+    PROVIDER_CHOICES = [
+        ('APIFootball', 'APIFootball.com'),
+        ('The Odds API', 'The Odds API'),
+    ]
+    
+    provider_name = models.CharField(
+        max_length=50,
+        choices=PROVIDER_CHOICES,
+        default="APIFootball",
+        help_text="Football data API provider"
+    )
+    email = models.EmailField(help_text="Contact email for this API configuration")
+    api_key = models.CharField(max_length=100, help_text="API key for authentication")
+    is_active = models.BooleanField(default=True, help_text="Whether this configuration is currently active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
     class Meta:
         verbose_name = _("Configuration")
         verbose_name_plural = _("Configurations")
+        ordering = ['-is_active', '-created_at']
 
     def __str__(self):
         return f"{self.provider_name} ({self.email})"
-
     
