@@ -313,7 +313,7 @@ APIFOOTBALL_UPCOMING_STALENESS_MINUTES = 60  # Minutes before refetching odds
 APIFOOTBALL_ASSUMED_COMPLETION_MINUTES = 120  # Minutes after scheduled start to assume completion
 
 # Legacy The Odds API Configuration (Backup - kept for reference)
-THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY', 'f8aeb105b6d13a774e498b62b9b39a9f')
+THE_ODDS_API_KEY = os.environ.get('THE_ODDS_API_KEY')
 THE_ODDS_API_TARGET_BOOKMAKER = 'pinnacle'
 THE_ODDS_API_LEAD_TIME_DAYS = 7
 THE_ODDS_API_DEFAULT_REGIONS = "uk,eu,us,au"

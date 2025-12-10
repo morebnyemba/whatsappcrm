@@ -25,12 +25,12 @@ from meta_integration.utils import send_whatsapp_message, create_text_message_da
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-ODDS_LEAD_TIME_DAYS = getattr(settings, 'APIFOOTBALL_LEAD_TIME_DAYS', 7)
-EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'APIFOOTBALL_EVENT_DISCOVERY_STALENESS_HOURS', 6)
-ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'APIFOOTBALL_UPCOMING_STALENESS_MINUTES', 60)
-ASSUMED_COMPLETION_MINUTES = getattr(settings, 'APIFOOTBALL_ASSUMED_COMPLETION_MINUTES', 120)
-MAX_EVENT_RETRIES = getattr(settings, 'APIFOOTBALL_MAX_EVENT_RETRIES', 3)
-EVENT_RETRY_DELAY = getattr(settings, 'APIFOOTBALL_EVENT_RETRY_DELAY', 300)
+APIFOOTBALL_ODDS_LEAD_TIME_DAYS = getattr(settings, 'APIFOOTBALL_LEAD_TIME_DAYS', 7)
+APIFOOTBALL_EVENT_DISCOVERY_STALENESS_HOURS = getattr(settings, 'APIFOOTBALL_EVENT_DISCOVERY_STALENESS_HOURS', 6)
+APIFOOTBALL_ODDS_UPCOMING_STALENESS_MINUTES = getattr(settings, 'APIFOOTBALL_UPCOMING_STALENESS_MINUTES', 60)
+APIFOOTBALL_ASSUMED_COMPLETION_MINUTES = getattr(settings, 'APIFOOTBALL_ASSUMED_COMPLETION_MINUTES', 120)
+APIFOOTBALL_MAX_EVENT_RETRIES = getattr(settings, 'APIFOOTBALL_MAX_EVENT_RETRIES', 3)
+APIFOOTBALL_EVENT_RETRY_DELAY = getattr(settings, 'APIFOOTBALL_EVENT_RETRY_DELAY', 300)
 
 # --- Helper Functions ---
 
@@ -232,7 +232,7 @@ def fetch_events_for_league_task(self, league_id: int):
         # Get upcoming fixtures
         fixtures_data = client.get_upcoming_fixtures(
             league_id=league.api_id,
-            days_ahead=ODDS_LEAD_TIME_DAYS
+            days_ahead=APIFOOTBALL_ODDS_LEAD_TIME_DAYS
         )
         
         logger.info(f"[EventFetch] API returned {len(fixtures_data) if fixtures_data else 0} events for league ID: {league_id}")
@@ -348,13 +348,13 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     logger.info(f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} result(s) from event fetching group.")
     
     now = timezone.now()
-    stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
+    stale_cutoff = now - timedelta(minutes=APIFOOTBALL_ODDS_UPCOMING_STALENESS_MINUTES)
     
     # Get fixtures that need odds updates
     fixture_ids_to_update = FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
-        match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))
+        match_date__range=(now, now + timedelta(days=APIFOOTBALL_ODDS_LEAD_TIME_DAYS))
     ).values_list('id', flat=True)
     
     if not fixture_ids_to_update:
@@ -429,7 +429,7 @@ def fetch_scores_for_league_task(self, league_id: int):
     """
     logger.info(f"[Scores] START - Fetching scores for league ID: {league_id}")
     now = timezone.now()
-    assumed_completion_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
+    assumed_completion_cutoff = now - timedelta(minutes=APIFOOTBALL_ASSUMED_COMPLETION_MINUTES)
     
     try:
         league = League.objects.get(id=league_id)
@@ -590,7 +590,7 @@ def reconcile_and_settle_pending_items_task(self):
     logger.info("[Reconciliation] START - Running reconciliation and settlement task.")
     
     now = timezone.now()
-    stuck_fixture_cutoff = now - timedelta(minutes=ASSUMED_COMPLETION_MINUTES)
+    stuck_fixture_cutoff = now - timedelta(minutes=APIFOOTBALL_ASSUMED_COMPLETION_MINUTES)
     
     # Find and force-settle stuck fixtures
     stuck_fixtures_qs = FootballFixture.objects.filter(
