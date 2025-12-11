@@ -16,10 +16,17 @@ def send_deposit_confirmation_whatsapp(whatsapp_id: str, amount: str, new_balanc
     Sends a WhatsApp message to the user confirming their successful deposit.
     We pass arguments as strings because Celery serializers work best with primitive types.
     """
+    logger.info("="*80)
+    logger.info(f"TASK START: send_deposit_confirmation_whatsapp")
+    logger.info(f"WhatsApp ID: {whatsapp_id}, Amount: {amount}, Ref: {transaction_reference}")
+    logger.info("="*80)
+    
     try:
         # Convert string representations of decimals back to Decimal for formatting
         amount_decimal = Decimal(amount)
         new_balance_decimal = Decimal(new_balance)
+        
+        logger.debug(f"Parsed amounts: Deposit={amount_decimal}, New Balance={new_balance_decimal}")
 
         message_body = ( # Renamed to message_body to avoid conflict with send_whatsapp_message parameter
             f"✅ Your deposit has been confirmed!\n\n"
@@ -31,16 +38,32 @@ def send_deposit_confirmation_whatsapp(whatsapp_id: str, amount: str, new_balanc
 
         # Create the data payload for a text message
         message_data = create_text_message_data(text_body=message_body, preview_url=False)
-
+        
+        logger.info(f"Sending deposit confirmation to {whatsapp_id}...")
         # Call the actual WhatsApp message sending function
         result = send_whatsapp_message(to_phone_number=whatsapp_id, message_type='text', data=message_data)
 
         if result and result.get("messages"): # Check for Meta API's success indicator
-            logger.info(f"Successfully sent deposit confirmation to {whatsapp_id} for transaction {transaction_reference}. Meta message ID: {result['messages'][0]['id']}")
+            meta_msg_id = result['messages'][0]['id']
+            logger.info(f"✓ Successfully sent deposit confirmation")
+            logger.info(f"  To: {whatsapp_id}")
+            logger.info(f"  Transaction: {transaction_reference}")
+            logger.info(f"  Meta Message ID: {meta_msg_id}")
+            logger.info("="*80)
+            logger.info(f"TASK END: send_deposit_confirmation_whatsapp - SUCCESS")
+            logger.info("="*80)
         else:
-            logger.error(f"Failed to send WhatsApp deposit confirmation to {whatsapp_id}. Result: {result}")
+            logger.error(f"✗ Failed to send deposit confirmation")
+            logger.error(f"  To: {whatsapp_id}")
+            logger.error(f"  Result: {result}")
+            logger.info("="*80)
+            logger.info(f"TASK END: send_deposit_confirmation_whatsapp - FAILED")
+            logger.info("="*80)
     except Exception as e:
-        logger.error(f"Error in send_deposit_confirmation_whatsapp task for {whatsapp_id}: {e}", exc_info=True)
+        logger.error(f"TASK ERROR: Exception in send_deposit_confirmation_whatsapp for {whatsapp_id}: {e}", exc_info=True)
+        logger.info("="*80)
+        logger.info(f"TASK END: send_deposit_confirmation_whatsapp - ERROR")
+        logger.info("="*80)
         # Re-raising the exception can allow Celery to handle retries
         raise
 
@@ -55,7 +78,11 @@ def send_withdrawal_confirmation_whatsapp(
     """
     Sends a WhatsApp message to the user confirming a withdrawal.
     """
-    logger.info(f"Preparing to send withdrawal confirmation for {whatsapp_id}. Status: {status}")
+    logger.info("="*80)
+    logger.info(f"TASK START: send_withdrawal_confirmation_whatsapp")
+    logger.info(f"WhatsApp ID: {whatsapp_id}, Amount: {amount}, Status: {status}")
+    logger.info("="*80)
+    
     try:
         if status == 'COMPLETED':
             message_body = (
@@ -72,11 +99,29 @@ def send_withdrawal_confirmation_whatsapp(
             )
         else:
             logger.error(f"Invalid status '{status}' for withdrawal confirmation. Not sending message.")
+            logger.info("="*80)
+            logger.info(f"TASK END: send_withdrawal_confirmation_whatsapp - FAILED (Invalid status)")
+            logger.info("="*80)
             return
 
+        logger.info(f"Sending withdrawal confirmation ({status}) to {whatsapp_id}...")
         message_data = create_text_message_data(text_body=message_body)
-        send_whatsapp_message(to_phone_number=whatsapp_id, message_type='text', data=message_data)
-        logger.info(f"Successfully sent withdrawal confirmation message to {whatsapp_id}.")
+        result = send_whatsapp_message(to_phone_number=whatsapp_id, message_type='text', data=message_data)
+        
+        if result and result.get("messages"):
+            logger.info(f"✓ Successfully sent withdrawal confirmation ({status})")
+            logger.info(f"  To: {whatsapp_id}")
+            logger.info(f"  Meta Message ID: {result['messages'][0]['id']}")
+        else:
+            logger.error(f"✗ Failed to send withdrawal confirmation")
+            logger.error(f"  Result: {result}")
+        
+        logger.info("="*80)
+        logger.info(f"TASK END: send_withdrawal_confirmation_whatsapp - SUCCESS")
+        logger.info("="*80)
 
     except Exception as e:
-        logger.error(f"Error sending withdrawal confirmation to {whatsapp_id}: {e}", exc_info=True)
+        logger.error(f"TASK ERROR: Exception in send_withdrawal_confirmation_whatsapp for {whatsapp_id}: {e}", exc_info=True)
+        logger.info("="*80)
+        logger.info(f"TASK END: send_withdrawal_confirmation_whatsapp - ERROR")
+        logger.info("="*80)
