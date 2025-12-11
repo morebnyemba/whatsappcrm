@@ -54,4 +54,10 @@ path('crm-api/auth/', include('djoser.urls')),
 # The 'namespace' argument in include() is useful for URL reversing 
 # (e.g., using reverse('meta_integration_api:meta_webhook_receiver') in Python code).
 # It helps avoid URL name collisions between apps.
+
+# Serve media files during development
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve static files during development (for admin, jazzmin, DRF styles)
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
