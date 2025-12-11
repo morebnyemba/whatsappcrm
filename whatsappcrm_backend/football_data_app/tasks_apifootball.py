@@ -56,18 +56,28 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
         ]
     }
     """
+    logger.debug(f"Processing odds data for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
+    
     if not odds_data or 'odd_bookmakers' not in odds_data:
-        logger.debug(f"No odds bookmakers data for fixture {fixture.id}")
+        logger.debug(f"No odds bookmakers data provided for fixture {fixture.id}")
         return
+    
+    bookmakers_count = len(odds_data.get('odd_bookmakers', []))
+    logger.debug(f"Processing odds from {bookmakers_count} bookmaker(s)")
+    
+    total_markets_created = 0
+    total_outcomes_created = 0
     
     for bookmaker_data in odds_data.get('odd_bookmakers', []):
         bookmaker_name = bookmaker_data.get('bookmaker_name', 'Unknown')
         
         # Create or get bookmaker
-        bookmaker, _ = Bookmaker.objects.get_or_create(
+        bookmaker, bookmaker_created = Bookmaker.objects.get_or_create(
             api_bookmaker_key=bookmaker_name.lower().replace(' ', '_'),
             defaults={'name': bookmaker_name}
         )
+        if bookmaker_created:
+            logger.debug(f"Created new bookmaker: {bookmaker_name}")
         
         # Process odds (match winner - H2H market)
         for odds_entry in bookmaker_data.get('bookmaker_odds', []):
@@ -80,11 +90,13 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
                 category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
                 
                 # Delete old market if exists
-                Market.objects.filter(
+                deleted_count, _ = Market.objects.filter(
                     fixture=fixture,
                     bookmaker=bookmaker,
                     api_market_key='h2h'
                 ).delete()
+                if deleted_count > 0:
+                    logger.debug(f"Deleted {deleted_count} old market(s) for bookmaker {bookmaker_name}")
                 
                 market = Market.objects.create(
                     fixture=fixture,
@@ -93,6 +105,7 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
                     category=category,
                     last_updated_odds_api=timezone.now()
                 )
+                total_markets_created += 1
                 
                 outcomes_to_create = []
                 
@@ -125,37 +138,58 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
                 
                 if outcomes_to_create:
                     MarketOutcome.objects.bulk_create(outcomes_to_create)
+                    total_outcomes_created += len(outcomes_to_create)
+                    logger.debug(f"Created market with {len(outcomes_to_create)} outcomes for bookmaker {bookmaker_name}")
+    
+    logger.debug(f"Odds processing complete for fixture {fixture.id}: {total_markets_created} markets, {total_outcomes_created} outcomes")
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
 @shared_task(name="football_data_app.run_apifootball_full_update")
 def run_apifootball_full_update_task():
     """Main entry point for the APIFootball data fetching pipeline."""
-    logger.info("--- Starting APIFootball Full Data Update Pipeline ---")
-    pipeline = (
-        fetch_and_update_leagues_task.s() |
-        _prepare_and_launch_event_odds_chord.s()
-    )
-    pipeline.apply_async()
+    logger.info("="*80)
+    logger.info("TASK START: run_apifootball_full_update_task")
+    logger.info("="*80)
+    try:
+        pipeline = (
+            fetch_and_update_leagues_task.s() |
+            _prepare_and_launch_event_odds_chord.s()
+        )
+        result = pipeline.apply_async()
+        logger.info(f"Pipeline scheduled successfully with ID: {result.id if hasattr(result, 'id') else 'N/A'}")
+        logger.info("TASK END: run_apifootball_full_update_task - Pipeline dispatched")
+        return {"status": "dispatched", "pipeline_id": str(result.id) if hasattr(result, 'id') else None}
+    except Exception as e:
+        logger.error(f"TASK ERROR: run_apifootball_full_update_task failed with error: {e}", exc_info=True)
+        raise
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def fetch_and_update_leagues_task(self, _=None):
     """Step 1: Fetches all available football leagues from APIFootball."""
-    logger.info("Step 1: Starting league update task with APIFootball.")
+    logger.info("="*80)
+    logger.info("TASK START: fetch_and_update_leagues_task (League Update Pipeline)")
+    logger.info(f"Task ID: {self.request.id}, Retry: {self.request.retries}/{self.max_retries}")
+    logger.info("="*80)
+    
     client = APIFootballClient()
     
     try:
+        logger.info("Calling APIFootball.get_leagues()...")
         leagues_data = client.get_leagues()
         
         if not leagues_data:
-            logger.warning("Step 1: No leagues data received from APIFootball.")
+            logger.warning("No leagues data received from APIFootball API.")
+            logger.info("TASK END: fetch_and_update_leagues_task - No data")
             return []
         
-        logger.info(f"Step 1: Received {len(leagues_data)} leagues from APIFootball.")
+        logger.info(f"Received {len(leagues_data)} leagues from APIFootball API")
         
         processed_league_ids = []
+        created_count = 0
+        updated_count = 0
         
-        for league_item in leagues_data:
+        for idx, league_item in enumerate(leagues_data, 1):
             league_id = league_item.get('league_id')
             league_name = league_item.get('league_name')
             country_id = league_item.get('country_id')
@@ -164,6 +198,7 @@ def fetch_and_update_leagues_task(self, _=None):
             league_logo = league_item.get('league_logo')
             
             if not league_id or not league_name:
+                logger.warning(f"Skipping league {idx} - missing league_id or league_name")
                 continue
             
             # Store the league
@@ -185,16 +220,26 @@ def fetch_and_update_leagues_task(self, _=None):
             processed_league_ids.append(league_obj.id)
             
             if created:
-                logger.info(f"Created new league: {league_name} (ID: {league_id})")
+                created_count += 1
+                logger.info(f"Created new league: {league_name} (API ID: {league_id}, DB ID: {league_obj.id})")
+            else:
+                updated_count += 1
+                logger.debug(f"Updated existing league: {league_name} (API ID: {league_id}, DB ID: {league_obj.id})")
         
-        logger.info(f"Step 1: Processed {len(processed_league_ids)} leagues.")
+        logger.info(f"League processing complete: {len(processed_league_ids)} total, {created_count} created, {updated_count} updated")
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_and_update_leagues_task - SUCCESS")
+        logger.info(f"Returning {len(processed_league_ids)} league IDs to next task")
+        logger.info("="*80)
         return processed_league_ids
         
     except APIFootballException as e:
-        logger.exception(f"API error during league update: {e}")
+        logger.error(f"TASK ERROR: APIFootball API error during league update: {e}", exc_info=True)
+        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
     except Exception as e:
-        logger.exception(f"Unexpected error during league update: {e}")
+        logger.error(f"TASK ERROR: Unexpected error during league update: {e}", exc_info=True)
+        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
 
 @shared_task(name="football_data_app.tasks._prepare_and_launch_event_odds_chord")
@@ -202,44 +247,68 @@ def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
     """
     Intermediate task: Receives league_ids and launches event fetching chord.
     """
+    logger.info("="*80)
+    logger.info("TASK START: _prepare_and_launch_event_odds_chord")
+    logger.info("="*80)
+    
     if not league_ids:
-        logger.warning("Chord Prep: No league IDs received. Skipping event/odds processing.")
+        logger.warning("No league IDs received from previous task. Skipping event/odds processing.")
+        logger.info("TASK END: _prepare_and_launch_event_odds_chord - No leagues to process")
         return
     
-    logger.info(f"Chord Prep: Received {len(league_ids)} league IDs. Preparing event fetch group.")
+    logger.info(f"Received {len(league_ids)} league IDs from previous task: {league_ids}")
+    logger.info(f"Preparing to fetch events for {len(league_ids)} leagues...")
     
-    event_fetch_tasks_group = group([
-        fetch_events_for_league_task.s(league_id) for league_id in league_ids
-    ])
-    
-    odds_dispatch_callback = dispatch_odds_fetching_after_events_task.s()
-    
-    task_chord = chord(event_fetch_tasks_group)(odds_dispatch_callback)
-    task_chord.apply_async()
-    
-    logger.info(f"Chord Prep: Chord for event fetching and odds dispatch has been applied for {len(league_ids)} leagues.")
+    try:
+        event_fetch_tasks_group = group([
+            fetch_events_for_league_task.s(league_id) for league_id in league_ids
+        ])
+        
+        odds_dispatch_callback = dispatch_odds_fetching_after_events_task.s()
+        
+        logger.info(f"Creating chord with {len(league_ids)} event fetch tasks...")
+        task_chord = chord(event_fetch_tasks_group)(odds_dispatch_callback)
+        result = task_chord.apply_async()
+        
+        logger.info(f"Chord dispatched successfully. Chord ID: {result.id if hasattr(result, 'id') else 'N/A'}")
+        logger.info(f"Event fetch tasks will execute in parallel for {len(league_ids)} leagues")
+        logger.info("After all event fetches complete, odds dispatch task will be triggered")
+        logger.info("="*80)
+        logger.info("TASK END: _prepare_and_launch_event_odds_chord - SUCCESS")
+        logger.info("="*80)
+    except Exception as e:
+        logger.error(f"TASK ERROR: Failed to create or dispatch chord: {e}", exc_info=True)
+        raise
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=600)
 def fetch_events_for_league_task(self, league_id: int):
     """Fetches and updates events (fixtures) for a single league from APIFootball."""
-    logger.info(f"[EventFetch] START - Fetching events for league ID: {league_id}")
+    logger.info("="*80)
+    logger.info(f"TASK START: fetch_events_for_league_task - League ID: {league_id}")
+    logger.info(f"Task ID: {self.request.id}, Retry: {self.request.retries}/{self.max_retries}")
+    logger.info("="*80)
+    
     events_processed_count = 0
     
     try:
+        logger.info(f"Fetching league from database (ID: {league_id})...")
         league = League.objects.get(id=league_id)
+        logger.info(f"League found: {league.name} (API ID: {league.api_id})")
+        
         client = APIFootballClient()
         
-        # Get upcoming fixtures
+        logger.info(f"Calling APIFootball.get_upcoming_fixtures(league_id={league.api_id}, days_ahead={APIFOOTBALL_ODDS_LEAD_TIME_DAYS})...")
         fixtures_data = client.get_upcoming_fixtures(
             league_id=league.api_id,
             days_ahead=APIFOOTBALL_ODDS_LEAD_TIME_DAYS
         )
         
-        logger.info(f"[EventFetch] API returned {len(fixtures_data) if fixtures_data else 0} events for league ID: {league_id}")
+        logger.info(f"API returned {len(fixtures_data) if fixtures_data else 0} fixtures for league {league.name}")
         
         if fixtures_data:
+            logger.info(f"Processing {len(fixtures_data)} fixtures for league {league.name}...")
             with transaction.atomic():
-                for fixture_item in fixtures_data:
+                for idx, fixture_item in enumerate(fixtures_data, 1):
                     match_id = fixture_item.get('match_id')
                     match_date = fixture_item.get('match_date')
                     match_time = fixture_item.get('match_time')
@@ -251,24 +320,29 @@ def fetch_events_for_league_task(self, league_id: int):
                     away_team_id = fixture_item.get('match_awayteam_id')
                     
                     if not match_id or not home_team_name or not away_team_name:
+                        logger.warning(f"Skipping fixture {idx} - missing required data (match_id, home_team, or away_team)")
                         continue
                     
                     # Create or get teams
-                    home_team, _ = Team.objects.get_or_create(
+                    home_team, home_created = Team.objects.get_or_create(
                         name=home_team_name,
                         defaults={
                             'api_team_id': home_team_id,
                             'badge_url': fixture_item.get('team_home_badge')
                         }
                     )
+                    if home_created:
+                        logger.debug(f"Created new team: {home_team_name}")
                     
-                    away_team, _ = Team.objects.get_or_create(
+                    away_team, away_created = Team.objects.get_or_create(
                         name=away_team_name,
                         defaults={
                             'api_team_id': away_team_id,
                             'badge_url': fixture_item.get('team_away_badge')
                         }
                     )
+                    if away_created:
+                        logger.debug(f"Created new team: {away_team_name}")
                     
                     # Parse match datetime
                     match_datetime = None
@@ -310,7 +384,7 @@ def fetch_events_for_league_task(self, league_id: int):
                         away_score = None
                     
                     # Create or update fixture
-                    FootballFixture.objects.update_or_create(
+                    fixture, fixture_created = FootballFixture.objects.update_or_create(
                         api_id=match_id,
                         defaults={
                             'league': league,
@@ -323,21 +397,40 @@ def fetch_events_for_league_task(self, league_id: int):
                         }
                     )
                     events_processed_count += 1
+                    
+                    if fixture_created:
+                        logger.debug(f"Created fixture: {home_team_name} vs {away_team_name} (Match ID: {match_id})")
+                    else:
+                        logger.debug(f"Updated fixture: {home_team_name} vs {away_team_name} (Match ID: {match_id})")
+            
+            logger.info(f"Successfully processed {events_processed_count} fixtures in database transaction")
         
+        # Update league's last fetch timestamp
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
+        logger.info(f"Updated league.last_fetched_events timestamp for {league.name}")
         
-        logger.info(f"[EventFetch] SUCCESS - Processed {events_processed_count} events for league ID: {league_id}")
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_events_for_league_task - SUCCESS")
+        logger.info(f"League: {league.name}, Events Processed: {events_processed_count}")
+        logger.info("="*80)
         return {"league_id": league_id, "status": "success", "events_processed": events_processed_count}
         
     except League.DoesNotExist:
-        logger.error(f"[EventFetch] FAILED - League with ID {league_id} does not exist.")
+        logger.error(f"TASK ERROR: League with ID {league_id} does not exist in database")
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_events_for_league_task - FAILED (League not found)")
+        logger.info("="*80)
         return {"league_id": league_id, "status": "error", "message": "League not found"}
     except APIFootballException as e:
-        logger.error(f"[EventFetch] FAILED - API error fetching events for league {league_id}: {e}", exc_info=True)
+        logger.error(f"TASK ERROR: APIFootball API error for league {league_id}: {e}", exc_info=True)
+        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
     except Exception as e:
-        logger.error(f"[EventFetch] FAILED - Unexpected error fetching events for league {league_id}: {e}", exc_info=True)
+        logger.error(f"TASK ERROR: Unexpected error fetching events for league {league_id}: {e}", exc_info=True)
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_events_for_league_task - FAILED")
+        logger.info("="*80)
         return {"league_id": league_id, "status": "error", "message": str(e)}
 
 @shared_task(bind=True)
@@ -345,10 +438,26 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     """
     Step 3: Dispatches individual tasks to fetch odds for each upcoming fixture.
     """
-    logger.info(f"Step 3: Dispatching odds. Received {len(results_from_event_fetches)} result(s) from event fetching group.")
+    logger.info("="*80)
+    logger.info("TASK START: dispatch_odds_fetching_after_events_task (Odds Dispatch)")
+    logger.info(f"Task ID: {self.request.id}")
+    logger.info("="*80)
+    
+    logger.info(f"Received {len(results_from_event_fetches)} result(s) from event fetching group")
+    logger.debug(f"Event fetch results: {results_from_event_fetches}")
+    
+    # Count successful events
+    total_events_processed = 0
+    for result in results_from_event_fetches:
+        if isinstance(result, dict) and result.get('status') == 'success':
+            total_events_processed += result.get('events_processed', 0)
+    logger.info(f"Total events processed across all leagues: {total_events_processed}")
     
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=APIFOOTBALL_ODDS_UPCOMING_STALENESS_MINUTES)
+    
+    logger.info(f"Querying fixtures that need odds updates...")
+    logger.info(f"Criteria: SCHEDULED status, match_date in next {APIFOOTBALL_ODDS_LEAD_TIME_DAYS} days, odds older than {APIFOOTBALL_ODDS_UPCOMING_STALENESS_MINUTES} minutes")
     
     # Get fixtures that need odds updates
     fixture_ids_to_update = FootballFixture.objects.filter(
@@ -357,37 +466,57 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
         match_date__range=(now, now + timedelta(days=APIFOOTBALL_ODDS_LEAD_TIME_DAYS))
     ).values_list('id', flat=True)
     
+    fixture_count = len(fixture_ids_to_update)
+    
     if not fixture_ids_to_update:
         logger.info("No fixtures require an odds update at this time.")
+        logger.info("="*80)
+        logger.info("TASK END: dispatch_odds_fetching_after_events_task - No odds updates needed")
+        logger.info("="*80)
         return
+    
+    logger.info(f"Found {fixture_count} fixtures requiring odds updates")
+    logger.info(f"Creating {fixture_count} individual odds fetching tasks...")
     
     tasks = [fetch_odds_for_single_event_task.s(fixture_id) for fixture_id in fixture_ids_to_update]
     
     if tasks:
         group(tasks).apply_async()
-        logger.info(f"Dispatched {len(tasks)} individual odds fetching tasks for fixtures.")
+        logger.info(f"Successfully dispatched {len(tasks)} odds fetching tasks to the queue")
+        logger.info("Tasks will fetch odds for each fixture in parallel")
+        logger.info("="*80)
+        logger.info("TASK END: dispatch_odds_fetching_after_events_task - SUCCESS")
+        logger.info(f"Dispatched {len(tasks)} odds fetch tasks")
+        logger.info("="*80)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_single_event_task(self, fixture_id: int):
     """Fetches odds for a single fixture from APIFootball."""
     # Add jitter to spread out API requests
-    time.sleep(random.uniform(0.5, 3.0))
+    jitter_delay = random.uniform(0.5, 3.0)
+    logger.debug(f"Applying jitter delay of {jitter_delay:.2f}s before fetching odds for fixture {fixture_id}")
+    time.sleep(jitter_delay)
+    
+    logger.info(f"TASK START: fetch_odds_for_single_event_task - Fixture ID: {fixture_id}")
     
     try:
+        logger.debug(f"Fetching fixture {fixture_id} from database...")
         fixture = FootballFixture.objects.select_related('league', 'home_team', 'away_team').get(id=fixture_id)
-        logger.info(f"[SingleEventOdds] START - Fetching odds for fixture ID: {fixture.id} (API Match ID: {fixture.api_id})")
+        logger.info(f"Fetching odds for: {fixture.home_team.name} vs {fixture.away_team.name} (API Match ID: {fixture.api_id})")
         
         client = APIFootballClient()
         
-        # Get odds for this match
+        logger.debug(f"Calling APIFootball.get_match_odds(match_id={fixture.api_id})...")
         odds_data = client.get_match_odds(match_id=fixture.api_id)
         
         if not odds_data:
-            logger.info(f"[SingleEventOdds] No odds data returned for fixture {fixture.id}.")
+            logger.info(f"No odds data returned from API for fixture {fixture.id}")
             fixture.last_odds_update = timezone.now()
             fixture.save(update_fields=['last_odds_update'])
+            logger.info(f"TASK END: fetch_odds_for_single_event_task - No odds available")
             return {"fixture_id": fixture.id, "status": "no_odds_data"}
         
+        logger.debug(f"Odds data received, processing...")
         with transaction.atomic():
             fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
             
@@ -397,17 +526,20 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
             fixture_for_update.last_odds_update = timezone.now()
             fixture_for_update.save(update_fields=['last_odds_update'])
             
-            logger.info(f"[SingleEventOdds] SUCCESS - Odds processed for fixture {fixture.id}")
+            logger.info(f"Successfully processed and saved odds for fixture {fixture.id}")
+            logger.info(f"TASK END: fetch_odds_for_single_event_task - SUCCESS (Fixture: {fixture.id})")
             return {"fixture_id": fixture.id, "status": "success"}
     
     except FootballFixture.DoesNotExist:
-        logger.error(f"[SingleEventOdds] FAILED - Fixture with ID {fixture_id} not found.")
+        logger.error(f"TASK ERROR: Fixture with ID {fixture_id} not found in database")
+        logger.info(f"TASK END: fetch_odds_for_single_event_task - FAILED (Fixture not found)")
         return {"fixture_id": fixture_id, "status": "error", "message": "Fixture not found"}
     except APIFootballException as e:
-        logger.exception(f"[SingleEventOdds] FAILED - API error fetching odds for fixture {fixture_id}: {e}")
+        logger.error(f"TASK ERROR: APIFootball API error for fixture {fixture_id}: {e}", exc_info=True)
+        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
     except Exception as e:
-        logger.exception(f"[SingleEventOdds] FAILED - Unexpected error for fixture {fixture_id}: {e}")
+        logger.error(f"TASK ERROR: Unexpected error for fixture {fixture_id}: {e}", exc_info=True)
         raise self.retry(exc=e)
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
@@ -415,26 +547,56 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 @shared_task(name="football_data_app.run_score_and_settlement_task")
 def run_score_and_settlement_task():
     """Entry point for fetching scores and updating statuses."""
-    logger.info("--- Starting Score & Settlement Pipeline ---")
-    active_leagues = League.objects.filter(active=True).values_list('id', flat=True)
-    tasks = [fetch_scores_for_league_task.s(league_id) for league_id in active_leagues]
-    if tasks:
-        group(tasks).apply_async()
-        logger.info(f"Dispatched {len(tasks)} score fetching tasks.")
+    logger.info("="*80)
+    logger.info("TASK START: run_score_and_settlement_task (Score & Settlement Pipeline)")
+    logger.info("="*80)
+    
+    try:
+        logger.info("Fetching active leagues from database...")
+        active_leagues = League.objects.filter(active=True).values_list('id', flat=True)
+        league_count = len(active_leagues)
+        
+        logger.info(f"Found {league_count} active leagues")
+        
+        if not league_count:
+            logger.warning("No active leagues found. Skipping score fetching.")
+            logger.info("TASK END: run_score_and_settlement_task - No active leagues")
+            return
+        
+        logger.info(f"Creating {league_count} score fetching tasks (one per league)...")
+        tasks = [fetch_scores_for_league_task.s(league_id) for league_id in active_leagues]
+        
+        if tasks:
+            group(tasks).apply_async()
+            logger.info(f"Successfully dispatched {len(tasks)} score fetching tasks to the queue")
+            logger.info("="*80)
+            logger.info("TASK END: run_score_and_settlement_task - SUCCESS")
+            logger.info(f"Dispatched {len(tasks)} tasks")
+            logger.info("="*80)
+    except Exception as e:
+        logger.error(f"TASK ERROR: Failed to dispatch score fetching tasks: {e}", exc_info=True)
+        raise
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900)
 def fetch_scores_for_league_task(self, league_id: int):
     """
     Fetches live and finished match scores for a league from APIFootball.
     """
-    logger.info(f"[Scores] START - Fetching scores for league ID: {league_id}")
+    logger.info("="*80)
+    logger.info(f"TASK START: fetch_scores_for_league_task - League ID: {league_id}")
+    logger.info(f"Task ID: {self.request.id}, Retry: {self.request.retries}/{self.max_retries}")
+    logger.info("="*80)
+    
     now = timezone.now()
     assumed_completion_cutoff = now - timedelta(minutes=APIFOOTBALL_ASSUMED_COMPLETION_MINUTES)
     
     try:
+        logger.debug(f"Fetching league {league_id} from database...")
         league = League.objects.get(id=league_id)
+        logger.info(f"Processing scores for league: {league.name} (API ID: {league.api_id})")
         
         # Get fixtures that need score updates (live or recently started)
+        logger.debug("Querying fixtures that need score updates...")
         fixtures_to_check_qs = FootballFixture.objects.filter(
             league=league
         ).filter(
@@ -445,23 +607,32 @@ def fetch_scores_for_league_task(self, league_id: int):
             )
         )
         
+        fixture_count = fixtures_to_check_qs.count()
+        logger.info(f"Found {fixture_count} fixtures requiring score updates (LIVE or past SCHEDULED)")
+        
         if not fixtures_to_check_qs.exists():
-            logger.info(f"[Scores] No fixtures need a score update for league ID: {league_id}.")
+            logger.info(f"No fixtures need a score update for league {league.name}.")
+            logger.info("="*80)
+            logger.info("TASK END: fetch_scores_for_league_task - No updates needed")
+            logger.info("="*80)
             return
         
         client = APIFootballClient()
         
-        # Get live scores
+        logger.info(f"Calling APIFootball.get_live_scores()...")
         live_scores = client.get_live_scores()
+        logger.info(f"Received {len(live_scores) if live_scores else 0} live scores from API")
         
         # Get finished matches from the past few days
         date_from = (now - timedelta(days=2)).strftime('%Y-%m-%d')
         date_to = now.strftime('%Y-%m-%d')
+        logger.info(f"Calling APIFootball.get_finished_matches(league_id={league.api_id}, from={date_from}, to={date_to})...")
         finished_matches = client.get_finished_matches(
             league_id=league.api_id,
             date_from=date_from,
             date_to=date_to
         )
+        logger.info(f"Received {len(finished_matches) if finished_matches else 0} finished matches from API")
         
         # Combine live and finished matches
         all_scores = []
@@ -472,13 +643,19 @@ def fetch_scores_for_league_task(self, league_id: int):
         
         # Filter to only matches from this league
         league_scores = [s for s in all_scores if s.get('league_id') == league.api_id]
+        logger.info(f"Total scores for this league after filtering: {len(league_scores)}")
         
         processed_api_ids = set()
+        fixtures_updated = 0
+        fixtures_finished = 0
+        fixtures_live = 0
         
         if league_scores:
-            for score_item in league_scores:
+            logger.info(f"Processing {len(league_scores)} score updates...")
+            for idx, score_item in enumerate(league_scores, 1):
                 match_id = score_item.get('match_id')
                 if not match_id:
+                    logger.warning(f"Score item {idx} missing match_id, skipping")
                     continue
                 
                 processed_api_ids.add(match_id)
@@ -488,6 +665,7 @@ def fetch_scores_for_league_task(self, league_id: int):
                         fixture = FootballFixture.objects.select_for_update().get(api_id=match_id)
                         
                         if fixture.status == FootballFixture.FixtureStatus.FINISHED:
+                            logger.debug(f"Fixture {fixture.id} already FINISHED, skipping")
                             continue
                         
                         # Get scores
@@ -518,49 +696,73 @@ def fetch_scores_for_league_task(self, league_id: int):
                         if 'finished' in match_status or 'ft' in match_status:
                             fixture.status = FootballFixture.FixtureStatus.FINISHED
                             fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
-                            logger.info(f"[Scores] Fixture {fixture.id} marked as FINISHED. Score: {home_score}-{away_score}. Triggering settlement.")
+                            fixtures_finished += 1
+                            logger.info(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) marked FINISHED. Score: {home_score}-{away_score}")
+                            logger.info(f"Triggering settlement pipeline for fixture {fixture.id}...")
                             settle_fixture_pipeline_task.delay(fixture.id)
                         else:
                             fixture.status = FootballFixture.FixtureStatus.LIVE
                             fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
-                            logger.info(f"[Scores] Fixture {fixture.id} is LIVE. Score Updated: {home_score}-{away_score}.")
+                            fixtures_live += 1
+                            logger.debug(f"Fixture {fixture.id} is LIVE. Score: {home_score}-{away_score}")
+                        
+                        fixtures_updated += 1
                 
                 except FootballFixture.DoesNotExist:
-                    logger.warning(f"[Scores] Received score data for unknown fixture API ID: {match_id}")
+                    logger.warning(f"Received score data for unknown fixture API ID: {match_id}")
         
         # Handle fixtures past assumed completion time
         unprocessed_fixtures = fixtures_to_check_qs.exclude(api_id__in=processed_api_ids)
+        unprocessed_count = unprocessed_fixtures.count()
         
-        for fixture in unprocessed_fixtures:
-            if fixture.match_date and fixture.match_date < assumed_completion_cutoff:
-                with transaction.atomic():
-                    fixture_to_finish = FootballFixture.objects.select_for_update().get(id=fixture.id)
-                    
-                    if fixture_to_finish.status == FootballFixture.FixtureStatus.FINISHED:
-                        continue
-                    
-                    if fixture_to_finish.home_team_score is None:
-                        fixture_to_finish.home_team_score = 0
-                    if fixture_to_finish.away_team_score is None:
-                        fixture_to_finish.away_team_score = 0
-                    
-                    fixture_to_finish.status = FootballFixture.FixtureStatus.FINISHED
-                    fixture_to_finish.last_score_update = timezone.now()
-                    fixture_to_finish.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
-                    
-                    logger.warning(
-                        f"[Scores] Fixture {fixture.id} was not in API response and is past assumed completion time. "
-                        f"Marking as FINISHED with score: {fixture_to_finish.home_team_score}-{fixture_to_finish.away_team_score}"
-                    )
-                    settle_fixture_pipeline_task.delay(fixture.id)
+        if unprocessed_count > 0:
+            logger.info(f"Checking {unprocessed_count} unprocessed fixtures for assumed completion...")
+            fixtures_assumed_finished = 0
+            
+            for fixture in unprocessed_fixtures:
+                if fixture.match_date and fixture.match_date < assumed_completion_cutoff:
+                    with transaction.atomic():
+                        fixture_to_finish = FootballFixture.objects.select_for_update().get(id=fixture.id)
+                        
+                        if fixture_to_finish.status == FootballFixture.FixtureStatus.FINISHED:
+                            continue
+                        
+                        if fixture_to_finish.home_team_score is None:
+                            fixture_to_finish.home_team_score = 0
+                        if fixture_to_finish.away_team_score is None:
+                            fixture_to_finish.away_team_score = 0
+                        
+                        fixture_to_finish.status = FootballFixture.FixtureStatus.FINISHED
+                        fixture_to_finish.last_score_update = timezone.now()
+                        fixture_to_finish.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update'])
+                        
+                        fixtures_assumed_finished += 1
+                        logger.warning(
+                            f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) "
+                            f"not in API response and past assumed completion time. "
+                            f"Marking FINISHED with score: {fixture_to_finish.home_team_score}-{fixture_to_finish.away_team_score}"
+                        )
+                        settle_fixture_pipeline_task.delay(fixture.id)
+            
+            if fixtures_assumed_finished > 0:
+                logger.info(f"Marked {fixtures_assumed_finished} fixtures as assumed finished")
+        
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_scores_for_league_task - SUCCESS")
+        logger.info(f"League: {league.name}, Updated: {fixtures_updated}, Finished: {fixtures_finished}, Live: {fixtures_live}")
+        logger.info("="*80)
     
     except League.DoesNotExist:
-        logger.error(f"[Scores] League {league_id} not found.")
+        logger.error(f"TASK ERROR: League {league_id} not found in database")
+        logger.info("="*80)
+        logger.info(f"TASK END: fetch_scores_for_league_task - FAILED (League not found)")
+        logger.info("="*80)
     except APIFootballException as e:
-        logger.exception(f"[Scores] API error fetching scores for league {league_id}: {e}")
+        logger.error(f"TASK ERROR: APIFootball API error for league {league_id}: {e}", exc_info=True)
+        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
     except Exception as e:
-        logger.exception(f"[Scores] Unexpected error fetching scores for league {league_id}: {e}")
+        logger.error(f"TASK ERROR: Unexpected error fetching scores for league {league_id}: {e}", exc_info=True)
         raise self.retry(exc=e)
 
 # --- Settlement Tasks (reused from original tasks.py) ---
