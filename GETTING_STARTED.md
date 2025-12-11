@@ -37,6 +37,30 @@ Quick setup:
    - `football_data_app.run_apifootball_full_update` (every 10 minutes)
    - `football_data_app.run_score_and_settlement_task` (every 5 minutes)
 
+### Step 5: Initialize Football Leagues
+**Critical**: Before scheduled tasks can fetch betting data, you need to initialize leagues.
+
+```bash
+# Initialize football leagues from APIFootball.com
+docker-compose exec backend python manage.py football_league_setup
+```
+
+This command:
+- Fetches available football leagues from APIFootball API
+- Populates the database with league data
+- Marks leagues as active by default
+
+**Without this step**, you'll see "Found 0 active leagues" in logs and no betting data will be available.
+
+**Verification**:
+```bash
+# Check that leagues were initialized
+docker-compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
+
+# Monitor logs - should now show leagues being processed
+docker-compose logs -f celery_worker_football | grep -i league
+```
+
 If all checks pass, you're ready to go! 🎉
 
 ## 📚 Documentation Index
