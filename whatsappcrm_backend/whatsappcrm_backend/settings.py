@@ -193,7 +193,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 # --- Celery Configuration ---
 # Ensure your Redis server is running and accessible at this URL.
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://::localhost:6379/0')
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://:@localhost:6379/0')
 CELERY_RESULT_BACKEND = 'django-db' # Use a different DB for results
 CELERY_ACCEPT_CONTENT = ['json'] # Content types to accept
 CELERY_TASK_SERIALIZER = 'json'  # How tasks are serialized
