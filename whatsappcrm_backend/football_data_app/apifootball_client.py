@@ -27,15 +27,19 @@ class APIFootballClient:
     
     def __init__(self, api_key: Optional[str] = None):
         _api_key_to_use = api_key
+        _api_key_source = None
 
-        if not _api_key_to_use:
+        if api_key:
+            _api_key_source = "constructor parameter"
+        else:
             try:
                 # Local import to avoid issues if Django isn't fully configured when module is loaded
                 from football_data_app.models import Configuration
                 config = Configuration.objects.filter(provider_name="APIFootball").first()
                 if config and config.api_key:
                     _api_key_to_use = config.api_key
-                    logger.info("API Key loaded from database Configuration for 'APIFootball'.")
+                    _api_key_source = "database Configuration (provider_name='APIFootball')"
+                    logger.info(f"✓ API Key loaded from {_api_key_source}")
                 else:
                     logger.info(
                         "No 'APIFootball' configuration found in database, or API key is missing in the config. "
@@ -52,7 +56,8 @@ class APIFootballClient:
         if not _api_key_to_use:
             _api_key_to_use = os.getenv('API_FOOTBALL_KEY')
             if _api_key_to_use:
-                logger.info("API Key loaded from API_FOOTBALL_KEY environment variable.")
+                _api_key_source = "API_FOOTBALL_KEY environment variable"
+                logger.info(f"✓ API Key loaded from {_api_key_source}")
 
         if not _api_key_to_use:
             logger.critical("API Key for APIFootball is not configured. Please provide it to the client, "
@@ -60,7 +65,13 @@ class APIFootballClient:
             raise ValueError("API Key for APIFootball must be configured.")
         
         self.api_key = _api_key_to_use
-        logger.debug(f"APIFootballClient initialized with API key ending in '...{self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key}'.")
+        
+        # Log key source and masked key for verification
+        key_suffix = self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key
+        logger.info(f"✓ APIFootballClient initialized successfully")
+        logger.info(f"  → Source: {_api_key_source}")
+        logger.info(f"  → Key (last 4 chars): ...{key_suffix}")
+        logger.debug(f"  → Key length: {len(self.api_key)} characters")
     
     def _get_error_guidance(self, error_indicator: str) -> str:
         """
