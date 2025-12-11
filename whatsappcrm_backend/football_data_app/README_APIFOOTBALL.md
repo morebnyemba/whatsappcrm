@@ -63,13 +63,20 @@ This will:
 
 **Verification**:
 ```bash
-# Check leagues were created
+# Comprehensive system check (recommended)
+python manage.py check_football_setup
+
+# Or manually check league count
 python manage.py shell -c "from football_data_app.models import League; print(f'Total leagues: {League.objects.count()}, Active: {League.objects.filter(active=True).count()}')"
 ```
 
 **Docker Users**:
 ```bash
+# Initialize leagues
 docker-compose exec backend python manage.py football_league_setup
+
+# Verify setup
+docker-compose exec backend python manage.py check_football_setup
 ```
 
 ## Architecture
@@ -238,12 +245,28 @@ grep ERROR logs/*.log
 
 ## Troubleshooting
 
+### "Found 0 active leagues" in logs
+
+This is the most common issue on first setup. The system has no league data to process.
+
+**Solution**:
+```bash
+# Initialize leagues from API
+python manage.py football_league_setup
+
+# Verify setup
+python manage.py check_football_setup
+```
+
+If the check command shows errors, follow the recommended steps in its output.
+
 ### No data being fetched
 
-1. **Check API key**: Verify the key is correct in `.env` or database
-2. **Check logs**: Look for authentication errors
-3. **Verify leagues**: Ensure leagues are marked as active in admin
-4. **Check Celery**: Ensure Celery workers are running
+1. **Run setup check**: `python manage.py check_football_setup`
+2. **Check API key**: Verify the key is correct in `.env` or database
+3. **Check logs**: Look for authentication errors
+4. **Verify leagues**: Ensure leagues are marked as active in admin
+5. **Check Celery**: Ensure Celery workers are running
 
 ```bash
 # Check Celery status

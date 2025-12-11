@@ -243,7 +243,10 @@ whatsappcrm/
    
    Check that leagues are initialized and scheduled tasks are running:
    ```bash
-   # Check that leagues were created
+   # Run comprehensive setup check (recommended)
+   docker-compose exec backend python manage.py check_football_setup
+   
+   # Or manually check league count
    docker-compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
    
    # View Celery worker logs to monitor scheduled tasks
