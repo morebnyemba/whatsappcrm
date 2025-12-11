@@ -13,7 +13,7 @@ class League(models.Model):
     api_id = models.CharField(max_length=100, unique=True, help_text="The unique key for the league from the API (e.g., 'soccer_epl' or league_id from APIFootball).")
     sport_key = models.CharField(max_length=50, help_text="The general sport key, e.g., 'soccer'.")
     sport_group_name = models.CharField(max_length=100, null=True, blank=True, help_text="The general sport group name from the API, e.g., 'Soccer'.")
-    short_name = models.CharField(max_length=50, null=True, blank=True, help_text="Short name or title for the league from API (e.g., EPL).")
+    short_name = models.CharField(max_length=200, null=True, blank=True, help_text="Short name or title for the league from API (e.g., EPL).")
     api_description = models.TextField(null=True, blank=True, help_text="Full description of the league from the API, if different from name.")
     active = models.BooleanField(default=True, help_text="Whether this league is currently tracked for updates.")
     logo_url = models.URLField(max_length=512, null=True, blank=True, help_text="URL for the league's logo.")
