@@ -32,6 +32,9 @@ gunicorn>=23.0.0
 # ASGI server (since ASGI_APPLICATION is defined) - Updated
 daphne>=4.1.2
 
+# Static file serving for production
+whitenoise>=6.8.2
+
 # HTTP and data validation - Updated to latest secure versions
 requests>=2.32.3
 pydantic>=2.10.5

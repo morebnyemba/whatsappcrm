@@ -54,4 +54,10 @@ path('crm-api/auth/', include('djoser.urls')),
 # The 'namespace' argument in include() is useful for URL reversing 
 # (e.g., using reverse('meta_integration_api:meta_webhook_receiver') in Python code).
 # It helps avoid URL name collisions between apps.
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve static and media files during development only
+# In production, WhiteNoise middleware handles static files automatically
+# Media files in production should be served by the web server (Nginx) or cloud storage
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
