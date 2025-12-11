@@ -125,18 +125,19 @@ class APIFootballClient:
         # Truncate to max length
         text = response_text[:max_length]
         
-        # Remove potential API keys (sequences of 20+ alphanumeric characters)
-        text = re.sub(r'\b[a-zA-Z0-9]{20,}\b', '[REDACTED]', text)
+        # Remove potential API keys (long alphanumeric sequences, 32+ chars to avoid IDs)
+        # Most API keys are 32+ characters long
+        text = re.sub(r'\b[a-zA-Z0-9]{32,}\b', '[REDACTED]', text)
         
-        # Remove potential tokens/passwords in common formats
-        # Format: key="value" or key='value'
-        text = re.sub(r'(token|key|password|secret|auth)["\s:=]+["\']?[a-zA-Z0-9+/=_-]{10,}["\']?', r'\1=[REDACTED]', text, flags=re.IGNORECASE)
+        # Remove potential tokens/passwords in common formats with explicit key names
+        # Format: key="value" or key='value' or key: value or key=value
+        text = re.sub(r'(token|key|password|secret|auth|apikey)[\s:="\']+([a-zA-Z0-9+/=_-]{10,})(["\'\s,}&]|$)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
         
         # JSON format: "token":"value"
-        text = re.sub(r'\"(token|key|password|secret|auth)\":\s*\"[^\"]{10,}\"', r'"\1":"[REDACTED]"', text, flags=re.IGNORECASE)
+        text = re.sub(r'"(token|key|password|secret|auth|apikey)"\s*:\s*"[^"]{10,}"', r'"\1":"[REDACTED]"', text, flags=re.IGNORECASE)
         
         # URL-encoded format: token=value&
-        text = re.sub(r'(token|key|password|secret|auth)=([^&\s]{10,})(&|$|\s)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
+        text = re.sub(r'(token|key|password|secret|auth|apikey)=([^&\s]{10,})(&|$|\s)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
         
         return text
 
