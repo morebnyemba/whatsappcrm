@@ -97,14 +97,23 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
     Asynchronously initiates a Paynow Express Checkout payment.
     This task is called after a PENDING WalletTransaction has been created.
     """
-    log_prefix = f"[Initiate Task - Ref: {transaction_reference}]"
-    logger.info(f"{log_prefix} Celery task started.")
+    logger.info("="*80)
+    logger.info(f"TASK START: initiate_paynow_express_checkout_task")
+    logger.info(f"Transaction Ref: {transaction_reference}")
+    logger.info(f"Task ID: {self.request.id}, Retry: {self.request.retries}/{self.max_retries}")
+    logger.info("="*80)
+    
+    log_prefix = f"[Initiate - Ref: {transaction_reference}]"
+    
     try:
         # Find the pending transaction
+        logger.debug(f"{log_prefix} Fetching transaction from database...")
         pending_tx = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
         wallet = pending_tx.wallet
         profile = wallet.user.customer_profile
         contact = profile.contact
+        
+        logger.info(f"{log_prefix} Transaction found - User: {wallet.user.username}, Amount: ${pending_tx.amount}")
 
         # Extract necessary details from the transaction and related models
         amount = pending_tx.amount
@@ -116,11 +125,7 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
         if not all([phone_number, paynow_method_type]):
             raise ValueError("Phone number or Paynow method type missing in transaction payment_details.")
 
-        logger.debug(
-            f"{log_prefix} Preparing to call Paynow service with: "
-            f"Amount={amount}, Phone={phone_number}, Method={paynow_method_type}, "
-            f"Email={email}, Description='{pending_tx.description}'"
-        )
+        logger.info(f"{log_prefix} Initiating Paynow payment: Amount=${amount}, Method={paynow_method_type}, Phone={phone_number}")
 
         paynow_service = PaynowService()
         paynow_response = paynow_service.initiate_express_checkout_payment(
@@ -133,11 +138,14 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
         )
 
         if paynow_response.get('success'):
-            pending_tx.external_reference = paynow_response.get('paynow_reference')
+            paynow_ref = paynow_response.get('paynow_reference')
+            pending_tx.external_reference = paynow_ref
+            logger.info(f"{log_prefix} ✓ Paynow payment initiated successfully. Paynow Ref: {paynow_ref}")
             
             # Always store the poll_url if provided by Paynow
             if paynow_response.get('poll_url'):
                 pending_tx.payment_details['poll_url'] = paynow_response.get('poll_url')
+                logger.debug(f"{log_prefix} Stored poll_url")
 
             # --- Specific handling for different payment methods ---
             if paynow_method_type == 'omari':
@@ -148,7 +156,10 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
                 pending_tx.payment_details['otpreference'] = otpreference
                 pending_tx.payment_details['remoteotpurl'] = remoteotpurl
                 pending_tx.save(update_fields=['external_reference', 'payment_details'])
-                logger.info(f"{log_prefix} O'mari payment initiated. OTP required. Not scheduling polling yet.")
+                logger.info(f"{log_prefix} O'mari method - OTP required. Not scheduling polling yet.")
+                logger.info("="*80)
+                logger.info(f"TASK END: initiate_paynow_express_checkout_task - SUCCESS (O'mari - awaiting OTP)")
+                logger.info("="*80)
                 # The flow will need to ask for OTP, then a new action/task will submit it.
                 # Polling will only start after successful OTP submission.
             elif paynow_method_type == 'innbucks':
@@ -159,63 +170,95 @@ def initiate_paynow_express_checkout_task(self, transaction_reference: str):
                     pending_tx.payment_details['authorizationexpires'] = authorizationexpires
                 pending_tx.save(update_fields=['external_reference', 'payment_details'])
                 
+                logger.info(f"{log_prefix} InnBucks method - Authorization code: {authorizationcode}")
+                logger.info(f"{log_prefix} Scheduling InnBucks notification and polling tasks...")
                 # Schedule sending the specific InnBucks message
                 send_innbucks_authorization_message.delay(transaction_reference=transaction_reference)
                 poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
-                logger.info(f"{log_prefix} InnBucks payment initiated. Authorization code: {authorizationcode}. Polling scheduled.")
+                logger.info(f"{log_prefix} InnBucks tasks scheduled successfully")
+                logger.info("="*80)
+                logger.info(f"TASK END: initiate_paynow_express_checkout_task - SUCCESS (InnBucks)")
+                logger.info("="*80)
             else: # Default for EcoCash and other direct mobile money methods
                 pending_tx.save(update_fields=['external_reference', 'payment_details'])
+                logger.info(f"{log_prefix} Method: {paynow_method_type} - Scheduling polling task...")
                 poll_paynow_transaction_status.delay(transaction_reference=transaction_reference)
-                logger.info(f"{log_prefix} Successfully initiated Paynow payment and scheduled polling.")
+                logger.info(f"{log_prefix} Polling task scheduled successfully")
+                logger.info("="*80)
+                logger.info(f"TASK END: initiate_paynow_express_checkout_task - SUCCESS")
+                logger.info("="*80)
         else:
-            raise Exception(paynow_response.get('message', 'Unknown error from Paynow'))
+            error_msg = paynow_response.get('message', 'Unknown error from Paynow')
+            logger.error(f"{log_prefix} ✗ Paynow API returned failure: {error_msg}")
+            raise Exception(error_msg)
     
     except (WalletTransaction.DoesNotExist, ValueError) as e:
         # These are permanent, non-recoverable errors. Do not retry.
-        logger.error(f"{log_prefix} Permanent error during initiation, will not retry: {e}", exc_info=True)
+        logger.error(f"{log_prefix} PERMANENT ERROR - Will not retry: {e}", exc_info=True)
+        logger.info("="*80)
+        logger.info(f"TASK END: initiate_paynow_express_checkout_task - FAILED (Permanent error)")
+        logger.info("="*80)
     except Exception as e:
         # These are potentially transient errors (e.g., network timeout, Paynow 500 error).
-        logger.warning(f"{log_prefix} Transient error during initiation, will retry ({self.request.retries + 1}/{self.max_retries}): {e}")
+        logger.warning(f"{log_prefix} TRANSIENT ERROR - Retry {self.request.retries + 1}/{self.max_retries}: {e}")
         try:
             # Retry the task with the default delay.
+            logger.info(f"{log_prefix} Scheduling retry in {self.default_retry_delay}s...")
             self.retry(exc=e)
         except self.MaxRetriesExceededError:
-            logger.error(f"{log_prefix} Max retries exceeded for initiating payment. Failing transaction.")
+            logger.error(f"{log_prefix} Max retries exceeded. Marking transaction as failed.")
             fail_pending_transaction_and_notify.delay(transaction_reference=transaction_reference, error_message=f"Failed after multiple retries: {str(e)[:150]}")
+            logger.info("="*80)
+            logger.info(f"TASK END: initiate_paynow_express_checkout_task - FAILED (Max retries exceeded)")
+            logger.info("="*80)
 
 @shared_task(name="paynow_integration.poll_paynow_transaction_status", bind=True, max_retries=10, default_retry_delay=120)
 def poll_paynow_transaction_status(self, transaction_reference: str):
     """
     Polls Paynow to get the transaction status and updates the WalletTransaction accordingly.
     """
-    log_prefix = f"[Poll Task - Ref: {transaction_reference}]"
-    logger.info(f"{log_prefix} Polling Paynow status. Attempt {self.request.retries + 1}/{self.max_retries + 1}.")
+    logger.info("="*80)
+    logger.info(f"TASK START: poll_paynow_transaction_status")
+    logger.info(f"Transaction Ref: {transaction_reference}")
+    logger.info(f"Task ID: {self.request.id}, Poll Attempt: {self.request.retries + 1}/{self.max_retries + 1}")
+    logger.info("="*80)
+    
+    log_prefix = f"[Poll - Ref: {transaction_reference}]"
+    
     # Use a transaction.atomic block to ensure the initial get-and-lock is atomic.
     try:
         with transaction.atomic():
             # FIX: Lock the WalletTransaction row to prevent race conditions.
             # If a second task tries this, it will wait. When it gets the lock,
             # the status will no longer be 'PENDING', and it will raise DoesNotExist.
+            logger.debug(f"{log_prefix} Acquiring database lock on transaction...")
             pending_tx = WalletTransaction.objects.select_for_update().get(reference=transaction_reference, status='PENDING')
+            
+            logger.info(f"{log_prefix} Transaction locked - User: {pending_tx.wallet.user.username}, Amount: ${pending_tx.amount}")
             
             paynow_service = PaynowService()
             poll_url = pending_tx.payment_details.get('poll_url')
             if not poll_url:
-                logger.error(f"{log_prefix} Poll URL not found. Failing transaction.")
+                logger.error(f"{log_prefix} Poll URL not found in payment_details. Cannot poll status.")
                 _fail_transaction_and_notify_user(pending_tx, "Could not poll status: Poll URL missing.")
+                logger.info("="*80)
+                logger.info(f"TASK END: poll_paynow_transaction_status - FAILED (No poll URL)")
+                logger.info("="*80)
                 return # Stop execution
 
-            logger.debug(f"{log_prefix} Checking poll URL: {poll_url}")
+            logger.info(f"{log_prefix} Calling Paynow API to check transaction status...")
             status_response = paynow_service.check_transaction_status(poll_url)
             
             if status_response['success']:
                 status = status_response['status']
-                logger.info(f"{log_prefix} Paynow status received: '{status}'.")
+                logger.info(f"{log_prefix} Paynow API response - Status: '{status}'")
 
                 if status.lower() == 'paid':
+                    logger.info(f"{log_prefix} Status is PAID - Processing successful payment...")
                     wallet = pending_tx.wallet
                     # This second lock is good for protecting the wallet from other simultaneous operations.
                     wallet_to_update = UserWallet.objects.select_for_update().get(pk=wallet.pk)
+                    old_balance = wallet_to_update.balance
                     wallet_to_update.balance += pending_tx.amount
                     wallet_to_update.save(update_fields=['balance', 'updated_at'])
 
@@ -224,7 +267,12 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                     pending_tx.save(update_fields=['status', 'description', 'updated_at'])
                     
                     wallet.refresh_from_db()
-                    logger.info(f"{log_prefix} Successfully processed deposit. User: {wallet.user.username}, Amount: {pending_tx.amount}. New balance: {wallet.balance}")
+                    logger.info(f"{log_prefix} ✓ Payment COMPLETED successfully")
+                    logger.info(f"  User: {wallet.user.username}")
+                    logger.info(f"  Amount: ${pending_tx.amount}")
+                    logger.info(f"  Old Balance: ${old_balance:.2f}")
+                    logger.info(f"  New Balance: ${wallet.balance:.2f}")
+                    logger.info(f"{log_prefix} Scheduling deposit confirmation notification...")
                     
                     send_deposit_confirmation_whatsapp.delay(
                         whatsapp_id=wallet.user.customer_profile.contact.whatsapp_id,
@@ -233,12 +281,18 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                         transaction_reference=transaction_reference,
                         currency_symbol="$"
                     )
+                    logger.info("="*80)
+                    logger.info(f"TASK END: poll_paynow_transaction_status - SUCCESS (Payment COMPLETED)")
+                    logger.info("="*80)
                     return # Task is complete
 
                 elif status.lower() in ['cancelled', 'failed', 'disputed']:
                     reason = f"Paynow transaction status was '{status}'."
-                    logger.warning(f"{log_prefix} Failing transaction due to status: '{status}'.")
+                    logger.warning(f"{log_prefix} Payment FAILED - Status: '{status}'")
                     _fail_transaction_and_notify_user(pending_tx, reason)
+                    logger.info("="*80)
+                    logger.info(f"TASK END: poll_paynow_transaction_status - COMPLETE (Payment FAILED)")
+                    logger.info("="*80)
                     return # Task is complete
 
                 else: # 'pending', 'created', 'sent', etc.
@@ -246,30 +300,45 @@ def poll_paynow_transaction_status(self, transaction_reference: str):
                     # Retries will happen at approx. 60s, 120s, 240s, etc.
                     retry_delay = 60 * (2 ** self.request.retries)
                     retry_delay_with_jitter = retry_delay + random.randint(0, 15) # Add some randomness
-                    logger.info(f"{log_prefix} Transaction is still pending with status '{status}'. Retrying in {retry_delay_with_jitter} seconds.")
+                    logger.info(f"{log_prefix} Payment still PENDING - Status: '{status}'")
+                    logger.info(f"{log_prefix} Scheduling retry {self.request.retries + 2}/{self.max_retries + 1} in {retry_delay_with_jitter}s...")
                     self.retry(exc=Exception(f"Transaction is still pending. Current status: {status}"), countdown=retry_delay_with_jitter)
             else:
                 error_msg = status_response.get('message', 'Unknown API error')
-                logger.error(f"{log_prefix} Failed to get Paynow status: {error_msg}. Retrying task.")
+                logger.error(f"{log_prefix} Paynow API error: {error_msg}")
+                logger.info(f"{log_prefix} Scheduling retry with default delay...")
                 # For API errors, we can use the default retry delay.
                 self.retry(exc=Exception(f"Failed to get Paynow status: {error_msg}"))
 
     except WalletTransaction.DoesNotExist:
         # This is now an expected, non-error outcome for a concurrent task.
-        logger.info(f"{log_prefix} Transaction not found or not PENDING. It was likely processed by another task. Stopping poll.")
+        logger.info(f"{log_prefix} Transaction not found or not PENDING. Likely processed by another task.")
+        logger.info("="*80)
+        logger.info(f"TASK END: poll_paynow_transaction_status - SKIPPED (Already processed)")
+        logger.info("="*80)
     except Exception as e:
-        logger.error(f"{log_prefix} Unhandled error during polling: {e}", exc_info=True)
+        logger.error(f"{log_prefix} UNHANDLED ERROR during polling: {e}", exc_info=True)
         try:
+            logger.info(f"{log_prefix} Attempting retry...")
             self.retry(exc=e)
         except self.MaxRetriesExceededError:
             logger.error(f"{log_prefix} Max retries exceeded. Attempting to fail transaction.")
             try:
                 tx_to_fail = WalletTransaction.objects.get(reference=transaction_reference, status='PENDING')
                 _fail_transaction_and_notify_user(tx_to_fail, f"Polling failed after max retries: {str(e)[:100]}")
+                logger.info("="*80)
+                logger.info(f"TASK END: poll_paynow_transaction_status - FAILED (Max retries exceeded)")
+                logger.info("="*80)
             except WalletTransaction.DoesNotExist:
-                logger.warning(f"{log_prefix} Could not find transaction to fail after max retries (it might have been processed or failed already).")
+                logger.warning(f"{log_prefix} Could not find transaction to fail after max retries (may have been processed)")
+                logger.info("="*80)
+                logger.info(f"TASK END: poll_paynow_transaction_status - FAILED (Transaction not found)")
+                logger.info("="*80)
             except Exception as final_fail_exc:
-                logger.critical(f"{log_prefix} Could not fail transaction after max retries: {final_fail_exc}")
+                logger.critical(f"{log_prefix} CRITICAL: Could not fail transaction after max retries: {final_fail_exc}")
+                logger.info("="*80)
+                logger.info(f"TASK END: poll_paynow_transaction_status - CRITICAL ERROR")
+                logger.info("="*80)
 
 @shared_task(name="paynow_integration.send_innbucks_authorization_message")
 def send_innbucks_authorization_message(transaction_reference: str):
