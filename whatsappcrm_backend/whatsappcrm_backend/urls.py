@@ -56,7 +56,8 @@ path('crm-api/auth/', include('djoser.urls')),
 # It helps avoid URL name collisions between apps.
 
 # Serve static and media files during development only
-# In production, these should be served by the web server (Nginx)
+# In production, WhiteNoise middleware handles static files automatically
+# Media files in production should be served by the web server (Nginx) or cloud storage
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
