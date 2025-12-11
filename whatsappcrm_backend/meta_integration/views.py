@@ -81,8 +81,8 @@ class MetaWebhookAPIView(View):
 
         if not hmac.compare_digest(calculated_signature_hex, expected_signature_hex):
             logger.warning(f"Webhook signature mismatch. Expected: {expected_signature_hex}, Calculated: {calculated_signature_hex}")
-            logger.debug(f"Request body size: {len(request_body_bytes)} bytes, First 200 chars: {request_body_bytes[:200]}")
-            logger.debug(f"App secret length: {len(app_secret_key)} chars (first 4: {app_secret_key[:4]}...)")
+            logger.debug(f"Request body size: {len(request_body_bytes)} bytes")
+            logger.debug(f"App secret length: {len(app_secret_key)} chars")
             return False
         
         logger.debug("Webhook signature verified successfully.")
@@ -134,13 +134,17 @@ class MetaWebhookAPIView(View):
             )
         else:
             signature = request.headers.get('X-Hub-Signature-256')
-            logger.debug(f"Signature header value: {signature}")
-            logger.debug(f"All headers: {dict(request.headers)}")
+            # Filter sensitive headers before logging
+            safe_headers = {
+                k: v for k, v in request.headers.items() 
+                if k.lower() not in ['authorization', 'cookie', 'x-access-token']
+            }
+            logger.debug(f"Webhook headers (filtered): {safe_headers}")
             if not self._verify_signature(request.body, signature, app_secret):
                 logger.error("Webhook signature verification FAILED. Discarding request.")
                 WebhookEventLog.objects.create(
                     app_config=active_config, event_type='security',
-                    payload={'error': 'Signature verification failed', 'headers': dict(request.headers)},
+                    payload={'error': 'Signature verification failed'},
                     processing_status='rejected', processing_notes='Invalid X-Hub-Signature-256'
                 )
                 return HttpResponse("Invalid signature", status=403)
