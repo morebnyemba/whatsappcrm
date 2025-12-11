@@ -72,6 +72,16 @@ class Migration(migrations.Migration):
                 unique=True
             ),
         ),
+        migrations.AlterField(
+            model_name='league',
+            name='short_name',
+            field=models.CharField(
+                blank=True,
+                help_text='Short name or title for the league from API (e.g., EPL).',
+                max_length=200,
+                null=True
+            ),
+        ),
         
         # Update Team model
         migrations.AddField(
