@@ -4,7 +4,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from .utils import send_whatsapp_message # Your existing function to call Meta API
+from .utils import send_whatsapp_message, send_read_receipt_api # Your existing function to call Meta API
 from .models import MetaAppConfig
 from conversations.models import Message, Contact # To update message status
 
@@ -134,3 +134,35 @@ def send_whatsapp_message_task(self, outgoing_message_id: int, active_config_id:
         logger.info("="*80)
         logger.info(f"TASK END: send_whatsapp_message_task - Status: {outgoing_msg.status.upper()}")
         logger.info("="*80)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=10)
+def send_read_receipt_task(self, wamid: str, config_id: int, show_typing_indicator: bool = False):
+    """
+    Celery task to send a read receipt for a given message ID.
+    
+    Args:
+        wamid: WhatsApp Message ID to mark as read
+        config_id: ID of the MetaAppConfig to use
+        show_typing_indicator: If True, shows typing indicator
+    """
+    logger.info(f"Task send_read_receipt_task started for WAMID: {wamid} (Typing: {show_typing_indicator})")
+    try:
+        active_config = MetaAppConfig.objects.get(pk=config_id)
+    except MetaAppConfig.DoesNotExist:
+        logger.error(f"send_read_receipt_task: MetaAppConfig with ID {config_id} not found. Task cannot proceed.")
+        return  # Cannot retry if config is missing
+
+    try:
+        api_response = send_read_receipt_api(wamid=wamid, config=active_config, show_typing_indicator=show_typing_indicator)
+        # The read receipt API returns {"success": true}. If the response is None or 'success' is not true, it's a failure.
+        if not api_response or not api_response.get('success'):
+            # The utility function has already logged the specific error. We raise an exception to trigger a retry.
+            raise ValueError(f"API call to send read receipt failed for WAMID {wamid}. Response: {api_response}")
+
+    except Exception as e:
+        logger.warning(f"Exception in send_read_receipt_task for WAMID {wamid}, will retry. Error: {e}")
+        try:
+            raise self.retry(exc=e)
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries exceeded for sending read receipt for WAMID {wamid}.")
