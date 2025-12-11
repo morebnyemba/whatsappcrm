@@ -47,7 +47,7 @@ API_FOOTBALL_KEY=your_api_key_here
 
 ### 3. Run Initial Setup
 
-Run the management command to fetch leagues:
+**⚠️ CRITICAL STEP**: Run the management command to fetch leagues:
 
 ```bash
 python manage.py football_league_setup
@@ -57,6 +57,20 @@ This will:
 - Fetch all available football leagues from APIFootball
 - Populate your database with league information
 - Set up teams and fixtures
+- Mark leagues as active by default
+
+**Without this step**, you'll see "Found 0 active leagues" in the scheduled task logs and no betting data will be available.
+
+**Verification**:
+```bash
+# Check leagues were created
+python manage.py shell -c "from football_data_app.models import League; print(f'Total leagues: {League.objects.count()}, Active: {League.objects.filter(active=True).count()}')"
+```
+
+**Docker Users**:
+```bash
+docker-compose exec backend python manage.py football_league_setup
+```
 
 ## Architecture
 

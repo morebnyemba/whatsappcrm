@@ -175,12 +175,22 @@ whatsappcrm/
    docker-compose exec backend python manage.py createsuperuser
    ```
 
-6. **Configure Nginx Proxy Manager**
+6. **Initialize Football Leagues** (Required for betting features)
+   ```bash
+   docker-compose exec backend python manage.py football_league_setup
+   ```
+   
+   This command fetches available football leagues from APIFootball.com and populates the database. 
+   Without this step, scheduled tasks will report "0 active leagues" and no betting data will be available.
+   
+   **Note**: Ensure your APIFootball API key is configured in `.env` or Django admin before running this command.
+
+7. **Configure Nginx Proxy Manager**
    - Access NPM Admin UI: http://localhost:81
    - Default credentials: admin@example.com / changeme
    - **Important**: Change default credentials on first login!
 
-7. **Set up Proxy Hosts in NPM**
+8. **Set up Proxy Hosts in NPM**
    
    Create the following proxy hosts in NPM UI:
    
@@ -228,6 +238,19 @@ whatsappcrm/
    - Firewall rules to allow only trusted IPs
    - NPM's built-in Access Lists feature
    - VPN or SSH tunnel for remote access
+
+9. **Verify Football Data Setup** (Optional)
+   
+   Check that leagues are initialized and scheduled tasks are running:
+   ```bash
+   # Check that leagues were created
+   docker-compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
+   
+   # View Celery worker logs to monitor scheduled tasks
+   docker-compose logs -f celery_worker_football
+   ```
+   
+   You should see log messages indicating leagues are being processed, not "Found 0 active leagues".
 
 ## ⚙️ Environment Variables
 

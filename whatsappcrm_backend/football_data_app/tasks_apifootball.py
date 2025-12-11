@@ -252,7 +252,20 @@ def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
     logger.info("="*80)
     
     if not league_ids:
+        logger.warning("="*80)
         logger.warning("No league IDs received from previous task. Skipping event/odds processing.")
+        logger.warning("")
+        logger.warning("This usually means:")
+        logger.warning("1. No leagues exist in the database yet, OR")
+        logger.warning("2. The league fetch from APIFootball.com returned no results")
+        logger.warning("")
+        logger.warning("FIRST-TIME SETUP: If this is your first run, ensure you have:")
+        logger.warning("1. A valid APIFootball.com API key configured")
+        logger.warning("2. Run: python manage.py football_league_setup")
+        logger.warning("")
+        logger.warning("The fetch_and_update_leagues_task should have populated leagues automatically.")
+        logger.warning("Check the logs above for any API errors or authentication issues.")
+        logger.warning("="*80)
         logger.info("TASK END: _prepare_and_launch_event_odds_chord - No leagues to process")
         return
     
@@ -559,7 +572,19 @@ def run_score_and_settlement_task():
         logger.info(f"Found {league_count} active leagues")
         
         if not league_count:
+            logger.warning("="*80)
             logger.warning("No active leagues found. Skipping score fetching.")
+            logger.warning("")
+            logger.warning("FIRST-TIME SETUP REQUIRED:")
+            logger.warning("To initialize football leagues, run this command:")
+            logger.warning("  docker-compose exec backend python manage.py football_league_setup")
+            logger.warning("")
+            logger.warning("Or from within the container:")
+            logger.warning("  python manage.py football_league_setup")
+            logger.warning("")
+            logger.warning("This fetches available leagues from APIFootball.com and populates the database.")
+            logger.warning("Without this, no betting data can be fetched or processed.")
+            logger.warning("="*80)
             logger.info("TASK END: run_score_and_settlement_task - No active leagues")
             return
         
