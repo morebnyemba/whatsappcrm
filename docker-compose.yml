@@ -155,7 +155,7 @@ services:
   celery_beat:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_celery_beat
-    command: celery -A whatsappcrm_backend beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler # Original command
+    command: celery -A whatsappcrm_backend.celery beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
