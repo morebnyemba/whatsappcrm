@@ -34,7 +34,7 @@ def send_bonus_notification_task(user_id: int, message: str):
             return
 
         logger.info(f"Sending bonus notification to {whatsapp_id}...")
-        logger.debug(f"Message content: {message[:100]}..." if len(message) > 100 else f"Message content: {message}")
+        logger.debug(f"Message content: {str(message)[:100]}..." if message and len(str(message)) > 100 else f"Message content: {message}")
         
         message_data = create_text_message_data(text_body=message)
         result = send_whatsapp_message(to_phone_number=whatsapp_id, message_type='text', data=message_data)

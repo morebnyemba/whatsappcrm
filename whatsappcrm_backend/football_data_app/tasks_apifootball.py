@@ -157,9 +157,10 @@ def run_apifootball_full_update_task():
             _prepare_and_launch_event_odds_chord.s()
         )
         result = pipeline.apply_async()
-        logger.info(f"Pipeline scheduled successfully with ID: {result.id if hasattr(result, 'id') else 'N/A'}")
+        result_id = getattr(result, 'id', None)
+        logger.info(f"Pipeline scheduled successfully with ID: {result_id or 'N/A'}")
         logger.info("TASK END: run_apifootball_full_update_task - Pipeline dispatched")
-        return {"status": "dispatched", "pipeline_id": str(result.id) if hasattr(result, 'id') else None}
+        return {"status": "dispatched", "pipeline_id": str(result_id) if result_id else None}
     except Exception as e:
         logger.error(f"TASK ERROR: run_apifootball_full_update_task failed with error: {e}", exc_info=True)
         raise
