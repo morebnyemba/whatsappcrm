@@ -211,15 +211,6 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # --- Application-Specific Settings ---
 CONVERSATION_EXPIRY_DAYS = int(os.getenv('CONVERSATION_EXPIRY_DAYS', '60'))
 
-print("--- DEBUGGING ENVIRONMENT VARIABLES ---")
-celery_log_level_env = os.getenv('CELERY_LOG_LEVEL')
-print(f"Value of CELERY_LOG_LEVEL from os.getenv: '{celery_log_level_env}' (Type: {type(celery_log_level_env)})")
-
-effective_celery_level_for_config = os.getenv('CELERY_LOG_LEVEL', 'INFO')
-print(f"Effective level used for Celery logger config: '{effective_celery_level_for_config}' (Type: {type(effective_celery_level_for_config)})")
-print("------------------------------------")
-
-
 # --- Logging Configuration ---
 LOGGING = {
     'version': 1, 'disable_existing_loggers': False,
