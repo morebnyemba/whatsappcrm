@@ -135,16 +135,20 @@ class MetaWebhookAPIView(View):
         else:
             signature = request.headers.get('X-Hub-Signature-256')
             # Filter sensitive headers before logging
+            # X-Hub-Signature-256 is safe to log as it's meant for verification
+            sensitive_header_names = ['authorization', 'cookie', 'x-access-token', 'x-api-key']
             safe_headers = {
                 k: v for k, v in request.headers.items() 
-                if k.lower() not in ['authorization', 'cookie', 'x-access-token']
+                if k.lower() not in sensitive_header_names
             }
             logger.debug(f"Webhook headers (filtered): {safe_headers}")
             if not self._verify_signature(request.body, signature, app_secret):
                 logger.error("Webhook signature verification FAILED. Discarding request.")
+                # Log header keys (not values) for debugging
+                header_keys = list(request.headers.keys())
                 WebhookEventLog.objects.create(
                     app_config=active_config, event_type='security',
-                    payload={'error': 'Signature verification failed'},
+                    payload={'error': 'Signature verification failed', 'header_keys': header_keys},
                     processing_status='rejected', processing_notes='Invalid X-Hub-Signature-256'
                 )
                 return HttpResponse("Invalid signature", status=403)
