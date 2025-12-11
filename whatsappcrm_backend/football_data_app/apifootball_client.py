@@ -101,7 +101,7 @@ class APIFootballClient:
                 "\n  • Wait before retrying"
                 "\n  • Consider upgrading your plan"
             )
-        elif '5' in error_lower and any(c in error_lower for c in ['00', '01', '02', '03', '04']):
+        elif any(code in error_lower for code in ['500', '501', '502', '503', '504']):
             return (
                 "\n\nServer error:"
                 "\n  • APIFootball service is experiencing issues"
@@ -109,6 +109,30 @@ class APIFootballClient:
                 "\n  • This is temporary, retry later"
             )
         return ""
+    
+    def _sanitize_response_body(self, response_text: str, max_length: int = 500) -> str:
+        """
+        Sanitize response body by removing potentially sensitive information.
+        
+        Args:
+            response_text: Raw response text
+            max_length: Maximum length to return
+            
+        Returns:
+            Sanitized response text
+        """
+        import re
+        
+        # Truncate to max length
+        text = response_text[:max_length]
+        
+        # Remove potential API keys (sequences of 20+ alphanumeric characters)
+        text = re.sub(r'\b[a-zA-Z0-9]{20,}\b', '[REDACTED]', text)
+        
+        # Remove potential tokens/passwords in common formats
+        text = re.sub(r'(token|key|password|secret|auth)["\s:=]+[a-zA-Z0-9+/=]{10,}', r'\1=[REDACTED]', text, flags=re.IGNORECASE)
+        
+        return text
 
     def _request(self, params: Dict) -> Union[Dict, List]:
         """Internal method to handle all API requests with retry logic."""
@@ -145,7 +169,7 @@ class APIFootballClient:
                         
                         logger.error(
                             f"APIFootball error response: {error_msg}"
-                            f"\nResponse body: {response.text[:500]}"
+                            f"\nResponse body: {self._sanitize_response_body(response.text)}"
                             f"{additional_info}"
                         )
                         raise APIFootballException(
@@ -159,7 +183,7 @@ class APIFootballClient:
                         additional_info = self._get_error_guidance(data.get('message'))
                         logger.error(
                             f"APIFootball error message: {data.get('message')}"
-                            f"\nResponse body: {response.text[:500]}"
+                            f"\nResponse body: {self._sanitize_response_body(response.text)}"
                             f"{additional_info}"
                         )
                         raise APIFootballException(
@@ -184,9 +208,12 @@ class APIFootballClient:
                 # Get guidance based on status code
                 guidance = self._get_error_guidance(str(status_code)) if status_code else ""
                 
+                # Sanitize response for logging
+                sanitized_response = self._sanitize_response_body(response_text, max_length=400)
+                
                 log_message = (
                     f"APIFootball HTTPError: {e}. Status: {status_code}. "
-                    f"Response: '{response_text[:400]}{'...' if len(response_text) > 400 else ''}'"
+                    f"Response: '{sanitized_response}{'...' if len(response_text) > 400 else ''}'"
                     f"{guidance}"
                 )
                 logger.warning(log_message)
