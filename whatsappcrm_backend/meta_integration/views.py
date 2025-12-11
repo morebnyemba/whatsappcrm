@@ -53,7 +53,15 @@ class MetaWebhookAPIView(View):
     """
 
     def _verify_signature(self, request_body_bytes, x_hub_signature_256, app_secret_key):
-        """Verifies the X-Hub-Signature-256 header using the provided app_secret_key."""
+        """
+        Verifies the X-Hub-Signature-256 header using the provided app_secret_key.
+        
+        The app_secret_key should be the "App Secret" from your Meta App Dashboard
+        (Settings > Basic > App Secret), NOT the WhatsApp Business API access token.
+        
+        Meta calculates the signature as: HMAC-SHA256(app_secret, request_body)
+        and sends it in the X-Hub-Signature-256 header as: sha256=<hex_digest>
+        """
         if not x_hub_signature_256:
             logger.warning("Webhook signature (X-Hub-Signature-256) missing.")
             return False
@@ -73,6 +81,8 @@ class MetaWebhookAPIView(View):
 
         if not hmac.compare_digest(calculated_signature_hex, expected_signature_hex):
             logger.warning(f"Webhook signature mismatch. Expected: {expected_signature_hex}, Calculated: {calculated_signature_hex}")
+            logger.debug(f"Request body size: {len(request_body_bytes)} bytes, First 200 chars: {request_body_bytes[:200]}")
+            logger.debug(f"App secret length: {len(app_secret_key)} chars (first 4: {app_secret_key[:4]}...)")
             return False
         
         logger.debug("Webhook signature verified successfully.")
@@ -107,6 +117,10 @@ class MetaWebhookAPIView(View):
     def post(self, request, *args, **kwargs):
         active_config = get_active_meta_config()
         app_secret = getattr(settings, 'WHATSAPP_APP_SECRET', None)
+        
+        # Strip whitespace from app secret if present
+        if app_secret:
+            app_secret = app_secret.strip()
 
         if not active_config:
             logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig. Event ignored.")
@@ -120,6 +134,8 @@ class MetaWebhookAPIView(View):
             )
         else:
             signature = request.headers.get('X-Hub-Signature-256')
+            logger.debug(f"Signature header value: {signature}")
+            logger.debug(f"All headers: {dict(request.headers)}")
             if not self._verify_signature(request.body, signature, app_secret):
                 logger.error("Webhook signature verification FAILED. Discarding request.")
                 WebhookEventLog.objects.create(
