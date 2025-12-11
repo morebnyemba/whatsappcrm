@@ -25,6 +25,27 @@ app = Celery('whatsappcrm_backend')
 # Configure Celery using settings from Django settings.py
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
+# Configure task routing for separate workers
+app.conf.task_routes = {
+    # Football data tasks go to the football_data queue
+    'football_data_app.tasks.*': {'queue': 'football_data'},
+    'football_data_app.tasks_apifootball.*': {'queue': 'football_data'},
+    
+    # WhatsApp and general business tasks go to the whatsapp queue
+    'meta_integration.tasks.*': {'queue': 'whatsapp'},
+    'conversations.tasks.*': {'queue': 'whatsapp'},
+    'flows.tasks.*': {'queue': 'whatsapp'},
+    'customer_data.tasks.*': {'queue': 'whatsapp'},
+    'paynow_integration.tasks.*': {'queue': 'whatsapp'},
+    'referrals.tasks.*': {'queue': 'whatsapp'},
+    'media_manager.tasks.*': {'queue': 'whatsapp'},
+}
+
+# Default queue for any tasks not explicitly routed
+app.conf.task_default_queue = 'whatsapp'
+app.conf.task_default_exchange = 'whatsapp'
+app.conf.task_default_routing_key = 'whatsapp'
+
 # Load task modules from all registered Django apps.
 # Celery will look for a tasks.py file in each installed app.
 app.autodiscover_tasks()
