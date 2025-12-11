@@ -41,13 +41,18 @@ RUN mkdir -p /app/whatsapp_media_assets # Assuming this is your MEDIA_ROOT
 # Expose port (ensure this matches what Gunicorn/Daphne will run on)
 EXPOSE 8000
 
+# Make entrypoint script executable
+RUN chmod +x /app/entrypoint.sh
+
 # Add a healthcheck to ensure the application is running correctly.
 # This command will be run inside the container to check its health.
 # The /admin/login/ endpoint is a good default as it's lightweight.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD curl -f http://localhost:8000/admin/login/ || exit 1
 
+# Set entrypoint to use the entrypoint script
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 # Command to run the application (default for services using this image, like 'backend')
 # This will be overridden by the 'command' in docker-compose.yml for celery_worker and celery_beat.
-# Ensure 'gunicorn' is in your requirements.txt if this CMD is used.
-CMD ["gunicorn", "--workers=3", "--bind", "0.0.0.0:8000", "whatsappcrm_backend.wsgi:application"]
+CMD ["web"]
