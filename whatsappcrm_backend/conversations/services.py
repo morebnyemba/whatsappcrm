@@ -14,7 +14,7 @@ def get_or_create_contact_by_wa_id(wa_id: str, name: str = None, meta_app_config
     Args:
         wa_id: WhatsApp ID of the contact
         name: Display name of the contact
-        meta_app_config: Associated MetaAppConfig (if applicable)
+        meta_app_config: Associated MetaAppConfig (reserved for future use)
     
     Returns:
         Tuple of (contact, created) where created is True if contact was newly created
@@ -26,6 +26,9 @@ def get_or_create_contact_by_wa_id(wa_id: str, name: str = None, meta_app_config
     defaults = {}
     if name:
         defaults['name'] = name
+    
+    # Note: meta_app_config parameter is reserved for future use when Contact model
+    # has an associated_app_config field. Currently not used.
 
     contact, created = Contact.objects.update_or_create(
         whatsapp_id=wa_id,

@@ -36,7 +36,14 @@ def process_flow_for_message_task(message_id: int):
                 return
 
             # Determine which config to use for sending responses
-            config_to_use = MetaAppConfig.objects.get_active_config()
+            try:
+                config_to_use = MetaAppConfig.objects.get_active_config()
+            except MetaAppConfig.DoesNotExist:
+                logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
+                return
+            except MetaAppConfig.MultipleObjectsReturned:
+                logger.error(f"Multiple active MetaAppConfig found. Cannot determine which to use for message {message_id}.")
+                return
 
             if not config_to_use:
                 logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
@@ -47,11 +54,16 @@ def process_flow_for_message_task(message_id: int):
                 if action.get('type') == 'send_whatsapp_message':
                     recipient_wa_id = action.get('recipient_wa_id', contact.whatsapp_id)
                     
-                    # Get or create recipient contact
-                    recipient_contact, _ = Contact.objects.get_or_create(
-                        whatsapp_id=recipient_wa_id,
-                        defaults={'name': 'Unknown'}
+                    # Use the service to get or create recipient contact
+                    from conversations.services import get_or_create_contact_by_wa_id
+                    recipient_contact, _ = get_or_create_contact_by_wa_id(
+                        wa_id=recipient_wa_id,
+                        name='Unknown'
                     )
+                    
+                    if not recipient_contact:
+                        logger.error(f"Failed to get/create recipient contact for {recipient_wa_id}")
+                        continue
 
                     # Create outgoing message
                     outgoing_msg = Message.objects.create(

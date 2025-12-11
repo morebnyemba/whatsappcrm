@@ -144,10 +144,10 @@ def send_read_receipt_api(wamid: str, config: MetaAppConfig, show_typing_indicat
     Args:
         wamid: WhatsApp Message ID to mark as read
         config: MetaAppConfig instance to use for API call
-        show_typing_indicator: If True, shows typing indicator for 5 seconds
+        show_typing_indicator: Reserved for future use. Currently not implemented.
     
     Returns:
-        dict: API response or None on error
+        dict: API response with {"success": True} or None on error
     """
     if not config:
         logger.error("Cannot send read receipt: No MetaAppConfig provided.")
@@ -175,11 +175,9 @@ def send_read_receipt_api(wamid: str, config: MetaAppConfig, show_typing_indicat
         
         logger.info(f"Read receipt sent for WAMID {wamid}")
         
-        # Optionally show typing indicator
+        # Note: show_typing_indicator parameter is reserved for future implementation
         if show_typing_indicator:
-            # Extract recipient phone number from the message (this requires the message data)
-            # For now, we'll skip typing indicator as we don't have recipient info here
-            logger.debug("Typing indicator requested but requires additional message data")
+            logger.debug("Typing indicator feature not yet implemented")
         
         return {"success": True}
         

@@ -352,11 +352,6 @@ class MetaWebhookAPIView(View):
         )
         logger.info(f"Dispatched read receipt task for WAMID {wamid} (Typing: {show_typing_indicator})")
 
-        if message_data.get("referral"): self.handle_referral(message_data.get("referral"), contact_wa_id_from_payload, app_config, log_entry)
-        if message_data.get("system"): self.handle_system_message(message_data.get("system"), contact_wa_id_from_payload, app_config, log_entry)
-        if message_type == "interactive" and message_data.get("interactive", {}).get("type") == "nfm_reply":
-             self.handle_flow_response(message_data.get("interactive",{}).get("nfm_reply",{}), contact_wa_id_from_payload, app_config, log_entry)
-
 
     def handle_status_update(self, status_data, metadata, app_config, log_entry: WebhookEventLog):
         wamid = status_data.get("id"); status_value = status_data.get("status"); ts_str = status_data.get("timestamp")
