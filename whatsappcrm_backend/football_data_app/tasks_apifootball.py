@@ -149,7 +149,7 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
-@shared_task(name="football_data_app.run_apifootball_full_update")
+@shared_task(name="football_data_app.tasks_apifootball.run_apifootball_full_update")
 def run_apifootball_full_update_task():
     """Main entry point for the APIFootball data fetching pipeline."""
     logger.info("="*80)
@@ -246,7 +246,7 @@ def fetch_and_update_leagues_task(self, _=None):
         logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
 
-@shared_task(name="football_data_app.tasks._prepare_and_launch_event_odds_chord")
+@shared_task(name="football_data_app.tasks_apifootball._prepare_and_launch_event_odds_chord")
 def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
     """
     Intermediate task: Receives league_ids and launches event fetching chord.
@@ -561,7 +561,7 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
 
-@shared_task(name="football_data_app.run_score_and_settlement_task")
+@shared_task(name="football_data_app.tasks_apifootball.run_score_and_settlement_task")
 def run_score_and_settlement_task():
     """Entry point for fetching scores and updating statuses."""
     logger.info("="*80)
@@ -796,7 +796,7 @@ def fetch_scores_for_league_task(self, league_id: int):
 
 # --- Settlement Tasks (reused from original tasks.py) ---
 
-@shared_task(name="football_data_app.process_ticket_settlement_task")
+@shared_task(name="football_data_app.tasks_apifootball.process_ticket_settlement_task")
 def process_ticket_settlement_task(ticket_id: int):
     """Process settlement of a single bet ticket."""
     logger.info(f"Starting settlement process for BetTicket ID: {ticket_id}")
@@ -805,7 +805,7 @@ def process_ticket_settlement_task(ticket_id: int):
     except Exception as e:
         logger.error(f"Error during settlement for BetTicket ID {ticket_id}: {e}", exc_info=True)
 
-@shared_task(name="football_data_app.process_ticket_settlement_batch_task")
+@shared_task(name="football_data_app.tasks_apifootball.process_ticket_settlement_batch_task")
 def process_ticket_settlement_batch_task(ticket_ids: List[int]):
     """Process a batch of bet tickets for settlement."""
     logger.info(f"Processing settlement for a batch of {len(ticket_ids)} tickets.")
@@ -815,7 +815,7 @@ def process_ticket_settlement_batch_task(ticket_ids: List[int]):
         except Exception as e:
             logger.error(f"Error during batch settlement for BetTicket ID {ticket_id}: {e}", exc_info=True)
 
-@shared_task(bind=True, name="football_data_app.reconcile_and_settle_pending_items")
+@shared_task(bind=True, name="football_data_app.tasks_apifootball.reconcile_and_settle_pending_items")
 def reconcile_and_settle_pending_items_task(self):
     """Periodic task to find and settle any bets or tickets that might have been missed."""
     logger.info("[Reconciliation] START - Running reconciliation and settlement task.")
@@ -884,7 +884,7 @@ def reconcile_and_settle_pending_items_task(self):
     
     logger.info(f"[Reconciliation] FINISHED - Stuck: {stuck_fixtures_triggered_count}, Bets: {bets_updated_count}, Tickets: {tickets_settled_count}")
 
-@shared_task(name="football_data_app.settle_fixture_pipeline")
+@shared_task(name="football_data_app.tasks_apifootball.settle_fixture_pipeline")
 def settle_fixture_pipeline_task(fixture_id: int):
     """Creates settlement chain for a finished fixture."""
     logger.info(f"Initiating settlement pipeline for fixture ID: {fixture_id}")

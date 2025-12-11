@@ -28,6 +28,8 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Configure task routing for separate workers
 app.conf.task_routes = {
     # Football data tasks go to the football_data queue
+    # Match all football_data_app tasks regardless of internal module structure
+    'football_data_app.*': {'queue': 'football_data'},
     'football_data_app.tasks.*': {'queue': 'football_data'},
     'football_data_app.tasks_apifootball.*': {'queue': 'football_data'},
     
