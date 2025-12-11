@@ -32,6 +32,10 @@ APIFOOTBALL_ASSUMED_COMPLETION_MINUTES = getattr(settings, 'APIFOOTBALL_ASSUMED_
 APIFOOTBALL_MAX_EVENT_RETRIES = getattr(settings, 'APIFOOTBALL_MAX_EVENT_RETRIES', 3)
 APIFOOTBALL_EVENT_RETRY_DELAY = getattr(settings, 'APIFOOTBALL_EVENT_RETRY_DELAY', 300)
 
+# Setup command reference for consistent messaging
+LEAGUE_SETUP_COMMAND = "python manage.py football_league_setup"
+LEAGUE_SETUP_COMMAND_DOCKER = "docker-compose exec backend python manage.py football_league_setup"
+
 # --- Helper Functions ---
 
 @transaction.atomic
@@ -261,7 +265,7 @@ def _prepare_and_launch_event_odds_chord(league_ids: List[int]):
         logger.warning("")
         logger.warning("FIRST-TIME SETUP: If this is your first run, ensure you have:")
         logger.warning("1. A valid APIFootball.com API key configured")
-        logger.warning("2. Run: python manage.py football_league_setup")
+        logger.warning(f"2. Run: {LEAGUE_SETUP_COMMAND}")
         logger.warning("")
         logger.warning("The fetch_and_update_leagues_task should have populated leagues automatically.")
         logger.warning("Check the logs above for any API errors or authentication issues.")
@@ -577,10 +581,10 @@ def run_score_and_settlement_task():
             logger.warning("")
             logger.warning("FIRST-TIME SETUP REQUIRED:")
             logger.warning("To initialize football leagues, run this command:")
-            logger.warning("  docker-compose exec backend python manage.py football_league_setup")
+            logger.warning(f"  {LEAGUE_SETUP_COMMAND_DOCKER}")
             logger.warning("")
             logger.warning("Or from within the container:")
-            logger.warning("  python manage.py football_league_setup")
+            logger.warning(f"  {LEAGUE_SETUP_COMMAND}")
             logger.warning("")
             logger.warning("This fetches available leagues from APIFootball.com and populates the database.")
             logger.warning("Without this, no betting data can be fetched or processed.")

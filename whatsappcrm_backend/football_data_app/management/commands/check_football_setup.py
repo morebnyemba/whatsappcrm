@@ -2,7 +2,7 @@
 from django.core.management.base import BaseCommand
 from django.conf import settings
 from football_data_app.models import League, FootballFixture, Configuration
-from football_data_app.apifootball_client import APIFootballClient
+from football_data_app.apifootball_client import APIFootballClient, APIFootballException
 import os
 
 
@@ -104,10 +104,15 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.WARNING(
                         "   ⚠ API connection successful but returned no leagues"
                     ))
-            except Exception as e:
+            except APIFootballException as e:
                 errors.append(f"API connection failed: {str(e)}")
                 self.stdout.write(self.style.ERROR(
-                    f"   ✗ API connection failed: {str(e)}"
+                    f"   ✗ APIFootball API error: {str(e)}"
+                ))
+            except Exception as e:
+                errors.append(f"Unexpected error testing API: {str(e)}")
+                self.stdout.write(self.style.ERROR(
+                    f"   ✗ Unexpected error testing API: {str(e)}"
                 ))
             self.stdout.write("")
         
