@@ -96,6 +96,8 @@ The `docker-compose.yml` now includes three Celery-related services:
 2. **celery_worker_football** (Football data worker)
 3. **celery_beat** (Scheduler for periodic tasks)
 
+> **⚠️ Important**: After deployment, you must configure periodic tasks in Django Admin. See [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) for detailed instructions on scheduling football data updates and bet settlement tasks.
+
 ## Environment Variables
 
 Key environment variables in `.env`:

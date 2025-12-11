@@ -25,6 +25,18 @@ sleep 30
 ./verify_celery_workers.sh
 ```
 
+### Step 4: Set Up Scheduled Tasks
+**Important**: You need to configure periodic tasks in Django Admin.
+
+See [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) for detailed instructions.
+
+Quick setup:
+1. Go to `http://your-domain/admin/`
+2. Navigate to **Periodic Tasks** under DJANGO CELERY BEAT
+3. Create schedules for:
+   - `football_data_app.run_apifootball_full_update` (every 10 minutes)
+   - `football_data_app.run_score_and_settlement_task` (every 5 minutes)
+
 If all checks pass, you're ready to go! 🎉
 
 ## 📚 Documentation Index
@@ -33,6 +45,7 @@ If all checks pass, you're ready to go! 🎉
 |----------|---------|--------------|
 | [FIX_SUMMARY.md](FIX_SUMMARY.md) | Overview of what was fixed | **Start here** - Read first |
 | [CELERY_WORKER_SETUP.md](CELERY_WORKER_SETUP.md) | Complete setup guide | For deployment and configuration |
+| [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) | Periodic task configuration | **Required** - Set up scheduled tasks |
 | [CELERY_QUICK_REFERENCE.md](CELERY_QUICK_REFERENCE.md) | Developer cheat sheet | For daily development tasks |
 | [.env.example](.env.example) | Configuration template | When setting up new environments |
 
