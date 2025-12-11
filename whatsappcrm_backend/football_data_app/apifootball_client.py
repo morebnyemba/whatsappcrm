@@ -92,16 +92,49 @@ class APIFootballClient:
                 if isinstance(data, dict):
                     if data.get('error'):
                         error_msg = data.get('error', 'Unknown error')
-                        logger.error(f"APIFootball error response: {error_msg}")
+                        
+                        # Provide more specific error messages for common issues
+                        additional_info = ""
+                        if '404' in str(error_msg) or 'not found' in str(error_msg).lower():
+                            additional_info = (
+                                "\n\nPossible causes:"
+                                "\n  • Invalid or expired API key"
+                                "\n  • API endpoint has changed"
+                                "\n  • Your plan doesn't have access to this endpoint"
+                                "\n  • Check your API key at https://apifootball.com/"
+                            )
+                        elif 'unauthorized' in str(error_msg).lower() or '401' in str(error_msg):
+                            additional_info = (
+                                "\n\nAuthentication failed. Please verify:"
+                                "\n  • API key is correct in .env or database Configuration"
+                                "\n  • API key hasn't expired"
+                                "\n  • Account is active at https://apifootball.com/"
+                            )
+                        elif 'limit' in str(error_msg).lower() or 'quota' in str(error_msg).lower():
+                            additional_info = (
+                                "\n\nAPI rate limit or quota exceeded:"
+                                "\n  • Check your plan limits at https://apifootball.com/dashboard"
+                                "\n  • Wait before retrying"
+                                "\n  • Consider upgrading your plan"
+                            )
+                        
+                        logger.error(
+                            f"APIFootball error response: {error_msg}"
+                            f"\nResponse body: {response.text[:500]}"
+                            f"{additional_info}"
+                        )
                         raise APIFootballException(
-                            f"API returned error: {error_msg}",
+                            f"API returned error: {error_msg}{additional_info}",
                             response.status_code,
                             response.text,
                             data
                         )
                     # Some endpoints return error code in different format
                     if data.get('message') and 'error' in str(data.get('message')).lower():
-                        logger.error(f"APIFootball error message: {data.get('message')}")
+                        logger.error(
+                            f"APIFootball error message: {data.get('message')}"
+                            f"\nResponse body: {response.text[:500]}"
+                        )
                         raise APIFootballException(
                             f"API error: {data.get('message')}",
                             response.status_code,
@@ -121,9 +154,48 @@ class APIFootballClient:
                 except ValueError:
                     response_json = None
                 
+                # Provide specific guidance based on status code
+                guidance = ""
+                if status_code == 404:
+                    guidance = (
+                        "\n\nHTTP 404 - Not Found. Possible causes:"
+                        "\n  • Invalid or expired API key"
+                        "\n  • API endpoint URL has changed"
+                        "\n  • Your subscription plan doesn't include this endpoint"
+                        "\n  • Verify your API key at https://apifootball.com/dashboard"
+                    )
+                elif status_code == 401:
+                    guidance = (
+                        "\n\nHTTP 401 - Unauthorized. Authentication failed:"
+                        "\n  • Check API key in .env (API_FOOTBALL_KEY) or database Configuration"
+                        "\n  • Ensure API key hasn't expired"
+                        "\n  • Verify account status at https://apifootball.com/"
+                    )
+                elif status_code == 403:
+                    guidance = (
+                        "\n\nHTTP 403 - Forbidden. Access denied:"
+                        "\n  • Your plan may not include access to this endpoint"
+                        "\n  • Check subscription limits at https://apifootball.com/pricing"
+                    )
+                elif status_code == 429:
+                    guidance = (
+                        "\n\nHTTP 429 - Rate limit exceeded:"
+                        "\n  • Too many requests in a short time"
+                        "\n  • Check your plan limits at https://apifootball.com/dashboard"
+                        "\n  • Wait before retrying or upgrade your plan"
+                    )
+                elif status_code and status_code >= 500:
+                    guidance = (
+                        "\n\nHTTP 5xx - Server error:"
+                        "\n  • APIFootball service is experiencing issues"
+                        "\n  • Check status at https://apifootball.com/"
+                        "\n  • This is temporary, retry later"
+                    )
+                
                 log_message = (
                     f"APIFootball HTTPError: {e}. Status: {status_code}. "
                     f"Response: '{response_text[:400]}{'...' if len(response_text) > 400 else ''}'"
+                    f"{guidance}"
                 )
                 logger.warning(log_message)
                 
@@ -133,7 +205,7 @@ class APIFootballClient:
                     continue
                 
                 raise APIFootballException(
-                    f"HTTP error: {e}", status_code, response_text, response_json
+                    f"HTTP error: {e}{guidance}", status_code, response_text, response_json
                 ) from e
                 
             except requests.exceptions.RequestException as e:
