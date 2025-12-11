@@ -1,5 +1,6 @@
 # football_data_app/apifootball_client.py
 import os
+import re
 import requests
 import logging
 from typing import List, Optional, Dict, Union
@@ -26,15 +27,19 @@ class APIFootballClient:
     
     def __init__(self, api_key: Optional[str] = None):
         _api_key_to_use = api_key
+        _api_key_source = None
 
-        if not _api_key_to_use:
+        if api_key:
+            _api_key_source = "constructor parameter"
+        else:
             try:
                 # Local import to avoid issues if Django isn't fully configured when module is loaded
                 from football_data_app.models import Configuration
                 config = Configuration.objects.filter(provider_name="APIFootball").first()
                 if config and config.api_key:
                     _api_key_to_use = config.api_key
-                    logger.info("API Key loaded from database Configuration for 'APIFootball'.")
+                    _api_key_source = "database Configuration (provider_name='APIFootball')"
+                    logger.info(f"✓ API Key loaded from {_api_key_source}")
                 else:
                     logger.info(
                         "No 'APIFootball' configuration found in database, or API key is missing in the config. "
@@ -51,7 +56,8 @@ class APIFootballClient:
         if not _api_key_to_use:
             _api_key_to_use = os.getenv('API_FOOTBALL_KEY')
             if _api_key_to_use:
-                logger.info("API Key loaded from API_FOOTBALL_KEY environment variable.")
+                _api_key_source = "API_FOOTBALL_KEY environment variable"
+                logger.info(f"✓ API Key loaded from {_api_key_source}")
 
         if not _api_key_to_use:
             logger.critical("API Key for APIFootball is not configured. Please provide it to the client, "
@@ -59,7 +65,92 @@ class APIFootballClient:
             raise ValueError("API Key for APIFootball must be configured.")
         
         self.api_key = _api_key_to_use
-        logger.debug(f"APIFootballClient initialized with API key ending in '...{self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key}'.")
+        
+        # Log key source and masked key for verification
+        key_suffix = self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key
+        logger.info(f"✓ APIFootballClient initialized successfully")
+        logger.info(f"  → Source: {_api_key_source}")
+        logger.info(f"  → Key (last 4 chars): ...{key_suffix}")
+        logger.debug(f"  → Key length: {len(self.api_key)} characters")
+    
+    def _get_error_guidance(self, error_indicator: str) -> str:
+        """
+        Get contextual error guidance based on error type.
+        
+        Args:
+            error_indicator: Error code, message, or status code as string
+            
+        Returns:
+            Formatted guidance message
+        """
+        error_lower = str(error_indicator).lower()
+        
+        if '404' in error_lower or 'not found' in error_lower:
+            return (
+                "\n\nPossible causes:"
+                "\n  • Invalid or expired API key"
+                "\n  • API endpoint has changed"
+                "\n  • Your plan doesn't have access to this endpoint"
+                "\n  • Verify your API key at https://apifootball.com/dashboard"
+            )
+        elif 'unauthorized' in error_lower or '401' in error_lower:
+            return (
+                "\n\nAuthentication failed. Please verify:"
+                "\n  • API key is correct in .env or database Configuration"
+                "\n  • API key hasn't expired"
+                "\n  • Account is active at https://apifootball.com/"
+            )
+        elif '403' in error_lower or 'forbidden' in error_lower:
+            return (
+                "\n\nAccess denied:"
+                "\n  • Your plan may not include access to this endpoint"
+                "\n  • Check subscription limits at https://apifootball.com/pricing"
+            )
+        elif 'limit' in error_lower or 'quota' in error_lower or '429' in error_lower:
+            return (
+                "\n\nAPI rate limit or quota exceeded:"
+                "\n  • Check your plan limits at https://apifootball.com/dashboard"
+                "\n  • Wait before retrying"
+                "\n  • Consider upgrading your plan"
+            )
+        elif any(code in error_lower for code in ['500', '501', '502', '503', '504']):
+            return (
+                "\n\nServer error:"
+                "\n  • APIFootball service is experiencing issues"
+                "\n  • Check status at https://apifootball.com/"
+                "\n  • This is temporary, retry later"
+            )
+        return ""
+    
+    def _sanitize_response_body(self, response_text: str, max_length: int = 500) -> str:
+        """
+        Sanitize response body by removing potentially sensitive information.
+        
+        Args:
+            response_text: Raw response text
+            max_length: Maximum length to return
+            
+        Returns:
+            Sanitized response text
+        """
+        # Truncate to max length
+        text = response_text[:max_length]
+        
+        # Remove potential API keys (long alphanumeric sequences, 32+ chars to avoid IDs)
+        # Most API keys are 32+ characters long
+        text = re.sub(r'\b[a-zA-Z0-9]{32,}\b', '[REDACTED]', text)
+        
+        # Remove potential tokens/passwords in common formats with explicit key names
+        # Format: key="value" or key='value' or key: value or key=value
+        text = re.sub(r'(token|key|password|secret|auth|apikey)[\s:="\']+([a-zA-Z0-9+/=_-]{10,})(["\'\s,}&]|$)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
+        
+        # JSON format: "token":"value"
+        text = re.sub(r'"(token|key|password|secret|auth|apikey)"\s*:\s*"[^"]{10,}"', r'"\1":"[REDACTED]"', text, flags=re.IGNORECASE)
+        
+        # URL-encoded format: token=value&
+        text = re.sub(r'(token|key|password|secret|auth|apikey)=([^&\s]{10,})(&|$|\s)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
+        
+        return text
 
     def _request(self, params: Dict) -> Union[Dict, List]:
         """Internal method to handle all API requests with retry logic."""
@@ -92,18 +183,29 @@ class APIFootballClient:
                 if isinstance(data, dict):
                     if data.get('error'):
                         error_msg = data.get('error', 'Unknown error')
-                        logger.error(f"APIFootball error response: {error_msg}")
+                        additional_info = self._get_error_guidance(error_msg)
+                        
+                        logger.error(
+                            f"APIFootball error response: {error_msg}"
+                            f"\nResponse body: {self._sanitize_response_body(response.text)}"
+                            f"{additional_info}"
+                        )
                         raise APIFootballException(
-                            f"API returned error: {error_msg}",
+                            f"API returned error: {error_msg}{additional_info}",
                             response.status_code,
                             response.text,
                             data
                         )
                     # Some endpoints return error code in different format
                     if data.get('message') and 'error' in str(data.get('message')).lower():
-                        logger.error(f"APIFootball error message: {data.get('message')}")
+                        additional_info = self._get_error_guidance(data.get('message'))
+                        logger.error(
+                            f"APIFootball error message: {data.get('message')}"
+                            f"\nResponse body: {self._sanitize_response_body(response.text)}"
+                            f"{additional_info}"
+                        )
                         raise APIFootballException(
-                            f"API error: {data.get('message')}",
+                            f"API error: {data.get('message')}{additional_info}",
                             response.status_code,
                             response.text,
                             data
@@ -121,9 +223,16 @@ class APIFootballClient:
                 except ValueError:
                     response_json = None
                 
+                # Get guidance based on status code
+                guidance = self._get_error_guidance(str(status_code)) if status_code else ""
+                
+                # Sanitize response for logging
+                sanitized_response = self._sanitize_response_body(response_text, max_length=400)
+                
                 log_message = (
                     f"APIFootball HTTPError: {e}. Status: {status_code}. "
-                    f"Response: '{response_text[:400]}{'...' if len(response_text) > 400 else ''}'"
+                    f"Response: '{sanitized_response}{'...' if len(response_text) > 400 else ''}'"
+                    f"{guidance}"
                 )
                 logger.warning(log_message)
                 
@@ -133,7 +242,7 @@ class APIFootballClient:
                     continue
                 
                 raise APIFootballException(
-                    f"HTTP error: {e}", status_code, response_text, response_json
+                    f"HTTP error: {e}{guidance}", status_code, response_text, response_json
                 ) from e
                 
             except requests.exceptions.RequestException as e:

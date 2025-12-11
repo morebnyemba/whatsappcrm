@@ -13,7 +13,18 @@ def setup_football_leagues():
     This is optimized to use minimal API credits and is safe to run multiple times.
     It uses `update_or_create` to prevent duplicates and keep data fresh.
     """
-    client = APIFootballClient()
+    try:
+        client = APIFootballClient()
+    except ValueError as e:
+        logger.error(f"Failed to initialize APIFootball client: {e}")
+        logger.error(
+            "Please configure your API key by either:"
+            "\n  1. Setting API_FOOTBALL_KEY in your .env file"
+            "\n  2. Adding a Configuration entry in Django admin (provider_name='APIFootball')"
+            "\n  Get your API key at: https://apifootball.com/"
+        )
+        return
+    
     logger.info("Starting football leagues setup with APIFootball.com.")
     
     try:
@@ -21,6 +32,12 @@ def setup_football_leagues():
         leagues_data = client.get_leagues()
         if not leagues_data:
             logger.error("No leagues data received from APIFootball API")
+            logger.error(
+                "This could mean:"
+                "\n  • API returned an empty list (no leagues available)"
+                "\n  • Your API plan may not include league data"
+                "\n  • Check your subscription at: https://apifootball.com/dashboard"
+            )
             return
             
         created_count = 0
@@ -61,6 +78,24 @@ def setup_football_leagues():
             
     except Exception as e:
         logger.exception("An error occurred during football leagues setup")
+        logger.error(
+            "\n=== TROUBLESHOOTING GUIDE ==="
+            "\n1. Verify your API key is correct:"
+            "\n   • Check .env file for API_FOOTBALL_KEY"
+            "\n   • Or verify Configuration in Django admin"
+            "\n   • Get/verify key at: https://apifootball.com/dashboard"
+            "\n"
+            "\n2. Check your API subscription:"
+            "\n   • Ensure your account is active"
+            "\n   • Verify your plan includes the 'get_leagues' endpoint"
+            "\n   • Check remaining API calls quota"
+            "\n"
+            "\n3. Test API connectivity:"
+            "\n   • Run: python manage.py check_football_setup"
+            "\n   • This will test your API connection"
+            "\n"
+            "\nFor more help, visit: https://apifootball.com/documentation/"
+        )
         # Do not re-raise the exception to allow the command to exit gracefully
         # The exception is already logged.
 
