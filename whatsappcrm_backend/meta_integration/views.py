@@ -32,6 +32,9 @@ from .tasks import send_whatsapp_message_task
 # Use a logger specific to this app
 logger = logging.getLogger('meta_integration')
 
+# Sensitive header names that should be filtered from logs
+SENSITIVE_HEADER_NAMES = ['authorization', 'cookie', 'x-access-token', 'x-api-key']
+
 def get_active_meta_config():
     """Helper function to get the active MetaAppConfig."""
     try:
@@ -136,10 +139,9 @@ class MetaWebhookAPIView(View):
             signature = request.headers.get('X-Hub-Signature-256')
             # Filter sensitive headers before logging
             # X-Hub-Signature-256 is safe to log as it's meant for verification
-            sensitive_header_names = ['authorization', 'cookie', 'x-access-token', 'x-api-key']
             safe_headers = {
                 k: v for k, v in request.headers.items() 
-                if k.lower() not in sensitive_header_names
+                if k.lower() not in SENSITIVE_HEADER_NAMES
             }
             logger.debug(f"Webhook headers (filtered): {safe_headers}")
             if not self._verify_signature(request.body, signature, app_secret):
