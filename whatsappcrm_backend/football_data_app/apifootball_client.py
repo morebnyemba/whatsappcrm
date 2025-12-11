@@ -1,5 +1,6 @@
 # football_data_app/apifootball_client.py
 import os
+import re
 import requests
 import logging
 from typing import List, Optional, Dict, Union
@@ -121,8 +122,6 @@ class APIFootballClient:
         Returns:
             Sanitized response text
         """
-        import re
-        
         # Truncate to max length
         text = response_text[:max_length]
         
@@ -130,7 +129,14 @@ class APIFootballClient:
         text = re.sub(r'\b[a-zA-Z0-9]{20,}\b', '[REDACTED]', text)
         
         # Remove potential tokens/passwords in common formats
-        text = re.sub(r'(token|key|password|secret|auth)["\s:=]+[a-zA-Z0-9+/=]{10,}', r'\1=[REDACTED]', text, flags=re.IGNORECASE)
+        # Format: key="value" or key='value'
+        text = re.sub(r'(token|key|password|secret|auth)["\s:=]+["\']?[a-zA-Z0-9+/=_-]{10,}["\']?', r'\1=[REDACTED]', text, flags=re.IGNORECASE)
+        
+        # JSON format: "token":"value"
+        text = re.sub(r'\"(token|key|password|secret|auth)\":\s*\"[^\"]{10,}\"', r'"\1":"[REDACTED]"', text, flags=re.IGNORECASE)
+        
+        # URL-encoded format: token=value&
+        text = re.sub(r'(token|key|password|secret|auth)=([^&\s]{10,})(&|$|\s)', r'\1=[REDACTED]\3', text, flags=re.IGNORECASE)
         
         return text
 
