@@ -406,6 +406,15 @@ cd whatsapp-crm-frontend && npm run lint
 
 **Note**: With Nginx Proxy Manager, you no longer need to manually configure SSL certificates or nginx configuration files. Everything is managed through the web UI.
 
+### Static Files
+
+The backend automatically collects and serves static files using WhiteNoise. When the backend container starts:
+1. Database migrations are applied
+2. Static files are collected with `collectstatic` (creating the manifest file)
+3. Gunicorn starts with WhiteNoise middleware serving compressed static files
+
+**Important**: Static files should NOT be committed to git. They are generated at container startup and stored in a Docker volume. The `.gitignore` file excludes the `staticfiles/` directory.
+
 ## 🤝 Contributing
 
 1. Fork the repository
