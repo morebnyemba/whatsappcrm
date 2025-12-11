@@ -60,6 +60,55 @@ class APIFootballClient:
         
         self.api_key = _api_key_to_use
         logger.debug(f"APIFootballClient initialized with API key ending in '...{self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key}'.")
+    
+    def _get_error_guidance(self, error_indicator: str) -> str:
+        """
+        Get contextual error guidance based on error type.
+        
+        Args:
+            error_indicator: Error code, message, or status code as string
+            
+        Returns:
+            Formatted guidance message
+        """
+        error_lower = str(error_indicator).lower()
+        
+        if '404' in error_lower or 'not found' in error_lower:
+            return (
+                "\n\nPossible causes:"
+                "\n  • Invalid or expired API key"
+                "\n  • API endpoint has changed"
+                "\n  • Your plan doesn't have access to this endpoint"
+                "\n  • Verify your API key at https://apifootball.com/dashboard"
+            )
+        elif 'unauthorized' in error_lower or '401' in error_lower:
+            return (
+                "\n\nAuthentication failed. Please verify:"
+                "\n  • API key is correct in .env or database Configuration"
+                "\n  • API key hasn't expired"
+                "\n  • Account is active at https://apifootball.com/"
+            )
+        elif '403' in error_lower or 'forbidden' in error_lower:
+            return (
+                "\n\nAccess denied:"
+                "\n  • Your plan may not include access to this endpoint"
+                "\n  • Check subscription limits at https://apifootball.com/pricing"
+            )
+        elif 'limit' in error_lower or 'quota' in error_lower or '429' in error_lower:
+            return (
+                "\n\nAPI rate limit or quota exceeded:"
+                "\n  • Check your plan limits at https://apifootball.com/dashboard"
+                "\n  • Wait before retrying"
+                "\n  • Consider upgrading your plan"
+            )
+        elif '5' in error_lower and any(c in error_lower for c in ['00', '01', '02', '03', '04']):
+            return (
+                "\n\nServer error:"
+                "\n  • APIFootball service is experiencing issues"
+                "\n  • Check status at https://apifootball.com/"
+                "\n  • This is temporary, retry later"
+            )
+        return ""
 
     def _request(self, params: Dict) -> Union[Dict, List]:
         """Internal method to handle all API requests with retry logic."""
@@ -92,31 +141,7 @@ class APIFootballClient:
                 if isinstance(data, dict):
                     if data.get('error'):
                         error_msg = data.get('error', 'Unknown error')
-                        
-                        # Provide more specific error messages for common issues
-                        additional_info = ""
-                        if '404' in str(error_msg) or 'not found' in str(error_msg).lower():
-                            additional_info = (
-                                "\n\nPossible causes:"
-                                "\n  • Invalid or expired API key"
-                                "\n  • API endpoint has changed"
-                                "\n  • Your plan doesn't have access to this endpoint"
-                                "\n  • Check your API key at https://apifootball.com/"
-                            )
-                        elif 'unauthorized' in str(error_msg).lower() or '401' in str(error_msg):
-                            additional_info = (
-                                "\n\nAuthentication failed. Please verify:"
-                                "\n  • API key is correct in .env or database Configuration"
-                                "\n  • API key hasn't expired"
-                                "\n  • Account is active at https://apifootball.com/"
-                            )
-                        elif 'limit' in str(error_msg).lower() or 'quota' in str(error_msg).lower():
-                            additional_info = (
-                                "\n\nAPI rate limit or quota exceeded:"
-                                "\n  • Check your plan limits at https://apifootball.com/dashboard"
-                                "\n  • Wait before retrying"
-                                "\n  • Consider upgrading your plan"
-                            )
+                        additional_info = self._get_error_guidance(error_msg)
                         
                         logger.error(
                             f"APIFootball error response: {error_msg}"
@@ -131,12 +156,14 @@ class APIFootballClient:
                         )
                     # Some endpoints return error code in different format
                     if data.get('message') and 'error' in str(data.get('message')).lower():
+                        additional_info = self._get_error_guidance(data.get('message'))
                         logger.error(
                             f"APIFootball error message: {data.get('message')}"
                             f"\nResponse body: {response.text[:500]}"
+                            f"{additional_info}"
                         )
                         raise APIFootballException(
-                            f"API error: {data.get('message')}",
+                            f"API error: {data.get('message')}{additional_info}",
                             response.status_code,
                             response.text,
                             data
@@ -154,43 +181,8 @@ class APIFootballClient:
                 except ValueError:
                     response_json = None
                 
-                # Provide specific guidance based on status code
-                guidance = ""
-                if status_code == 404:
-                    guidance = (
-                        "\n\nHTTP 404 - Not Found. Possible causes:"
-                        "\n  • Invalid or expired API key"
-                        "\n  • API endpoint URL has changed"
-                        "\n  • Your subscription plan doesn't include this endpoint"
-                        "\n  • Verify your API key at https://apifootball.com/dashboard"
-                    )
-                elif status_code == 401:
-                    guidance = (
-                        "\n\nHTTP 401 - Unauthorized. Authentication failed:"
-                        "\n  • Check API key in .env (API_FOOTBALL_KEY) or database Configuration"
-                        "\n  • Ensure API key hasn't expired"
-                        "\n  • Verify account status at https://apifootball.com/"
-                    )
-                elif status_code == 403:
-                    guidance = (
-                        "\n\nHTTP 403 - Forbidden. Access denied:"
-                        "\n  • Your plan may not include access to this endpoint"
-                        "\n  • Check subscription limits at https://apifootball.com/pricing"
-                    )
-                elif status_code == 429:
-                    guidance = (
-                        "\n\nHTTP 429 - Rate limit exceeded:"
-                        "\n  • Too many requests in a short time"
-                        "\n  • Check your plan limits at https://apifootball.com/dashboard"
-                        "\n  • Wait before retrying or upgrade your plan"
-                    )
-                elif status_code and status_code >= 500:
-                    guidance = (
-                        "\n\nHTTP 5xx - Server error:"
-                        "\n  • APIFootball service is experiencing issues"
-                        "\n  • Check status at https://apifootball.com/"
-                        "\n  • This is temporary, retry later"
-                    )
+                # Get guidance based on status code
+                guidance = self._get_error_guidance(str(status_code)) if status_code else ""
                 
                 log_message = (
                     f"APIFootball HTTPError: {e}. Status: {status_code}. "
