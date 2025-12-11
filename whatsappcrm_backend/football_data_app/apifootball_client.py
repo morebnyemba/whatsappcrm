@@ -9,7 +9,7 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
-APIFOOTBALL_BASE_URL = "https://apifootball.com/api"
+APIFOOTBALL_BASE_URL = "https://apiv3.apifootball.com/"
 DEFAULT_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
