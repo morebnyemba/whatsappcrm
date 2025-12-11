@@ -60,10 +60,9 @@ fi
 
 if [ "$COMMAND" = "web" ]; then
     collect_static # Only web service needs to collect static files typically
-    echo "Starting Django development server on 0.0.0.0:8000..."
-    # Django's runserver will serve static and media files if DEBUG=True and urls.py is configured.
-    # For production, use Gunicorn/uWSGI and Nginx/Cloudfront for static/media.
-    exec python manage.py runserver 0.0.0.0:8000 "$@"
+    echo "Starting Gunicorn server on 0.0.0.0:8000..."
+    # Use Gunicorn for production with WhiteNoise serving static files
+    exec gunicorn --workers=3 --bind 0.0.0.0:8000 whatsappcrm_backend.wsgi:application "$@"
 
 elif [ "$COMMAND" = "celeryworker" ]; then
     wait_for_db # Worker might need DB access for some initializations or tasks
