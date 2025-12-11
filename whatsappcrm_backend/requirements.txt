@@ -15,7 +15,7 @@ djangorestframework-simplejwt>=5.4.0
 # CORS handling and extensions
 django-extensions>=3.2.3
 django-cors-headers>=4.6.0
-paynow>=1.2.0
+paynow>=1.0.8
 
 # Celery and related packages - Updated to latest versions
 celery[redis]>=5.4.0,<6.0
