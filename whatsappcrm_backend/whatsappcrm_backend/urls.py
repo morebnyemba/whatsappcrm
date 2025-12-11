@@ -55,9 +55,8 @@ path('crm-api/auth/', include('djoser.urls')),
 # (e.g., using reverse('meta_integration_api:meta_webhook_receiver') in Python code).
 # It helps avoid URL name collisions between apps.
 
-# Serve media files during development
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
-# Serve static files during development (for admin, jazzmin, DRF styles)
+# Serve static and media files during development only
+# In production, these should be served by the web server (Nginx)
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
