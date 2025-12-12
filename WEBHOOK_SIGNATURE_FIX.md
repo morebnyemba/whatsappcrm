@@ -14,10 +14,19 @@ The signature verification failures can be caused by several issues:
 2. **Whitespace in App Secret**: Leading/trailing whitespaces in the environment variable
 3. **Duplicate Logging**: Logger propagation causing messages to appear twice
 4. **Request Body Modification**: Proxy or middleware modifying the request
+5. **Missing Migration**: The `app_secret` field migration hasn't been applied to the database yet
 
 ## Solution
 
-### Changes Made
+### Recent Changes (December 2025)
+
+**Migration Management Update**:
+- Removed copilot-generated migration file `0002_add_app_secret_field.py`
+- Added migration files to `.gitignore` so users can manage them according to their deployment process
+- Added backward compatibility: code now uses `getattr()` to safely access `app_secret` field
+- If migration hasn't been applied, webhook will work but skip signature verification (with warning logged)
+
+### Previous Changes Made
 
 1. **Fixed Duplicate Logging** (`settings.py`)
    - Changed `'meta_integration': {'propagate': True}` to `{'propagate': False}`
@@ -52,9 +61,23 @@ The App Secret must be obtained from your Meta App Dashboard:
 4. Copy the **App Secret** (you may need to click "Show")
 5. **Important**: Do NOT use the WhatsApp Business API Access Token
 
-### Step 2: Add App Secret to MetaAppConfig
+### Step 2: Apply Database Migration
 
-**As of the latest update, the app secret is now stored in the database** (like in Kali-Safaris reference repo), not in environment variables.
+**IMPORTANT**: You need to create and apply a migration to add the `app_secret` field to the MetaAppConfig model.
+
+The `app_secret` field is defined in the model but you need to create your own migration:
+
+```bash
+cd whatsappcrm_backend
+python manage.py makemigrations meta_integration
+python manage.py migrate meta_integration
+```
+
+**Note**: Migration files are now excluded from git (in `.gitignore`) so you can manage them according to your deployment process.
+
+### Step 3: Add App Secret to MetaAppConfig
+
+**The app secret is now stored in the database**, not in environment variables.
 
 1. Log into Django Admin
 2. Go to **Meta Integration > Meta App Configurations**
@@ -64,7 +87,9 @@ The App Secret must be obtained from your Meta App Dashboard:
 
 **Note**: The old method of using `WHATSAPP_APP_SECRET` in `.env` is deprecated. Each MetaAppConfig can now have its own app secret, allowing support for multiple WhatsApp Business accounts with different app secrets.
 
-### Step 3: Restart Your Services
+**Backward Compatibility**: If the migration hasn't been applied yet, the webhook will continue to work but will skip signature verification (with a warning logged). This allows for a smooth migration process.
+
+### Step 4: Restart Your Services
 
 After updating the configuration:
 
@@ -74,7 +99,7 @@ docker-compose restart backend
 systemctl restart your-django-service
 ```
 
-### Step 4: Test the Webhook
+### Step 5: Test the Webhook
 
 You can test the signature verification using the standalone test script:
 
@@ -84,7 +109,7 @@ python3 test_signature_verification.py
 
 All tests should pass, confirming the verification logic is working correctly.
 
-### Step 5: Monitor Logs
+### Step 6: Monitor Logs
 
 After restarting, monitor your logs when Meta sends a webhook:
 
