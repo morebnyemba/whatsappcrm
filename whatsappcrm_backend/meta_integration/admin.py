@@ -14,7 +14,7 @@ class MetaAppConfigAdmin(admin.ModelAdmin):
             'fields': ('name', 'is_active')
         }),
         ('API Credentials & Identifiers (Keep these confidential)', {
-            'fields': ('verify_token', 'access_token', 'phone_number_id', 'waba_id', 'api_version'),
+            'fields': ('verify_token', 'access_token', 'app_secret', 'phone_number_id', 'waba_id', 'api_version'),
             'description': "These details are used to connect to the Meta (WhatsApp) Cloud API. Ensure they are correct and kept secure."
         }),
         ('Timestamps', {
