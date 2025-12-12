@@ -1045,3 +1045,24 @@ def settle_tickets_for_fixture_task(self, fixture_id: int):
     except Exception as e:
         logger.exception(f"Error settling tickets for fixture {fixture_id}")
         raise self.retry(exc=e)
+
+
+# --- Task Aliases for Backward Compatibility ---
+# These aliases allow the tasks to be called with simplified names that match the documentation.
+# This fixes the issue where periodic tasks in the database reference the simplified names.
+
+@shared_task(name="football_data_app.run_apifootball_full_update")
+def run_apifootball_full_update():
+    """
+    Alias for run_apifootball_full_update_task with a simplified name.
+    This allows the task to be scheduled with the name documented in SCHEDULED_TASKS_SETUP.md.
+    """
+    return run_apifootball_full_update_task()
+
+@shared_task(name="football_data_app.run_score_and_settlement_task")
+def run_score_and_settlement():
+    """
+    Alias for run_score_and_settlement_task with a simplified name.
+    This allows the task to be scheduled with the name documented in SCHEDULED_TASKS_SETUP.md.
+    """
+    return run_score_and_settlement_task()
