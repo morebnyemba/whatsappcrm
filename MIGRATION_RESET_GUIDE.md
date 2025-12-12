@@ -2,6 +2,22 @@
 
 This document explains how to use the `reset_migrations.py` script to fix migration errors in the WhatsApp CRM project.
 
+## Quick Start
+
+**Before you begin, create a backup:**
+```bash
+./backup_database.sh
+```
+
+**Then run the migration reset:**
+```bash
+./reset_migrations.sh
+```
+
+The scripts will auto-detect your environment (Docker or local) and guide you through the process.
+
+⚠️ **WARNING**: Migration reset will delete all data in your database! Always backup first.
+
 ## Purpose
 
 The `reset_migrations.py` script is designed to resolve migration conflicts and errors by:

@@ -440,6 +440,13 @@ See [WEBHOOK_SIGNATURE_FIX.md](WEBHOOK_SIGNATURE_FIX.md) for a comprehensive gui
 
 If you're experiencing migration conflicts or errors that cannot be resolved through normal Django migration commands, use the migration reset script:
 
+**1. First, backup your database:**
+```bash
+./backup_database.sh
+```
+
+**2. Then run the migration reset:**
+
 **Quick method (recommended):**
 ```bash
 ./reset_migrations.sh
