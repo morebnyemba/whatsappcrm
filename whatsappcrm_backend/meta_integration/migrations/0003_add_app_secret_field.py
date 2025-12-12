@@ -10,7 +10,6 @@ def add_app_secret_field_if_not_exists(apps, schema_editor):
     may have already been added through other means.
     """
     # Check if the column already exists
-    db_alias = schema_editor.connection.alias
     with schema_editor.connection.cursor() as cursor:
         # Get the table name for the model
         table_name = 'meta_integration_metaappconfig'
@@ -26,7 +25,6 @@ def add_app_secret_field_if_not_exists(apps, schema_editor):
     
     # Only add the field if it doesn't exist
     if not column_exists:
-        MetaAppConfig = apps.get_model('meta_integration', 'MetaAppConfig')
         with schema_editor.connection.cursor() as cursor:
             cursor.execute("""
                 ALTER TABLE meta_integration_metaappconfig 

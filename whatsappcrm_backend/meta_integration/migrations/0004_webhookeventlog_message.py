@@ -26,10 +26,16 @@ def add_message_field_if_not_exists(apps, schema_editor):
     # Only add the field if it doesn't exist
     if not column_exists:
         with schema_editor.connection.cursor() as cursor:
+            # Add column first
             cursor.execute("""
                 ALTER TABLE meta_integration_webhookeventlog 
-                ADD COLUMN message_id BIGINT NULL 
-                CONSTRAINT meta_integration_webhookeventlog_message_id_fk 
+                ADD COLUMN message_id BIGINT NULL
+            """)
+            # Then add foreign key constraint
+            cursor.execute("""
+                ALTER TABLE meta_integration_webhookeventlog 
+                ADD CONSTRAINT meta_integration_webhookeventlog_message_id_fk 
+                FOREIGN KEY (message_id) 
                 REFERENCES conversations_message(id) 
                 ON DELETE SET NULL
             """)
@@ -54,6 +60,12 @@ def reverse_add_message_field(apps, schema_editor):
     # Only drop the field if it exists
     if column_exists:
         with schema_editor.connection.cursor() as cursor:
+            # Drop the constraint first (if it exists)
+            cursor.execute("""
+                ALTER TABLE meta_integration_webhookeventlog 
+                DROP CONSTRAINT IF EXISTS meta_integration_webhookeventlog_message_id_fk
+            """)
+            # Then drop the column
             cursor.execute("""
                 ALTER TABLE meta_integration_webhookeventlog 
                 DROP COLUMN message_id
