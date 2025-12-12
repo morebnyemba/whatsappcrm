@@ -20,14 +20,23 @@ echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}WhatsApp CRM - Database Backup Script${NC}"
 echo -e "${BLUE}================================================${NC}\n"
 
-# Check if .env file exists
+# Check if .env file exists and is readable
 if [ ! -f "${SCRIPT_DIR}/.env" ]; then
     echo -e "${RED}❌ Error: .env file not found in ${SCRIPT_DIR}${NC}"
     exit 1
 fi
 
+if [ ! -r "${SCRIPT_DIR}/.env" ]; then
+    echo -e "${RED}❌ Error: .env file is not readable${NC}"
+    exit 1
+fi
+
 # Load environment variables from .env file
-# This method handles spaces around '=' properly
+# This method handles spaces around '=' properly by:
+# 1. Filtering out comment lines (starting with #)
+# 2. Filtering out empty lines
+# 3. Removing leading whitespace
+# 4. Normalizing spaces around = signs (e.g., "KEY = value" becomes "KEY=value")
 set -a  # automatically export all variables
 source <(grep -v '^#' "${SCRIPT_DIR}/.env" | grep -v '^$' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*=[[:space:]]*/=/')
 set +a  # stop automatically exporting
