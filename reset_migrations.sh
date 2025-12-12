@@ -28,6 +28,15 @@ if [ ! -f "${SCRIPT_DIR}/.env" ]; then
     exit 1
 fi
 
+# Determine docker-compose command (v1 vs v2)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+elif command -v docker &> /dev/null && docker compose version &> /dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    DOCKER_COMPOSE_CMD=""
+fi
+
 # Determine environment (Docker or local)
 echo -e "${BLUE}Detecting environment...${NC}"
 
@@ -35,7 +44,7 @@ echo -e "${BLUE}Detecting environment...${NC}"
 DOCKER_SERVICE_NAME="backend"
 DOCKER_CONTAINER_NAME="whatsappcrm_backend_app"
 
-if command -v docker-compose &> /dev/null && docker-compose ps | grep -q "${DOCKER_CONTAINER_NAME}"; then
+if [ -n "$DOCKER_COMPOSE_CMD" ] && $DOCKER_COMPOSE_CMD ps | grep -q "${DOCKER_CONTAINER_NAME}"; then
     echo -e "${GREEN}✅ Docker environment detected${NC}\n"
     ENVIRONMENT="docker"
 elif command -v python3 &> /dev/null; then
@@ -65,20 +74,19 @@ if [ "$ENVIRONMENT" = "docker" ]; then
     echo -e "${BLUE}Running migration reset in Docker container...${NC}\n"
     
     # Check if backend container is running
-    if ! docker-compose ps | grep -q "${DOCKER_CONTAINER_NAME}.*Up"; then
+    if ! $DOCKER_COMPOSE_CMD ps | grep -q "${DOCKER_CONTAINER_NAME}.*Up"; then
         echo -e "${YELLOW}Backend container is not running. Starting it...${NC}"
-        docker-compose up -d ${DOCKER_SERVICE_NAME}
+        $DOCKER_COMPOSE_CMD up -d ${DOCKER_SERVICE_NAME}
         echo -e "${GREEN}Waiting for backend to be ready...${NC}"
         sleep 5
     fi
     
-    # Copy script to container and execute
-    # Note: We copy to /tmp since the backend directory is mounted
+    # Copy script to container and execute with absolute path
     docker cp "${SCRIPT_DIR}/reset_migrations.py" ${DOCKER_CONTAINER_NAME}:/tmp/reset_migrations.py
-    docker-compose exec ${DOCKER_SERVICE_NAME} python /tmp/reset_migrations.py
+    $DOCKER_COMPOSE_CMD exec ${DOCKER_SERVICE_NAME} python /tmp/reset_migrations.py
     
     # Clean up
-    docker-compose exec ${DOCKER_SERVICE_NAME} rm /tmp/reset_migrations.py
+    $DOCKER_COMPOSE_CMD exec ${DOCKER_SERVICE_NAME} rm /tmp/reset_migrations.py
     
 else
     echo -e "${BLUE}Running migration reset locally...${NC}\n"

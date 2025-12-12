@@ -39,10 +39,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_ROOT / "whatsappcrm_backend"
 
 # Load environment variables from root .env file
+# Try project root first (as required by the issue)
 env_file = PROJECT_ROOT / ".env"
 if not env_file.exists():
-    logger.error(f"❌ .env file not found at {env_file}")
-    sys.exit(1)
+    # Fallback to backend directory .env
+    env_file = BACKEND_DIR / ".env"
+    if not env_file.exists():
+        logger.error(f"❌ .env file not found in {PROJECT_ROOT} or {BACKEND_DIR}")
+        sys.exit(1)
 
 logger.info(f"📄 Loading environment variables from {env_file}")
 load_dotenv(env_file)
@@ -94,8 +98,9 @@ def confirm_action():
     print("\n⚠️  ALL DATA IN THE DATABASE WILL BE LOST! ⚠️")
     print("="*70)
     
-    response = input("\nType 'YES' to continue or anything else to cancel: ")
-    if response.strip() != 'YES':
+    response = input("\nType 'YES' (all caps) to continue or anything else to cancel: ")
+    # Accept YES, yes, or y for better UX
+    if response.strip().upper() != 'YES':
         logger.info("❌ Operation cancelled by user")
         sys.exit(0)
     
@@ -201,17 +206,16 @@ def delete_migration_files():
 def run_django_command(command):
     """Run a Django management command."""
     try:
-        # Change to backend directory
-        os.chdir(BACKEND_DIR)
-        
         # Set environment variable for Django settings
         env = os.environ.copy()
         env['DJANGO_SETTINGS_MODULE'] = 'whatsappcrm_backend.settings'
         
         logger.info(f"🔧 Running: python manage.py {' '.join(command)}")
         
+        # Use subprocess's cwd parameter instead of changing global directory
         result = subprocess.run(
             ['python', 'manage.py'] + command,
+            cwd=BACKEND_DIR,  # Set working directory for this command only
             env=env,
             capture_output=True,
             text=True,
