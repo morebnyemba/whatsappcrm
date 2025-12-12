@@ -31,7 +31,11 @@ fi
 # Determine environment (Docker or local)
 echo -e "${BLUE}Detecting environment...${NC}"
 
-if command -v docker-compose &> /dev/null && docker-compose ps | grep -q "whatsappcrm_backend_app"; then
+# Container/service name for Docker
+DOCKER_SERVICE_NAME="backend"
+DOCKER_CONTAINER_NAME="whatsappcrm_backend_app"
+
+if command -v docker-compose &> /dev/null && docker-compose ps | grep -q "${DOCKER_CONTAINER_NAME}"; then
     echo -e "${GREEN}✅ Docker environment detected${NC}\n"
     ENVIRONMENT="docker"
 elif command -v python3 &> /dev/null; then
@@ -61,27 +65,49 @@ if [ "$ENVIRONMENT" = "docker" ]; then
     echo -e "${BLUE}Running migration reset in Docker container...${NC}\n"
     
     # Check if backend container is running
-    if ! docker-compose ps | grep -q "whatsappcrm_backend_app.*Up"; then
+    if ! docker-compose ps | grep -q "${DOCKER_CONTAINER_NAME}.*Up"; then
         echo -e "${YELLOW}Backend container is not running. Starting it...${NC}"
-        docker-compose up -d backend
+        docker-compose up -d ${DOCKER_SERVICE_NAME}
         echo -e "${GREEN}Waiting for backend to be ready...${NC}"
         sleep 5
     fi
     
     # Copy script to container and execute
-    docker cp "${SCRIPT_DIR}/reset_migrations.py" whatsappcrm_backend_app:/tmp/reset_migrations.py
-    docker-compose exec backend python /tmp/reset_migrations.py
+    # Note: We copy to /tmp since the backend directory is mounted
+    docker cp "${SCRIPT_DIR}/reset_migrations.py" ${DOCKER_CONTAINER_NAME}:/tmp/reset_migrations.py
+    docker-compose exec ${DOCKER_SERVICE_NAME} python /tmp/reset_migrations.py
     
     # Clean up
-    docker-compose exec backend rm /tmp/reset_migrations.py
+    docker-compose exec ${DOCKER_SERVICE_NAME} rm /tmp/reset_migrations.py
     
 else
     echo -e "${BLUE}Running migration reset locally...${NC}\n"
     
+    # Check if running in a virtual environment
+    if [ -z "$VIRTUAL_ENV" ]; then
+        echo -e "${YELLOW}⚠️  Warning: Not running in a virtual environment${NC}"
+        echo -e "${YELLOW}   It's recommended to activate a virtual environment first:${NC}"
+        echo -e "${YELLOW}   source venv/bin/activate${NC}\n"
+        
+        read -p "Continue anyway? (yes/no): " CONTINUE
+        if [ "$CONTINUE" != "yes" ]; then
+            echo -e "${YELLOW}Operation cancelled.${NC}"
+            exit 0
+        fi
+    fi
+    
     # Check if Python dependencies are installed
     if ! python3 -c "import django" 2>/dev/null; then
-        echo -e "${YELLOW}⚠️  Django not found. Installing dependencies...${NC}"
-        pip3 install -r "${SCRIPT_DIR}/whatsappcrm_backend/requirements.txt"
+        echo -e "${YELLOW}⚠️  Django not found. Dependencies may need to be installed.${NC}"
+        echo -e "${YELLOW}   Please install: pip install -r whatsappcrm_backend/requirements.txt${NC}"
+        
+        read -p "Attempt to install dependencies? (yes/no): " INSTALL
+        if [ "$INSTALL" = "yes" ]; then
+            pip3 install -r "${SCRIPT_DIR}/whatsappcrm_backend/requirements.txt"
+        else
+            echo -e "${RED}Cannot continue without Django. Exiting.${NC}"
+            exit 1
+        fi
     fi
     
     # Run the script

@@ -22,6 +22,7 @@ import os
 import sys
 import subprocess
 import psycopg2
+from psycopg2 import sql
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
@@ -65,6 +66,8 @@ logger.info(f"   - Database: {DB_NAME}")
 logger.info(f"   - User: {DB_USER}")
 
 # List of custom apps that have migrations
+# NOTE: This list must be kept in sync with the INSTALLED_APPS in settings.py
+# If you add new Django apps to your project, update this list accordingly
 CUSTOM_APPS = [
     'football_data_app',
     'meta_integration',
@@ -138,11 +141,16 @@ def drop_all_tables(conn):
         
         logger.info(f"📋 Found {len(tables)} tables to drop")
         
-        # Drop all tables
+        # Drop all tables using parameterized query for security
         for table in tables:
             table_name = table[0]
             logger.info(f"   - Dropping table: {table_name}")
-            cursor.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE;')
+            # Use identifier quoting to safely handle table names
+            cursor.execute(
+                sql.SQL('DROP TABLE IF EXISTS {} CASCADE;').format(
+                    sql.Identifier(table_name)
+                )
+            )
         
         logger.info("✅ All tables dropped successfully")
         cursor.close()
