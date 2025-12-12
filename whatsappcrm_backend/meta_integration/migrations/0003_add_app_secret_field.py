@@ -3,6 +3,62 @@
 from django.db import migrations, models
 
 
+def add_app_secret_field_if_not_exists(apps, schema_editor):
+    """
+    Add app_secret field to MetaAppConfig if it doesn't already exist.
+    This makes the migration idempotent and handles cases where the column
+    may have already been added through other means.
+    """
+    # Check if the column already exists
+    db_alias = schema_editor.connection.alias
+    with schema_editor.connection.cursor() as cursor:
+        # Get the table name for the model
+        table_name = 'meta_integration_metaappconfig'
+        
+        # Check if the column exists (PostgreSQL specific query)
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s
+        """, [table_name, 'app_secret'])
+        
+        column_exists = cursor.fetchone() is not None
+    
+    # Only add the field if it doesn't exist
+    if not column_exists:
+        MetaAppConfig = apps.get_model('meta_integration', 'MetaAppConfig')
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("""
+                ALTER TABLE meta_integration_metaappconfig 
+                ADD COLUMN app_secret VARCHAR(255) NULL
+            """)
+
+
+def reverse_add_app_secret_field(apps, schema_editor):
+    """
+    Remove app_secret field from MetaAppConfig if it exists.
+    """
+    with schema_editor.connection.cursor() as cursor:
+        table_name = 'meta_integration_metaappconfig'
+        
+        # Check if the column exists
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s
+        """, [table_name, 'app_secret'])
+        
+        column_exists = cursor.fetchone() is not None
+    
+    # Only drop the field if it exists
+    if column_exists:
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute("""
+                ALTER TABLE meta_integration_metaappconfig 
+                DROP COLUMN app_secret
+            """)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,9 +66,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='metaappconfig',
-            name='app_secret',
-            field=models.CharField(blank=True, help_text='The App Secret from the Meta App Dashboard, used for verifying webhook signature. Recommended for security.', max_length=255, null=True),
+        migrations.RunPython(
+            add_app_secret_field_if_not_exists,
+            reverse_code=reverse_add_app_secret_field,
         ),
     ]
