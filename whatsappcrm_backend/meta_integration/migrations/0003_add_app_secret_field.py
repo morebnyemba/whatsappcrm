@@ -18,7 +18,7 @@ def add_app_secret_field_if_not_exists(apps, schema_editor):
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
         """, [table_name, 'app_secret'])
         
         column_exists = cursor.fetchone() is not None
@@ -43,7 +43,7 @@ def reverse_add_app_secret_field(apps, schema_editor):
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
         """, [table_name, 'app_secret'])
         
         column_exists = cursor.fetchone() is not None
