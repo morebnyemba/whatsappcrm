@@ -4,7 +4,7 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
-def add_message_field_if_not_exists(apps, schema_editor):
+def check_and_add_message_field(apps, schema_editor):
     """
     Add message field to WebhookEventLog if it doesn't already exist.
     This makes the migration idempotent and handles cases where the column
@@ -41,7 +41,7 @@ def add_message_field_if_not_exists(apps, schema_editor):
             """)
 
 
-def reverse_add_message_field(apps, schema_editor):
+def reverse_message_field(apps, schema_editor):
     """
     Remove message field from WebhookEventLog if it exists.
     """
@@ -80,8 +80,27 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(
-            add_message_field_if_not_exists,
-            reverse_code=reverse_add_message_field,
+        # Use SeparateDatabaseAndState to ensure Django's migration state is updated
+        # while still allowing idempotent database operations
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    check_and_add_message_field,
+                    reverse_code=reverse_message_field,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='webhookeventlog',
+                    name='message',
+                    field=models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        to='conversations.message',
+                        help_text='Link to the Message object if this event relates to a message.'
+                    ),
+                ),
+            ],
         ),
     ]

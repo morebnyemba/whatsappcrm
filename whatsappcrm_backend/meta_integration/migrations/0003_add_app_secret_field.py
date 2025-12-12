@@ -3,7 +3,7 @@
 from django.db import migrations, models
 
 
-def add_app_secret_field_if_not_exists(apps, schema_editor):
+def check_and_add_app_secret_field(apps, schema_editor):
     """
     Add app_secret field to MetaAppConfig if it doesn't already exist.
     This makes the migration idempotent and handles cases where the column
@@ -32,7 +32,7 @@ def add_app_secret_field_if_not_exists(apps, schema_editor):
             """)
 
 
-def reverse_add_app_secret_field(apps, schema_editor):
+def reverse_app_secret_field(apps, schema_editor):
     """
     Remove app_secret field from MetaAppConfig if it exists.
     """
@@ -64,8 +64,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(
-            add_app_secret_field_if_not_exists,
-            reverse_code=reverse_add_app_secret_field,
+        # Use SeparateDatabaseAndState to ensure Django's migration state is updated
+        # while still allowing idempotent database operations
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    check_and_add_app_secret_field,
+                    reverse_code=reverse_app_secret_field,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='metaappconfig',
+                    name='app_secret',
+                    field=models.CharField(
+                        blank=True,
+                        help_text='The App Secret from the Meta App Dashboard, used for verifying webhook signature. Recommended for security.',
+                        max_length=255,
+                        null=True
+                    ),
+                ),
+            ],
         ),
     ]

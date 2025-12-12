@@ -127,7 +127,13 @@ class WebhookEventLog(models.Model):
         help_text="Processing status (e.g., pending, processed, error, ignored)."
     )
     processing_notes = models.TextField(blank=True, null=True, help_text="Notes or error messages from processing.")
-
+    message = models.ForeignKey(
+        'conversations.Message',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Link to the Message object if this event relates to a message."
+    )
 
     def __str__(self):
         return f"{self.get_event_type_display()} ({self.event_identifier or 'N/A'}) at {self.received_at.strftime('%Y-%m-%d %H:%M:%S')}"
