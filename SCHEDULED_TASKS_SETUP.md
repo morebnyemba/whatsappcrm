@@ -15,7 +15,8 @@ This application uses **Celery Beat** with **django-celery-beat** to run periodi
 The following tasks need to be scheduled via the Django admin panel:
 
 ### 1. Football Data Update Task
-**Task Name**: `football_data_app.run_apifootball_full_update`
+**Task Name**: `football_data_app.run_apifootball_full_update`  
+*Alternative*: `football_data_app.tasks_apifootball.run_apifootball_full_update`
 
 **Purpose**: Fetches football fixtures, leagues, and odds from APIFootball.com
 
@@ -27,7 +28,8 @@ The following tasks need to be scheduled via the Django admin panel:
 - Queue: `football_data` (handled by football worker)
 
 ### 2. Score and Settlement Task
-**Task Name**: `football_data_app.run_score_and_settlement_task`
+**Task Name**: `football_data_app.run_score_and_settlement_task`  
+*Alternative*: `football_data_app.tasks_apifootball.run_score_and_settlement_task`
 
 **Purpose**: Fetches match scores and settles bets/tickets
 
