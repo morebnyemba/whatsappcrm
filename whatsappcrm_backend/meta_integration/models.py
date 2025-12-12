@@ -30,6 +30,12 @@ class MetaAppConfig(models.Model):
     access_token = models.TextField(
         help_text="The Page Access Token or System User Token for sending messages."
     )
+    app_secret = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="The App Secret from the Meta App Dashboard, used for verifying webhook signature. Recommended for security."
+    )
     phone_number_id = models.CharField(
         max_length=50,
         help_text="The Phone Number ID from which messages will be sent."

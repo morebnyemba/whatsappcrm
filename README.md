@@ -420,6 +420,29 @@ docker-compose exec backend python manage.py test
 cd whatsapp-crm-frontend && npm run lint
 ```
 
+## 🐛 Troubleshooting
+
+### Webhook Signature Verification Failures
+
+If you're seeing errors like:
+```
+WARNING views Webhook signature mismatch. Expected: ..., Calculated: ...
+ERROR views Webhook signature verification FAILED. Discarding request.
+```
+
+See [WEBHOOK_SIGNATURE_FIX.md](WEBHOOK_SIGNATURE_FIX.md) for a comprehensive guide on:
+- Understanding the root cause
+- Verifying your app secret configuration
+- Testing the signature verification
+- Debugging tips and best practices
+
+### Common Issues
+
+- **Database connection errors**: Ensure PostgreSQL is running and credentials are correct
+- **Celery tasks not running**: Check Redis connection and Celery worker status
+- **Static files not loading**: Run `python manage.py collectstatic` inside the backend container
+- **CORS errors**: Verify `CORS_ALLOWED_ORIGINS` in `.env` includes your frontend URL
+
 ## 📦 Production Deployment
 
 1. Update `.env` with production values

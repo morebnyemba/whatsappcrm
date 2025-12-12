@@ -27,10 +27,13 @@ from .serializers import (
 )
 from conversations.models import Contact, Message
 # from flows.services import process_message_for_flow # Import moved into handle_message
-from .tasks import send_whatsapp_message_task
+from .tasks import send_whatsapp_message_task, send_read_receipt_task
 
 # Use a logger specific to this app
 logger = logging.getLogger('meta_integration')
+
+# Sensitive header names that should be filtered from logs
+SENSITIVE_HEADER_NAMES = ['authorization', 'cookie', 'x-access-token', 'x-api-key']
 
 def get_active_meta_config():
     """Helper function to get the active MetaAppConfig."""
@@ -53,7 +56,15 @@ class MetaWebhookAPIView(View):
     """
 
     def _verify_signature(self, request_body_bytes, x_hub_signature_256, app_secret_key):
-        """Verifies the X-Hub-Signature-256 header using the provided app_secret_key."""
+        """
+        Verifies the X-Hub-Signature-256 header using the provided app_secret_key.
+        
+        The app_secret_key should be the "App Secret" from your Meta App Dashboard
+        (Settings > Basic > App Secret), NOT the WhatsApp Business API access token.
+        
+        Meta calculates the signature as: HMAC-SHA256(app_secret, request_body)
+        and sends it in the X-Hub-Signature-256 header as: sha256=<hex_digest>
+        """
         if not x_hub_signature_256:
             logger.warning("Webhook signature (X-Hub-Signature-256) missing.")
             return False
@@ -73,6 +84,8 @@ class MetaWebhookAPIView(View):
 
         if not hmac.compare_digest(calculated_signature_hex, expected_signature_hex):
             logger.warning(f"Webhook signature mismatch. Expected: {expected_signature_hex}, Calculated: {calculated_signature_hex}")
+            logger.debug(f"Request body size: {len(request_body_bytes)} bytes")
+            logger.debug(f"App secret length: {len(app_secret_key)} chars")
             return False
         
         logger.debug("Webhook signature verified successfully.")
@@ -106,25 +119,40 @@ class MetaWebhookAPIView(View):
 
     def post(self, request, *args, **kwargs):
         active_config = get_active_meta_config()
-        app_secret = getattr(settings, 'WHATSAPP_APP_SECRET', None)
 
         if not active_config:
             logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig. Event ignored.")
             return HttpResponse("EVENT_RECEIVED_BUT_UNCONFIGURED", status=200)
 
+        # Get app_secret from the database config instead of settings
+        app_secret = active_config.app_secret
+        
+        # Strip whitespace from app secret if present
+        if app_secret:
+            app_secret = app_secret.strip()
+
         if not app_secret:
-             logger.critical(
-                f"CRITICAL: WHATSAPP_APP_SECRET is not configured in Django settings for MetaAppConfig "
-                f"('{active_config.name}'). Webhook signature verification will be skipped. "
-                f"THIS IS A SECURITY RISK."
+             logger.warning(
+                f"App Secret is not configured for MetaAppConfig '{active_config.name}'. "
+                f"Webhook signature verification will be skipped. "
+                f"THIS IS A SECURITY RISK. Please add the app_secret in the MetaAppConfig admin."
             )
         else:
             signature = request.headers.get('X-Hub-Signature-256')
+            # Filter sensitive headers before logging
+            # X-Hub-Signature-256 is safe to log as it's meant for verification
+            safe_headers = {
+                k: v for k, v in request.headers.items() 
+                if k.lower() not in SENSITIVE_HEADER_NAMES
+            }
+            logger.debug(f"Webhook headers (filtered): {safe_headers}")
             if not self._verify_signature(request.body, signature, app_secret):
                 logger.error("Webhook signature verification FAILED. Discarding request.")
+                # Log header keys (not values) for debugging
+                header_keys = list(request.headers.keys())
                 WebhookEventLog.objects.create(
                     app_config=active_config, event_type='security',
-                    payload={'error': 'Signature verification failed', 'headers': dict(request.headers)},
+                    payload={'error': 'Signature verification failed', 'header_keys': header_keys},
                     processing_status='rejected', processing_notes='Invalid X-Hub-Signature-256'
                 )
                 return HttpResponse("Invalid signature", status=403)
@@ -226,16 +254,24 @@ class MetaWebhookAPIView(View):
 
     @transaction.atomic 
     def handle_message(self, message_data, metadata, value_obj, app_config, log_entry: WebhookEventLog):
-        from flows.services import process_message_for_flow 
+        """
+        Handles incoming WhatsApp messages.
+        Creates Contact and Message objects, then queues flow processing asynchronously.
+        """
+        from conversations.services import get_or_create_contact_by_wa_id
+        from flows.tasks import process_flow_for_message_task
 
-        whatsapp_message_id = message_data.get("id"); from_phone = message_data.get("from")
-        message_type = message_data.get("type", "unknown"); ts_str = message_data.get("timestamp")
+        whatsapp_message_id = message_data.get("id")
+        from_phone = message_data.get("from")
+        message_type = message_data.get("type", "unknown")
+        ts_str = message_data.get("timestamp")
         msg_ts = timezone.make_aware(datetime.fromtimestamp(int(ts_str))) if ts_str and ts_str.isdigit() else timezone.now()
         
         logger.info(f"Handling message WAMID: {whatsapp_message_id}, From: {from_phone}, Type: {message_type}") 
-        notes_list = [f"Msg from {from_phone}, type {message_type}."]
         
-        contact_profile_name = "Unknown"; contact_wa_id_from_payload = from_phone
+        # Extract contact profile name
+        contact_profile_name = "Unknown"
+        contact_wa_id_from_payload = from_phone
         if 'contacts' in value_obj and value_obj['contacts']:
             contact_payload = value_obj['contacts'][0]
             if isinstance(contact_payload, dict):
@@ -243,79 +279,80 @@ class MetaWebhookAPIView(View):
                 contact_wa_id_from_payload = contact_payload.get('wa_id', from_phone)
         
         try:
-            contact, created = Contact.objects.update_or_create(
-                whatsapp_id=contact_wa_id_from_payload,
-                defaults={'name': contact_profile_name, 'last_seen': msg_ts}
+            # Use the service to get or create contact
+            contact, created = get_or_create_contact_by_wa_id(
+                wa_id=contact_wa_id_from_payload,
+                name=contact_profile_name,
+                meta_app_config=None
             )
-            notes_list.append(f"Contact {'created' if created else 'updated'}: {contact.id}.")
             
-            incoming_msg_obj, msg_created = Message.objects.get_or_create(
+            if not contact:
+                logger.error(f"Failed to create/get contact for {contact_wa_id_from_payload}")
+                self._save_log(log_entry, 'error', f"Contact creation failed for {contact_wa_id_from_payload}")
+                return
+            
+            # Update last_seen
+            contact.last_seen = msg_ts
+            contact.save(update_fields=['last_seen'])
+            
+            # Create or update message object
+            incoming_msg_obj, msg_created = Message.objects.update_or_create(
                 wamid=whatsapp_message_id,
                 defaults={
-                    'contact':contact, 'direction':'in', 'message_type':message_type,
-                    'content_payload':message_data, 'timestamp':msg_ts, 
-                    'status':'delivered', 'status_timestamp':msg_ts
+                    'contact': contact,
+                    'direction': 'in',
+                    'message_type': message_type,
+                    'content_payload': message_data,
+                    'timestamp': msg_ts, 
+                    'status': 'delivered',
+                    'status_timestamp': msg_ts
                 }
             )
+            
             if not msg_created:
-                logger.warning(f"Incoming message WAMID {whatsapp_message_id} already exists. Updating timestamp if newer, but not reprocessing flow to avoid duplicates unless specific logic demands it.")
-                if msg_ts > incoming_msg_obj.timestamp:
-                    incoming_msg_obj.timestamp = msg_ts
-                    incoming_msg_obj.content_payload = message_data 
-                    incoming_msg_obj.save()
-                self._save_log(log_entry, 'ignored', f"Duplicate WAMID {whatsapp_message_id} received. Not reprocessing flow.")
-                return
-
-            notes_list.append(f"Msg WAMID {whatsapp_message_id} saved (DB ID: {incoming_msg_obj.id}).")
-
-            # --- REMOVED DEBUGGING CHANGE ---
-            # logger.info(f"DEBUG: Attempting to send a direct test message to {contact.whatsapp_id}")
-            # try:
-            #     debug_message_content = {"body": "Hello from the server! This is a direct test."}
-            #     debug_outgoing_msg = Message.objects.create(
-            #         contact=contact,
-            #         direction='out',
-            #         message_type='text', # Basic text message
-            #         content_payload=debug_message_content, # Simple dict for text
-            #         status='pending_dispatch',
-            #         timestamp=timezone.now(),
-            #         triggered_by_flow_step_id=None # Or some debug identifier
-            #     )
-            #     send_whatsapp_message_task.delay(debug_outgoing_msg.id, app_config.id) 
-            #     notes_list.append(f"Dispatched DEBUG msg 'text' to {contact.whatsapp_id} (DB ID: {debug_outgoing_msg.id}).")
-            #     logger.info(f"DEBUG: Dispatched direct test message task for msg ID {debug_outgoing_msg.id} to Celery.")
-            # except Exception as e_debug_send:
-            #     logger.error(f"DEBUG: Error creating or dispatching direct test message: {e_debug_send}", exc_info=True)
-            #     notes_list.append(f"DEBUG: Failed to dispatch test message: {e_debug_send}")
-            # --- END REMOVED DEBUGGING CHANGE ---
-
-
-            flow_actions = process_message_for_flow(contact, message_data, incoming_msg_obj) 
-            notes_list.append(f"Flow returned {len(flow_actions)} actions.")
+                logger.info(f"Incoming message WAMID {whatsapp_message_id} already exists. Updating timestamp. Processing will continue to check flow state.")
+                incoming_msg_obj.timestamp = msg_ts
+                incoming_msg_obj.content_payload = message_data
+                incoming_msg_obj.save()
+            else:
+                logger.info(f"Saved incoming message (WAMID: {whatsapp_message_id}) as DB ID {incoming_msg_obj.id}")
             
-            if app_config and flow_actions:
-                for action_item in flow_actions: 
-                    if action_item.get('type') == 'send_whatsapp_message':
-                        recipient = action_item.get('recipient_wa_id', contact.whatsapp_id)
-                        outgoing_msg = Message.objects.create(
-                            contact=Contact.objects.filter(whatsapp_id=recipient).first() or contact,
-                            direction='out', message_type=action_item.get('message_type'),
-                            content_payload=action_item.get('data'), status='pending_dispatch', 
-                            timestamp=timezone.now(),
-                            triggered_by_flow_step_id=getattr(getattr(contact,'flow_state', None),'current_step_id',None)
-                        )
-                        send_whatsapp_message_task.delay(outgoing_msg.id, app_config.id) 
-                        notes_list.append(f"Dispatched msg '{action_item.get('message_type')}' to {recipient}.")
+            if log_entry and log_entry.pk:
+                log_entry.message = incoming_msg_obj
+                log_entry.processing_status = 'processing_queued'
+                log_entry.save(update_fields=['message', 'processing_status'])
             
-            self._save_log(log_entry, 'processed', " ".join(notes_list)) 
+            # Queue flow processing asynchronously
+            transaction.on_commit(
+                lambda: process_flow_for_message_task.delay(incoming_msg_obj.id)
+            )
+            logger.info(f"Queued process_flow_for_message_task for message {incoming_msg_obj.id}")
+            
+            # Send read receipt asynchronously
+            self._send_read_receipt(whatsapp_message_id, app_config)
+            
         except Exception as e:
             logger.error(f"Error in handle_message for WAMID {whatsapp_message_id}: {e}", exc_info=True)
             self._save_log(log_entry, 'error', f"Handle msg error: {str(e)[:200]}")
+    
+    def _send_read_receipt(self, wamid: str, app_config: MetaAppConfig, show_typing_indicator: bool = False):
+        """
+        Dispatches a Celery task to send a read receipt for the given message ID.
+        """
+        if not wamid:
+            logger.warning("Cannot send read receipt: Missing WAMID.")
+            return
+        
+        if not app_config:
+            logger.warning("Cannot send read receipt: Missing app_config.")
+            return
 
-        if message_data.get("referral"): self.handle_referral(message_data.get("referral"), contact_wa_id_from_payload, app_config, log_entry)
-        if message_data.get("system"): self.handle_system_message(message_data.get("system"), contact_wa_id_from_payload, app_config, log_entry)
-        if message_type == "interactive" and message_data.get("interactive", {}).get("type") == "nfm_reply":
-             self.handle_flow_response(message_data.get("interactive",{}).get("nfm_reply",{}), contact_wa_id_from_payload, app_config, log_entry)
+        send_read_receipt_task.delay(
+            wamid=wamid,
+            config_id=app_config.id,
+            show_typing_indicator=show_typing_indicator
+        )
+        logger.info(f"Dispatched read receipt task for WAMID {wamid} (Typing: {show_typing_indicator})")
 
 
     def handle_status_update(self, status_data, metadata, app_config, log_entry: WebhookEventLog):

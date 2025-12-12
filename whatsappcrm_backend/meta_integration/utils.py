@@ -135,3 +135,54 @@ def create_interactive_list_message_data(body_text: str, button_text: str, secti
     if footer_text:
         interactive_payload["footer"] = {"text": footer_text}
     return interactive_payload
+
+
+def send_read_receipt_api(wamid: str, config: MetaAppConfig, show_typing_indicator: bool = False):
+    """
+    Sends a read receipt for a message to WhatsApp.
+    
+    Args:
+        wamid: WhatsApp Message ID to mark as read
+        config: MetaAppConfig instance to use for API call
+        show_typing_indicator: Reserved for future use. Currently not implemented.
+    
+    Returns:
+        dict: API response with {"success": True} or None on error
+    """
+    if not config:
+        logger.error("Cannot send read receipt: No MetaAppConfig provided.")
+        return None
+    
+    api_version = config.api_version
+    phone_number_id = config.phone_number_id
+    access_token = config.access_token
+    
+    url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": wamid
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        logger.info(f"Read receipt sent for WAMID {wamid}")
+        
+        # Note: show_typing_indicator parameter is reserved for future implementation
+        if show_typing_indicator:
+            logger.debug("Typing indicator feature not yet implemented")
+        
+        return {"success": True}
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to send read receipt for WAMID {wamid}: {e}")
+        if hasattr(e.response, 'text'):
+            logger.error(f"Meta API error response: {e.response.text}")
+        return None
