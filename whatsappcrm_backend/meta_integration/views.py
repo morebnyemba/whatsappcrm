@@ -125,7 +125,7 @@ class MetaWebhookAPIView(View):
             return HttpResponse("EVENT_RECEIVED_BUT_UNCONFIGURED", status=200)
 
         # Get app_secret from the database config instead of settings
-        # Use getattr to handle cases where migration hasn't been applied yet
+        # Use getattr to safely access app_secret field, returning None if the migration hasn't been applied yet
         app_secret = getattr(active_config, 'app_secret', None)
         
         # Strip whitespace from app secret if present

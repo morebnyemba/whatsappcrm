@@ -32,7 +32,8 @@ media/
 staticfiles/
 
 # Django migrations (user will create their own)
-**/migrations/[0-9]*.py
+# Excludes Django migration files following the standard 4-digit naming convention (e.g., 0001_initial.py)
+**/migrations/[0-9][0-9][0-9][0-9]_*.py
 **/migrations/__pycache__/
 
 # Environment
