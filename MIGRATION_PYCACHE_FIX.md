@@ -60,7 +60,9 @@ If you encounter migration issues locally, clean your `__pycache__` directories:
 
 ```bash
 # From the project root
-find . -type d -name "__pycache__" -path "*/migrations/*" -exec rm -rf {} + 2>/dev/null
+# Note: This command will error if it tries to remove a directory while traversing it, 
+# but all __pycache__ directories will still be removed successfully
+find . -type d -name "__pycache__" -path "*/migrations/*" -exec rm -rf {} +
 ```
 
 Or in Docker:
@@ -113,7 +115,12 @@ If you need to add a field that might already exist (like the `app_secret` field
 
 ```python
 def add_field_if_not_exists(apps, schema_editor):
+    """
+    Add a field if it doesn't exist. This example uses PostgreSQL-specific syntax.
+    For other databases, adapt the column existence check accordingly.
+    """
     with schema_editor.connection.cursor() as cursor:
+        # PostgreSQL-specific query to check if column exists
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -131,6 +138,8 @@ class Migration(migrations.Migration):
         migrations.RunPython(add_field_if_not_exists),
     ]
 ```
+
+**Note:** This project uses PostgreSQL, so the example uses PostgreSQL-specific syntax (`CURRENT_SCHEMA()`). For other database backends, adapt the column existence check to use appropriate database-specific queries.
 
 ### Migration Checklist
 
@@ -154,7 +163,9 @@ Before committing migrations:
 
 2. **Clear all Python cache:**
    ```bash
-   find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+   # Remove all __pycache__ directories (may show errors but directories will be removed)
+   find . -type d -name "__pycache__" -exec rm -rf {} +
+   # Remove all .pyc files
    find . -name "*.pyc" -delete
    ```
 
