@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('conversations', '0001_initial'),
-        ('meta_integration', '0002_add_app_secret_field'),
+        ('meta_integration', '0003_add_app_secret_field'),
     ]
 
     operations = [
