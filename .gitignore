@@ -31,6 +31,10 @@ db.sqlite3-journal
 media/
 staticfiles/
 
+# Django migrations (user will create their own)
+**/migrations/[0-9]*.py
+**/migrations/__pycache__/
+
 # Environment
 .env
 .venv
