@@ -436,6 +436,33 @@ See [WEBHOOK_SIGNATURE_FIX.md](WEBHOOK_SIGNATURE_FIX.md) for a comprehensive gui
 - Testing the signature verification
 - Debugging tips and best practices
 
+### Migration Errors
+
+If you're experiencing migration conflicts or errors that cannot be resolved through normal Django migration commands, use the migration reset script:
+
+**1. First, backup your database:**
+```bash
+./backup_database.sh
+```
+
+**2. Then run the migration reset:**
+
+**Quick method (recommended):**
+```bash
+./reset_migrations.sh
+```
+
+**Manual method:**
+```bash
+python reset_migrations.py
+```
+
+⚠️ **WARNING**: This will delete all data in your database! See [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) for:
+- Detailed usage instructions
+- Prerequisites and requirements
+- Troubleshooting common issues
+- Backup and restore procedures
+
 ### Common Issues
 
 - **Database connection errors**: Ensure PostgreSQL is running and credentials are correct
