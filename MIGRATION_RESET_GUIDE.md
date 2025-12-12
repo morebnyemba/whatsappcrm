@@ -56,9 +56,22 @@ Before running the script, ensure:
 
 ## Usage
 
-### Basic Usage
+### Quick Start (Recommended)
 
-From the project root directory:
+The easiest way to run the script is using the provided shell script wrapper:
+
+```bash
+./reset_migrations.sh
+```
+
+This script will:
+- Auto-detect if you're using Docker or a local environment
+- Handle environment-specific setup
+- Execute the migration reset process
+
+### Manual Usage
+
+Alternatively, you can run the Python script directly:
 
 ```bash
 python reset_migrations.py
@@ -93,9 +106,26 @@ python reset_migrations.py
 
 ### Docker Environment
 
-If you're using Docker, you have two options:
+If you're using Docker, the shell script wrapper (`reset_migrations.sh`) automatically handles Docker environments.
 
-#### Option 1: Run from host machine
+#### Using the Shell Script (Recommended)
+
+```bash
+./reset_migrations.sh
+```
+
+The script will:
+1. Detect that you're using Docker
+2. Start the backend container if it's not running
+3. Copy the Python script to the container
+4. Execute it inside the container
+5. Clean up temporary files
+
+#### Manual Docker Execution
+
+If you prefer to run the Python script directly:
+
+**Option 1: Execute from host machine**
 
 Ensure your `.env` has `DB_HOST=localhost` and the database port is exposed:
 
@@ -103,19 +133,17 @@ Ensure your `.env` has `DB_HOST=localhost` and the database port is exposed:
 python reset_migrations.py
 ```
 
-#### Option 2: Run inside Docker container
-
-Copy the script into the container and run it:
+**Option 2: Execute inside Docker container**
 
 ```bash
-# Copy script to container
-docker cp reset_migrations.py whatsappcrm_backend_app:/app/reset_migrations.py
+# Start the backend container
+docker-compose up -d backend
 
-# Execute inside container
-docker-compose exec backend python /app/reset_migrations.py
+# Run the script inside the container
+docker-compose exec backend python reset_migrations.py
 ```
 
-Note: When running inside Docker, your `.env` should have `DB_HOST=db`.
+Note: The script reads from the `.env` file in the project root, which is mounted into the container. When running inside Docker, ensure `DB_HOST=db` in your `.env`.
 
 ## What the Script Does
 

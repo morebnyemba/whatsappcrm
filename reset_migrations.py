@@ -180,6 +180,12 @@ def delete_migration_files():
             for file in pycache_dir.glob("*"):
                 file.unlink()
             pycache_dir.rmdir()
+        
+        # Ensure __init__.py exists
+        init_file = migrations_dir / "__init__.py"
+        if not init_file.exists():
+            logger.info(f"     • Creating __init__.py")
+            init_file.touch()
     
     logger.info(f"✅ Deleted {deleted_count} migration files")
 
