@@ -119,21 +119,23 @@ class MetaWebhookAPIView(View):
 
     def post(self, request, *args, **kwargs):
         active_config = get_active_meta_config()
-        app_secret = getattr(settings, 'WHATSAPP_APP_SECRET', None)
-        
-        # Strip whitespace from app secret if present
-        if app_secret:
-            app_secret = app_secret.strip()
 
         if not active_config:
             logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig. Event ignored.")
             return HttpResponse("EVENT_RECEIVED_BUT_UNCONFIGURED", status=200)
 
+        # Get app_secret from the database config instead of settings
+        app_secret = active_config.app_secret
+        
+        # Strip whitespace from app secret if present
+        if app_secret:
+            app_secret = app_secret.strip()
+
         if not app_secret:
-             logger.critical(
-                f"CRITICAL: WHATSAPP_APP_SECRET is not configured in Django settings for MetaAppConfig "
-                f"('{active_config.name}'). Webhook signature verification will be skipped. "
-                f"THIS IS A SECURITY RISK."
+             logger.warning(
+                f"App Secret is not configured for MetaAppConfig '{active_config.name}'. "
+                f"Webhook signature verification will be skipped. "
+                f"THIS IS A SECURITY RISK. Please add the app_secret in the MetaAppConfig admin."
             )
         else:
             signature = request.headers.get('X-Hub-Signature-256')

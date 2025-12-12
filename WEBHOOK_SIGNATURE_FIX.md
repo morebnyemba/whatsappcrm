@@ -44,7 +44,7 @@ The signature verification failures can be caused by several issues:
 
 ### Step 1: Verify Your App Secret
 
-The `WHATSAPP_APP_SECRET` must be the **App Secret** from your Meta App Dashboard:
+The App Secret must be obtained from your Meta App Dashboard:
 
 1. Go to [Meta App Dashboard](https://developers.facebook.com/apps/)
 2. Select your app
@@ -52,21 +52,21 @@ The `WHATSAPP_APP_SECRET` must be the **App Secret** from your Meta App Dashboar
 4. Copy the **App Secret** (you may need to click "Show")
 5. **Important**: Do NOT use the WhatsApp Business API Access Token
 
-### Step 2: Update Your `.env` File
+### Step 2: Add App Secret to MetaAppConfig
 
-```bash
-# In your .env file:
-WHATSAPP_APP_SECRET='your_actual_app_secret_from_meta_dashboard'
-```
+**As of the latest update, the app secret is now stored in the database** (like in Kali-Safaris reference repo), not in environment variables.
 
-Make sure there are:
-- No quotes inside the value (unless they're part of the actual secret)
-- No leading or trailing spaces
-- No line breaks
+1. Log into Django Admin
+2. Go to **Meta Integration > Meta App Configurations**
+3. Edit your active configuration
+4. Add the **App Secret** in the `app_secret` field
+5. Save the configuration
+
+**Note**: The old method of using `WHATSAPP_APP_SECRET` in `.env` is deprecated. Each MetaAppConfig can now have its own app secret, allowing support for multiple WhatsApp Business accounts with different app secrets.
 
 ### Step 3: Restart Your Services
 
-After updating the `.env` file:
+After updating the configuration:
 
 ```bash
 docker-compose restart backend
