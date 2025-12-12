@@ -26,8 +26,11 @@ if [ ! -f "${SCRIPT_DIR}/.env" ]; then
     exit 1
 fi
 
-# Load environment variables
-source "${SCRIPT_DIR}/.env"
+# Load environment variables from .env file
+# This method handles spaces around '=' properly
+set -a  # automatically export all variables
+source <(grep -v '^#' "${SCRIPT_DIR}/.env" | grep -v '^$' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*=[[:space:]]*/=/')
+set +a  # stop automatically exporting
 
 # Use defaults if not set
 DB_NAME="${DB_NAME:-whatsapp_crm_dev}"
