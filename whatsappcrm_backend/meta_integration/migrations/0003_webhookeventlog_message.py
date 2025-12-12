@@ -20,7 +20,7 @@ class Migration(migrations.Migration):
                 help_text='Link to the Message object if this webhook event is related to a message.',
                 null=True,
                 on_delete=django.db.models.deletion.SET_NULL,
-                to='conversations.message'
+                to='conversations.Message'
             ),
         ),
     ]
