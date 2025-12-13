@@ -16,8 +16,6 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.conf.task_routes = {
     # Football data tasks go to the football_data queue
     'football_data_app.*': {'queue': 'football_data'},
-    'football_data_app.tasks.*': {'queue': 'football_data'},
-    'football_data_app.tasks_apifootball.*': {'queue': 'football_data'},
     
     # WhatsApp and general business tasks go to the celery queue for fast processing
     'meta_integration.tasks.*': {'queue': 'celery'},

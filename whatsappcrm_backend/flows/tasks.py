@@ -15,7 +15,7 @@ from .models import ContactFlowState
 logger = logging.getLogger(__name__)
 
 
-@shared_task  # Will be routed to 'celery' queue by task routing config in celery.py
+@shared_task  # Will be routed to 'celery' queue by flows.tasks.* pattern in celery.py
 def process_flow_for_message_task(message_id: int):
     """
     This task asynchronously runs the entire flow engine for an incoming message.
