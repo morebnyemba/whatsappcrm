@@ -58,7 +58,7 @@ This command:
 docker-compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
 
 # Monitor logs - should now show leagues being processed
-docker-compose logs -f celery_worker_football | grep -i league
+docker-compose logs -f celery_cpu_worker | grep -i league
 ```
 
 If all checks pass, you're ready to go! 🎉
@@ -118,20 +118,20 @@ invalid username-password pair or user is disabled.
 
 ```bash
 # View logs
-docker-compose logs -f celery_worker          # WhatsApp worker
-docker-compose logs -f celery_worker_football # Football worker
+docker-compose logs -f celery_io_worker          # I/O worker (WhatsApp, flows, general tasks)
+docker-compose logs -f celery_cpu_worker # CPU worker (football data tasks)
 
 # Check status
 docker-compose ps
 
 # Restart workers
-docker-compose restart celery_worker celery_worker_football
+docker-compose restart celery_io_worker celery_cpu_worker
 
 # Check active tasks
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active
 
 # Verify worker connectivity
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect ping
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect ping
 ```
 
 ## 🧪 Testing the Setup
@@ -142,12 +142,12 @@ docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend
 docker-compose ps | grep celery
 
 # 2. Check logs for errors
-docker-compose logs celery_worker | tail -20
-docker-compose logs celery_worker_football | tail -20
+docker-compose logs celery_io_worker | tail -20
+docker-compose logs celery_cpu_worker | tail -20
 
 # 3. Test connectivity
-docker exec whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect ping
-docker exec whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect ping
+docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect ping
+docker exec whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect ping
 ```
 
 ### Automated Test
@@ -170,10 +170,10 @@ For production:
 ### Check Worker Health
 ```bash
 # WhatsApp worker stats
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect stats
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect stats
 
 # Football worker stats
-docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect stats
+docker exec -it whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect stats
 ```
 
 ### Check Queue Lengths
@@ -193,12 +193,12 @@ docker exec whatsappcrm_redis redis-cli -a mindwell llen football_data
 ### Worker Not Starting
 1. Check for errors: `docker-compose logs celery_worker`
 2. Verify dependencies: `docker-compose ps db redis`
-3. Check health: `docker inspect whatsappcrm_celery_worker_whatsapp`
+3. Check health: `docker inspect whatsappcrm_celery_io_worker`
 
 ### Tasks Not Processing
 1. Check worker is connected: `celery inspect ping`
 2. Verify task routing: See [CELERY_QUICK_REFERENCE.md](CELERY_QUICK_REFERENCE.md)
-3. Check queue: `docker exec whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active_queues`
+3. Check queue: `docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active_queues`
 
 ## 🔄 Rollback Plan
 
@@ -220,10 +220,10 @@ docker-compose up -d --build
 Scale workers independently:
 ```bash
 # Scale WhatsApp worker
-docker-compose up -d --scale celery_worker=2
+docker-compose up -d --scale celery_io_worker=2
 
 # Scale Football worker
-docker-compose up -d --scale celery_worker_football=3
+docker-compose up -d --scale celery_cpu_worker=3
 ```
 
 Note: Remove `container_name` from docker-compose.yml when scaling.

@@ -27,20 +27,20 @@ print_status() {
 echo "1. Checking if Docker containers are running..."
 echo "================================================"
 
-# Check WhatsApp worker
-if docker ps | grep -q "whatsappcrm_celery_worker_whatsapp"; then
-    print_status 0 "WhatsApp worker container is running"
+# Check IO worker (handles WhatsApp, flows, general tasks)
+if docker ps | grep -q "whatsappcrm_celery_io_worker"; then
+    print_status 0 "I/O worker container is running"
 else
-    print_status 1 "WhatsApp worker container is NOT running"
-    echo -e "${YELLOW}Run: docker-compose up -d celery_worker${NC}"
+    print_status 1 "I/O worker container is NOT running"
+    echo -e "${YELLOW}Run: docker compose up -d celery_io_worker${NC}"
 fi
 
-# Check Football worker
-if docker ps | grep -q "whatsappcrm_celery_worker_football"; then
-    print_status 0 "Football worker container is running"
+# Check CPU worker (handles football data tasks)
+if docker ps | grep -q "whatsappcrm_celery_cpu_worker"; then
+    print_status 0 "CPU worker container is running"
 else
-    print_status 1 "Football worker container is NOT running"
-    echo -e "${YELLOW}Run: docker-compose up -d celery_worker_football${NC}"
+    print_status 1 "CPU worker container is NOT running"
+    echo -e "${YELLOW}Run: docker compose up -d celery_cpu_worker${NC}"
 fi
 
 # Check Redis
@@ -55,71 +55,71 @@ echo ""
 echo "2. Checking worker logs for errors..."
 echo "================================================"
 
-# Check WhatsApp worker logs for Redis errors
-if docker logs whatsappcrm_celery_worker_whatsapp 2>&1 | tail -50 | grep -q "Cannot connect to redis"; then
-    print_status 1 "WhatsApp worker has Redis connection errors"
-    echo -e "${YELLOW}Check logs with: docker-compose logs celery_worker${NC}"
+# Check I/O worker logs for Redis errors
+if docker logs whatsappcrm_celery_io_worker 2>&1 | tail -50 | grep -q "Cannot connect to redis"; then
+    print_status 1 "I/O worker has Redis connection errors"
+    echo -e "${YELLOW}Check logs with: docker compose logs celery_io_worker${NC}"
 else
-    print_status 0 "WhatsApp worker has no Redis errors"
+    print_status 0 "I/O worker has no Redis errors"
 fi
 
-# Check Football worker logs for Redis errors
-if docker logs whatsappcrm_celery_worker_football 2>&1 | tail -50 | grep -q "Cannot connect to redis"; then
-    print_status 1 "Football worker has Redis connection errors"
-    echo -e "${YELLOW}Check logs with: docker-compose logs celery_worker_football${NC}"
+# Check CPU worker logs for Redis errors
+if docker logs whatsappcrm_celery_cpu_worker 2>&1 | tail -50 | grep -q "Cannot connect to redis"; then
+    print_status 1 "CPU worker has Redis connection errors"
+    echo -e "${YELLOW}Check logs with: docker compose logs celery_cpu_worker${NC}"
 else
-    print_status 0 "Football worker has no Redis errors"
+    print_status 0 "CPU worker has no Redis errors"
 fi
 
 echo ""
 echo "3. Testing worker connectivity..."
 echo "================================================"
 
-# Test WhatsApp worker ping
-if docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect ping 2>&1 | grep -q "pong"; then
-    print_status 0 "WhatsApp worker responds to ping"
+# Test I/O worker ping
+if docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect ping 2>&1 | grep -q "pong"; then
+    print_status 0 "I/O worker responds to ping"
 else
-    print_status 1 "WhatsApp worker does NOT respond to ping"
+    print_status 1 "I/O worker does NOT respond to ping"
 fi
 
-# Test Football worker ping
-if docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect ping 2>&1 | grep -q "pong"; then
-    print_status 0 "Football worker responds to ping"
+# Test CPU worker ping
+if docker exec whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect ping 2>&1 | grep -q "pong"; then
+    print_status 0 "CPU worker responds to ping"
 else
-    print_status 1 "Football worker does NOT respond to ping"
+    print_status 1 "CPU worker does NOT respond to ping"
 fi
 
 echo ""
 echo "4. Checking worker queues..."
 echo "================================================"
 
-# Check WhatsApp worker queue
-WA_QUEUE=$(docker exec whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active_queues 2>&1 | grep -o "whatsapp" | head -1)
-if [ "$WA_QUEUE" = "whatsapp" ]; then
-    print_status 0 "WhatsApp worker is listening to 'whatsapp' queue"
+# Check I/O worker queue
+IO_QUEUE=$(docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active_queues 2>&1 | grep -o "celery" | head -1)
+if [ "$IO_QUEUE" = "celery" ]; then
+    print_status 0 "I/O worker is listening to 'celery' queue"
 else
-    print_status 1 "WhatsApp worker is NOT listening to 'whatsapp' queue"
+    print_status 1 "I/O worker is NOT listening to 'celery' queue"
 fi
 
-# Check Football worker queue
-FB_QUEUE=$(docker exec whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect active_queues 2>&1 | grep -o "football_data" | head -1)
-if [ "$FB_QUEUE" = "football_data" ]; then
-    print_status 0 "Football worker is listening to 'football_data' queue"
+# Check CPU worker queue
+CPU_QUEUE=$(docker exec whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect active_queues 2>&1 | grep -o "cpu_heavy" | head -1)
+if [ "$CPU_QUEUE" = "cpu_heavy" ]; then
+    print_status 0 "CPU worker is listening to 'cpu_heavy' queue"
 else
-    print_status 1 "Football worker is NOT listening to 'football_data' queue"
+    print_status 1 "CPU worker is NOT listening to 'cpu_heavy' queue"
 fi
 
 echo ""
 echo "5. Checking registered tasks..."
 echo "================================================"
 
-# Count registered tasks on WhatsApp worker
-WA_TASKS=$(docker exec whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect registered 2>&1 | grep -c "task" || echo "0")
-print_status 0 "WhatsApp worker has $WA_TASKS task registrations"
+# Count registered tasks on I/O worker
+IO_TASKS=$(docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect registered 2>&1 | grep -c "task" || echo "0")
+print_status 0 "I/O worker has $IO_TASKS task registrations"
 
-# Count registered tasks on Football worker
-FB_TASKS=$(docker exec whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect registered 2>&1 | grep -c "task" || echo "0")
-print_status 0 "Football worker has $FB_TASKS task registrations"
+# Count registered tasks on CPU worker
+CPU_TASKS=$(docker exec whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect registered 2>&1 | grep -c "task" || echo "0")
+print_status 0 "CPU worker has $CPU_TASKS task registrations"
 
 echo ""
 echo "6. Redis connectivity test..."
@@ -139,11 +139,11 @@ echo "Verification Complete!"
 echo "=========================================="
 echo ""
 echo "To view detailed worker information:"
-echo "  - WhatsApp worker logs: docker-compose logs -f celery_worker"
-echo "  - Football worker logs: docker-compose logs -f celery_worker_football"
-echo "  - Redis logs: docker-compose logs -f redis"
+echo "  - I/O worker logs: docker compose logs -f celery_io_worker"
+echo "  - CPU worker logs: docker compose logs -f celery_cpu_worker"
+echo "  - Redis logs: docker compose logs -f redis"
 echo ""
 echo "To check active tasks:"
-echo "  - WhatsApp: docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active"
-echo "  - Football: docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect active"
+echo "  - I/O worker: docker exec whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active"
+echo "  - CPU worker: docker exec whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect active"
 echo ""

@@ -136,7 +136,7 @@ whatsappcrm/
 | **redis** | redis:7-alpine | Celery broker & cache |
 | **backend** | Custom (Django) | REST API server |
 | **frontend** | Custom (React/Nginx) | Static frontend serving |
-| **celery_worker** | Custom (Django) | Background task processing |
+| **celery_io_worker** | Custom (Django) | Background task processing |
 | **celery_beat** | Custom (Django) | Scheduled task runner |
 | **nginx_proxy_manager** | jc21/nginx-proxy-manager | Reverse proxy with SSL & web UI |
 

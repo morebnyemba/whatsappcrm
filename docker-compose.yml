@@ -70,103 +70,61 @@ services:
       - backend # Or nginx_proxy if it serves the frontend
     restart: unless-stopped
 
-  celery_worker:
+  celery_io_worker:
     build: ./whatsappcrm_backend
-    container_name: whatsappcrm_celery_worker_whatsapp
-    # MODIFIED command to explicitly set pool and concurrency via env vars
-    command: >
-      sh -c "
-        echo 'Celery Worker (WhatsApp): Waiting for DB (db:5432)...' &&
-        while ! nc -z db 5432; do sleep 1; done;
-        echo 'Celery Worker (WhatsApp): DB is up.' &&
-        echo 'Celery Worker (WhatsApp): Waiting for Redis (redis:6379)...' &&
-        while ! nc -z redis 6379; do sleep 1; done;
-        echo 'Celery Worker (WhatsApp): Redis is up.' &&
-        echo 'Starting Celery worker (WhatsApp) with Pool: $${CELERY_WORKER_POOL_TYPE:-gevent} and Concurrency: $${CELERY_WORKER_CONCURRENCY:-100}' &&
-        celery -A whatsappcrm_backend.celery worker -l INFO \
-          -Q whatsapp \
-          -n whatsapp_worker@%h \
-          -P $${CELERY_WORKER_POOL_TYPE:-gevent} \
-          -c $${CELERY_WORKER_CONCURRENCY:-100} \
-          --without-gossip --without-mingle --without-heartbeat -E
-      "
+    container_name: whatsappcrm_celery_io_worker
+    command: celery -A whatsappcrm_backend worker -Q celery -l INFO --concurrency=20
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
       - ./.env # Load variables from the root .env file
     environment:
-      # These are for the command above and for Celery app running inside container.
-      # Define these in a root .env file (next to docker-compose.yml) or set defaults here.
-      - CELERY_WORKER_POOL_TYPE=${CELERY_WORKER_POOL_TYPE:-gevent} # Example: gevent or prefork
-      - CELERY_WORKER_CONCURRENCY=${CELERY_WORKER_CONCURRENCY:-100} # This is read from .env
-      # Ensure Celery can find Django settings and connect to services
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-      # CRITICAL FIX: The line below is removed to use the password-protected URL from the .env file.
-      # - CELERY_BROKER_URL=redis://redis:6379/0
-    depends_on: # Updated for robustness
+    depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      backend: # Ensures backend (which might run migrations) starts
+      backend:
         condition: service_started
     restart: unless-stopped
 
-  celery_worker_football:
+  celery_cpu_worker:
     build: ./whatsappcrm_backend
-    container_name: whatsappcrm_celery_worker_football
-    # MODIFIED command for football data worker
-    command: >
-      sh -c "
-        echo 'Celery Worker (Football): Waiting for DB (db:5432)...' &&
-        while ! nc -z db 5432; do sleep 1; done;
-        echo 'Celery Worker (Football): DB is up.' &&
-        echo 'Celery Worker (Football): Waiting for Redis (redis:6379)...' &&
-        while ! nc -z redis 6379; do sleep 1; done;
-        echo 'Celery Worker (Football): Redis is up.' &&
-        echo 'Starting Celery worker (Football) with Pool: prefork and Concurrency: 4' &&
-        celery -A whatsappcrm_backend.celery worker -l INFO \
-          -Q football_data \
-          -n football_worker@%h \
-          -P prefork \
-          -c 4 \
-          --without-gossip --without-mingle --without-heartbeat -E
-      "
+    container_name: whatsappcrm_celery_cpu_worker
+    command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --concurrency=1
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
       - ./.env # Load variables from the root .env file
     environment:
-      # Ensure Celery can find Django settings and connect to services
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-    depends_on: # Updated for robustness
+    depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      backend: # Ensures backend (which might run migrations) starts
+      backend:
         condition: service_started
     restart: unless-stopped
 
   celery_beat:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_celery_beat
-    command: celery -A whatsappcrm_backend.celery beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A whatsappcrm_backend beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
       - ./.env # Load variables from the root .env file
-    environment: # Added for consistency and explicitness
+    environment:
       - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
-      # CRITICAL FIX: The line below is removed to use the password-protected URL from the .env file.
-      # - CELERY_BROKER_URL=redis://redis:6379/0
-    depends_on: # Updated for robustness
+    depends_on:
       db:
         condition: service_healthy
       redis:
