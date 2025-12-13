@@ -11,26 +11,22 @@ app = Celery('whatsappcrm_backend')
 # The 'CELERY_' namespace means all celery settings in settings.py should start with CELERY_
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
-# Configure task routing for separate workers
-# This ensures tasks are dispatched to the correct queue for the appropriate worker
+# Simplified task routing - rely on explicit queue parameters in task definitions
+# This prevents routing conflicts and ensures faster task dispatch
 app.conf.task_routes = {
     # Football data tasks go to the football_data queue
-    'football_data_app.*': {'queue': 'football_data'},
-    
-    # WhatsApp and general business tasks go to the celery queue for fast processing
-    'meta_integration.tasks.*': {'queue': 'celery'},
-    'conversations.tasks.*': {'queue': 'celery'},
-    'flows.tasks.*': {'queue': 'celery'},
-    'customer_data.tasks.*': {'queue': 'celery'},
-    'paynow_integration.tasks.*': {'queue': 'celery'},
-    'referrals.tasks.*': {'queue': 'celery'},
-    'media_manager.tasks.*': {'queue': 'celery'},
+    'football_data_app.tasks.*': {'queue': 'football_data'},
 }
 
-# Default queue for any tasks not explicitly routed
+# Default queue for any tasks not explicitly routed (WhatsApp, flows, etc.)
 app.conf.task_default_queue = 'celery'
 app.conf.task_default_exchange = 'celery'
 app.conf.task_default_routing_key = 'celery'
+
+# Performance optimizations for faster task processing
+app.conf.task_acks_late = True  # Acknowledge task after completion
+app.conf.worker_prefetch_multiplier = 1  # Process one task at a time for fairness
+app.conf.task_compression = 'gzip'  # Compress large task payloads
 
 # Load task modules from all registered Django apps
 app.autodiscover_tasks()

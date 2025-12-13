@@ -15,7 +15,7 @@ from .models import ContactFlowState
 logger = logging.getLogger(__name__)
 
 
-@shared_task  # Will be routed to 'celery' queue by flows.tasks.* pattern in celery.py
+@shared_task(queue='celery', priority=9)  # High priority for instant message processing
 def process_flow_for_message_task(message_id: int):
     """
     This task asynchronously runs the entire flow engine for an incoming message.
@@ -96,9 +96,9 @@ def process_flow_for_message_task(message_id: int):
 def cleanup_idle_conversations_task():
     """
     Finds and cleans up idle conversations (flow mode) that have
-    been inactive for more than 15 minutes (as per requirement).
+    been inactive for more than 5 minutes (matching reference repo best practices).
     """
-    idle_threshold = timezone.now() - timedelta(minutes=15)
+    idle_threshold = timezone.now() - timedelta(minutes=5)
     log_prefix = "[Idle Conversation Cleanup]"
     logger.info(f"{log_prefix} Running task for conversations idle since before {idle_threshold}.")
 
