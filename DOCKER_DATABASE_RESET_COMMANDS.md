@@ -51,8 +51,7 @@ docker-compose start backend
 # Wait for backend to be fully ready (adjust timing if needed)
 sleep 10
 
-# Alternative: Wait until backend is healthy
-# docker-compose exec backend python -c "import django; django.setup()" 2>/dev/null || sleep 5
+# For more reliability, see alternative wait methods in detailed guide below
 
 # 5. Delete all migration files (inside backend container)
 docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete && find /app -path '*/migrations/*.pyc' -delete"
@@ -74,7 +73,7 @@ docker-compose restart backend celery_worker celery_worker_football celery_beat
 
 If you want to run all the critical steps in one go (after backup), use this command:
 
-**Note:** Adjust the `sleep 10` duration if your backend takes longer to start (check with `docker-compose logs backend`).
+**Note:** Adjust the `sleep 10` duration if your backend takes longer to start (check with `docker-compose logs backend --tail=20`).
 
 ```bash
 docker-compose stop backend celery_worker celery_worker_football celery_beat && \
