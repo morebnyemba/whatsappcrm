@@ -27,22 +27,37 @@ if 'celery' in ' '.join(sys.argv):
 
 **Impact**: This significantly reduces task processing overhead and improves response times.
 
-### 2. Simplified Celery Configuration (`whatsappcrm_backend/celery.py`)
+### 2. Optimized Task Routing Configuration (`whatsappcrm_backend/celery.py`)
 **Before:**
-- Complex task routing with explicit queue assignments
-- django.setup() call at module level
-- Multiple queue configurations
+- Used `whatsapp` queue as default for all business tasks
+- Complex setup with gevent and django.setup()
 
 **After:**
-- Simple, clean Celery setup based on reference repository
-- No explicit task routing (using default queues)
-- Autodiscovery of tasks only
+```python
+app.conf.task_routes = {
+    # Football data tasks go to the football_data queue
+    'football_data_app.*': {'queue': 'football_data'},
+    
+    # WhatsApp and general business tasks go to the celery queue for fast processing
+    'meta_integration.tasks.*': {'queue': 'celery'},
+    'flows.tasks.*': {'queue': 'celery'},
+    # ... other business tasks
+}
 
-**Impact**: Reduces complexity and improves task dispatch speed.
+# Default queue for any tasks not explicitly routed
+app.conf.task_default_queue = 'celery'
+```
+
+**Impact**: 
+- Task routing is preserved to ensure proper queue distribution
+- Football tasks go to `football_data` queue for dedicated worker
+- Business/WhatsApp tasks go to fast `celery` queue
+- Removed gevent overhead for better performance
+- Clean, simple configuration without complexity
 
 ### 3. Updated Flow Task Processing (`whatsappcrm_backend/flows/tasks.py`)
 **Changes:**
-- Added `queue='celery'` parameter to `process_flow_for_message_task` decorator
+- Task routing handled by celery.py configuration (routes to 'celery' queue)
 - This ensures flow tasks are processed on the main I/O queue for faster execution
 - Added proper import of `_clear_contact_flow_state` at module level
 
@@ -114,9 +129,16 @@ CELERY_BEAT_SCHEDULE = {
    # Stop existing workers
    pkill -f 'celery worker'
    
-   # Start workers without gevent
-   celery -A whatsappcrm_backend worker -l info
+   # Start football_data worker (listens to football_data queue)
+   celery -A whatsappcrm_backend worker -Q football_data -l info --concurrency=2
+   
+   # Start main business/WhatsApp worker (listens to celery queue)
+   celery -A whatsappcrm_backend worker -Q celery -l info --concurrency=4
    ```
+   
+   **Important**: Make sure you have workers for both queues:
+   - `football_data` queue: For football data tasks (run_apifootball_full_update, etc.)
+   - `celery` queue: For WhatsApp and business tasks (flows, messages, etc.)
 
 2. **Celery Beat**: Ensure Celery Beat is running for session cleanup
    ```bash
@@ -131,6 +153,14 @@ CELERY_BEAT_SCHEDULE = {
 4. **Monitor Logs**: Watch for the cleanup task execution every 5 minutes
    ```
    [Idle Conversation Cleanup] Running task for conversations idle since...
+   ```
+
+5. **Verify Task Routing**: Check that tasks are going to the correct queues
+   ```bash
+   # In Django shell
+   python manage.py shell
+   >>> from celery import current_app
+   >>> print(current_app.conf.task_routes)
    ```
 
 ## Security Summary
