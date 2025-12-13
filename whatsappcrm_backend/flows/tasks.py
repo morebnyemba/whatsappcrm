@@ -13,7 +13,7 @@ from .services import process_message_for_flow
 logger = logging.getLogger(__name__)
 
 
-@shared_task(queue='celery')  # Use your main I/O queue
+@shared_task  # Will be routed to 'whatsapp' queue by celery.py routing config
 def process_flow_for_message_task(message_id: int):
     """
     This task asynchronously runs the entire flow engine for an incoming message.
