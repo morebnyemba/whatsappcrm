@@ -220,6 +220,7 @@ CELERY_BEAT_SCHEDULE = {
 
 # --- Application-Specific Settings ---
 CONVERSATION_EXPIRY_DAYS = int(os.getenv('CONVERSATION_EXPIRY_DAYS', '60'))
+SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv('SESSION_IDLE_TIMEOUT_MINUTES', '5'))  # Flow session timeout
 
 # --- Logging Configuration ---
 LOGGING = {

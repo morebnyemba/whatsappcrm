@@ -5,6 +5,7 @@ from datetime import timedelta
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
 
 from conversations.models import Message, Contact
 from meta_integration.models import MetaAppConfig
@@ -96,11 +97,12 @@ def process_flow_for_message_task(message_id: int):
 def cleanup_idle_conversations_task():
     """
     Finds and cleans up idle conversations (flow mode) that have
-    been inactive for more than 5 minutes (matching reference repo best practices).
+    been inactive for more than SESSION_IDLE_TIMEOUT_MINUTES (default: 5 minutes, matching reference repo best practices).
     """
-    idle_threshold = timezone.now() - timedelta(minutes=5)
+    timeout_minutes = getattr(settings, 'SESSION_IDLE_TIMEOUT_MINUTES', 5)
+    idle_threshold = timezone.now() - timedelta(minutes=timeout_minutes)
     log_prefix = "[Idle Conversation Cleanup]"
-    logger.info(f"{log_prefix} Running task for conversations idle since before {idle_threshold}.")
+    logger.info(f"{log_prefix} Running task for conversations idle since before {idle_threshold} ({timeout_minutes} minute timeout).")
 
     # Find idle contacts in flows
     # A contact is idle in a flow if their flow state hasn't been updated recently.
