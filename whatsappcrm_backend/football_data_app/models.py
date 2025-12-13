@@ -72,7 +72,8 @@ class FootballFixture(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.home_team.name} vs {self.away_team.name} on {self.match_date.strftime('%Y-%m-%d')}"
+        date_str = self.match_date.strftime('%Y-%m-%d') if self.match_date else 'TBD'
+        return f"{self.home_team.name} vs {self.away_team.name} on {date_str}"
 
     class Meta:
         verbose_name = _("Football Fixture")

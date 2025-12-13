@@ -55,13 +55,19 @@ class MarketInline(admin.TabularInline):
 @admin.register(FootballFixture)
 class FootballFixtureAdmin(admin.ModelAdmin):
     """Admin configuration for the FootballFixture model."""
-    list_display = ('id','__str__', 'league', 'status', 'match_date', 'last_odds_update', 'last_score_update')
+    list_display = ('id', 'fixture_display', 'league', 'status', 'match_date', 'last_odds_update', 'last_score_update')
     list_filter = ('status', 'league', 'match_date')
     search_fields = ('home_team__name', 'away_team__name', 'league__name', 'api_id')
     date_hierarchy = 'match_date'
     list_select_related = ('league', 'home_team', 'away_team')
     autocomplete_fields = ['league', 'home_team', 'away_team']
     inlines = [MarketInline]
+
+    def fixture_display(self, obj):
+        """Display the fixture in a readable format."""
+        return str(obj)
+    fixture_display.short_description = 'Fixture'
+    fixture_display.admin_order_field = 'match_date'
 
 @admin.register(Bookmaker)
 class BookmakerAdmin(admin.ModelAdmin):
@@ -102,11 +108,17 @@ class MarketAdmin(admin.ModelAdmin):
 @admin.register(MarketOutcome)
 class MarketOutcomeAdmin(admin.ModelAdmin):
     """Admin configuration for the MarketOutcome model."""
-    list_display = ('__str__', 'market', 'result_status', 'is_active')
+    list_display = ('outcome_display', 'market', 'result_status', 'is_active')
     list_filter = ('is_active', 'result_status', 'market__category', 'market__bookmaker')
     search_fields = ('outcome_name', 'market__fixture__home_team__name', 'market__fixture__away_team__name', 'market__fixture__api_id')
     autocomplete_fields = ['market']
     list_select_related = ('market__fixture__home_team', 'market__fixture__away_team', 'market__category', 'market__bookmaker')
+
+    def outcome_display(self, obj):
+        """Display the outcome in a readable format."""
+        return str(obj)
+    outcome_display.short_description = 'Outcome'
+    outcome_display.admin_order_field = 'outcome_name'
 
 @admin.register(Configuration)
 class ConfigurationAdmin(admin.ModelAdmin):
