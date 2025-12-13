@@ -31,7 +31,7 @@ CELERY_BROKER_URL='redis://:your_redis_password@redis:6379/0'
 
 Two specialized workers are now configured:
 
-#### **WhatsApp Worker** (`celery_worker`)
+#### **WhatsApp Worker** (`celery_io_worker`)
 - **Container Name**: `whatsappcrm_celery_worker_whatsapp`
 - **Queue**: `whatsapp` (default queue)
 - **Pool Type**: `gevent` (for I/O-bound tasks)
@@ -92,7 +92,7 @@ app.conf.task_routes = {
 
 The `docker-compose.yml` now includes three Celery-related services:
 
-1. **celery_worker** (WhatsApp worker)
+1. **celery_io_worker** (WhatsApp worker)
 2. **celery_worker_football** (Football data worker)
 3. **celery_beat** (Scheduler for periodic tasks)
 
@@ -137,13 +137,13 @@ To check if tasks are being routed correctly:
 
 ```bash
 # Monitor WhatsApp worker
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect active
 
 # Monitor Football worker
-docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect active
+docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend inspect active
 
 # Check registered tasks
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect registered
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect registered
 ```
 
 ## Troubleshooting
@@ -171,7 +171,7 @@ If you see authentication errors:
 
 2. Verify workers are connected to Redis:
    ```bash
-   docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect ping
+   docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect ping
    ```
 
 3. Check task routing configuration in `celery.py`
@@ -188,7 +188,7 @@ To scale workers independently:
 
 ```bash
 # Scale WhatsApp worker to 2 instances
-docker-compose up -d --scale celery_worker=2
+docker-compose up -d --scale celery_io_worker=2
 
 # Scale Football worker to 3 instances
 docker-compose up -d --scale celery_worker_football=3

@@ -82,19 +82,19 @@ print(result.result)  # The return value or exception
 
 ```bash
 # Check active tasks on WhatsApp worker
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect active
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect active
 
 # Check active tasks on Football worker
-docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend.celery inspect active
+docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend inspect active
 
 # List all registered tasks
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect registered
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect registered
 
 # Check worker stats
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery inspect stats
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect stats
 
 # Purge all tasks from a queue
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend.celery purge -Q whatsapp
+docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend purge -Q whatsapp
 
 # Restart workers
 docker-compose restart celery_worker celery_worker_football
