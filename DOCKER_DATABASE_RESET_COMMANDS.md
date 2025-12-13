@@ -1,0 +1,491 @@
+# Docker Exec Commands for Database and Migration Reset
+
+This guide provides the specific Docker exec commands needed to drop all database data, delete migrations, create new migrations, and apply them.
+
+## ⚠️ CRITICAL WARNING
+
+**These commands will PERMANENTLY DELETE ALL DATA in your database!**
+
+- Always backup your database before proceeding
+- Only run these commands in development environments
+- All existing data will be lost and cannot be recovered without a backup
+- Make sure you understand each command before executing it
+
+## Prerequisites
+
+1. **Docker and Docker Compose must be installed and running**
+2. **All containers should be running**: `docker-compose up -d`
+3. **Create a backup first** (see Backup section below)
+
+## Quick Reference - Complete Reset Process
+
+```bash
+# 1. BACKUP YOUR DATABASE FIRST!
+docker-compose exec db pg_dump -U crm_user whatsapp_crm_dev > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# 2. Stop backend services to avoid connection issues
+docker-compose stop backend celery_worker celery_worker_football celery_beat
+
+# 3. Drop all tables in the database
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
+
+# 4. Start backend service
+docker-compose start backend
+
+# 5. Delete all migration files (inside backend container)
+docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete && find /app -path '*/migrations/*.pyc' -delete"
+
+# 6. Create new migrations
+docker-compose exec backend python manage.py makemigrations
+
+# 7. Apply migrations
+docker-compose exec backend python manage.py migrate
+
+# 8. Create superuser
+docker-compose exec backend python manage.py createsuperuser
+
+# 9. Restart all services
+docker-compose restart backend celery_worker celery_worker_football celery_beat
+```
+
+## Detailed Step-by-Step Guide
+
+### Step 1: Backup Your Database
+
+**ALWAYS backup before proceeding!**
+
+```bash
+# Create a backup with timestamp
+docker-compose exec db pg_dump -U crm_user whatsapp_crm_dev > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Or use the backup script if available
+./backup_database.sh
+```
+
+**Verify backup was created:**
+```bash
+ls -lh backup_*.sql
+```
+
+### Step 2: Stop Backend Services
+
+Stop services that are connected to the database to avoid connection errors:
+
+```bash
+docker-compose stop backend celery_worker celery_worker_football celery_beat
+```
+
+**Verify services are stopped:**
+```bash
+docker-compose ps
+```
+
+### Step 3: Drop All Database Tables
+
+**Option A: Drop and Recreate Schema (Recommended)**
+
+This is the cleanest method - it drops the entire schema and recreates it:
+
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
+```
+
+**Option B: Drop All Tables Individually**
+
+This method keeps the schema but drops all tables:
+
+```bash
+# Generate and execute DROP TABLE commands
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "
+DO \$\$ DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+    END LOOP;
+END \$\$;
+"
+```
+
+**Verify all tables are dropped:**
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "\dt"
+```
+
+You should see "Did not find any relations" or an empty list.
+
+### Step 4: Start Backend Service
+
+```bash
+docker-compose start backend
+
+# Wait for backend to be ready (about 5-10 seconds)
+sleep 10
+```
+
+### Step 5: Delete All Migration Files
+
+Delete all migration files except `__init__.py`:
+
+```bash
+docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete"
+```
+
+**Also delete compiled Python files:**
+```bash
+docker-compose exec backend bash -c "find /app -path '*/migrations/*.pyc' -delete"
+docker-compose exec backend bash -c "find /app -path '*/migrations/__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true"
+```
+
+**Verify migration files are deleted:**
+```bash
+docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py'"
+```
+
+This should return no results.
+
+### Step 6: Create New Migrations
+
+Generate fresh migration files for all Django apps:
+
+```bash
+docker-compose exec backend python manage.py makemigrations
+```
+
+**Expected output:**
+```
+Migrations for 'conversations':
+  conversations/migrations/0001_initial.py
+    - Create model Contact
+    - Create model Message
+    ...
+Migrations for 'customer_data':
+  customer_data/migrations/0001_initial.py
+    ...
+```
+
+**If you see "No changes detected":**
+- Make sure the migration files were actually deleted
+- Check that your models are properly defined
+- Try specifying apps individually: `docker-compose exec backend python manage.py makemigrations conversations customer_data flows ...`
+
+### Step 7: Apply Migrations
+
+Apply all migrations to rebuild the database schema:
+
+```bash
+docker-compose exec backend python manage.py migrate
+```
+
+**Expected output:**
+```
+Operations to perform:
+  Apply all migrations: admin, auth, contenttypes, sessions, conversations, customer_data, flows, ...
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  ...
+```
+
+**Verify database tables:**
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "\dt"
+```
+
+You should see all your application tables listed.
+
+### Step 8: Create Superuser
+
+Create a Django admin superuser account:
+
+```bash
+docker-compose exec backend python manage.py createsuperuser
+```
+
+Follow the prompts to enter:
+- Username
+- Email address
+- Password
+
+### Step 9: Restart All Services
+
+Restart services to ensure all are using the new database schema:
+
+```bash
+docker-compose restart backend celery_worker celery_worker_football celery_beat
+```
+
+**Or restart everything:**
+```bash
+docker-compose restart
+```
+
+### Step 10: Verify Everything Works
+
+**Check service status:**
+```bash
+docker-compose ps
+```
+
+All services should show "Up" status.
+
+**Check Django migrations:**
+```bash
+docker-compose exec backend python manage.py showmigrations
+```
+
+All migrations should have `[X]` indicating they're applied.
+
+**Test the admin interface:**
+- Navigate to http://localhost:8000/admin
+- Log in with your superuser credentials
+
+**Check Celery workers:**
+```bash
+docker-compose logs -f celery_worker --tail=50
+```
+
+Look for successful startup messages.
+
+## Alternative: Using the Reset Script
+
+If you prefer, you can use the existing reset script:
+
+```bash
+# Using the wrapper script (automatically detects Docker)
+./reset_migrations.sh
+
+# Or run Python script directly in container
+docker-compose exec backend python /tmp/reset_migrations.py
+```
+
+See [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) for details.
+
+## Troubleshooting
+
+### "Database is being accessed by other users"
+
+If you get this error when trying to drop tables:
+
+```bash
+# Stop ALL services
+docker-compose down
+
+# Start only the database
+docker-compose up -d db
+
+# Wait for DB to be ready
+sleep 5
+
+# Now drop the schema
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
+
+# Start all services
+docker-compose up -d
+```
+
+### "Cannot connect to database"
+
+```bash
+# Check if database container is running
+docker-compose ps db
+
+# Check database logs
+docker-compose logs db --tail=50
+
+# Restart database
+docker-compose restart db
+```
+
+### Migration files not deleted
+
+If migration files persist:
+
+```bash
+# Try with more explicit path
+docker-compose exec backend bash -c "cd /app && find . -path '*/migrations/0*.py' -delete"
+
+# Or manually delete from each app
+docker-compose exec backend bash -c "rm -f /app/conversations/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/customer_data/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/flows/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/football_data_app/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/media_manager/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/meta_integration/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/paynow_integration/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/referrals/migrations/0*.py"
+docker-compose exec backend bash -c "rm -f /app/stats/migrations/0*.py"
+```
+
+### "No changes detected" when creating migrations
+
+```bash
+# Check if __init__.py files exist in migrations directories
+docker-compose exec backend bash -c "find /app -path '*/migrations/__init__.py'"
+
+# If missing, create them
+docker-compose exec backend bash -c "
+for dir in /app/*/migrations/; do
+    if [ ! -f \"\$dir/__init__.py\" ]; then
+        touch \"\$dir/__init__.py\"
+    fi
+done
+"
+
+# Try makemigrations again
+docker-compose exec backend python manage.py makemigrations
+```
+
+### Migrations fail to apply
+
+```bash
+# Check for model errors
+docker-compose exec backend python manage.py check
+
+# Try faking the initial migration (only if you know what you're doing)
+docker-compose exec backend python manage.py migrate --fake-initial
+
+# Check database connection
+docker-compose exec backend python manage.py dbshell
+```
+
+## Restoring from Backup
+
+If something goes wrong and you need to restore:
+
+```bash
+# Stop all services
+docker-compose down
+
+# Start only the database
+docker-compose up -d db
+
+# Wait for DB to be ready
+sleep 5
+
+# Drop and recreate the database
+docker-compose exec db psql -U crm_user -d postgres -c "DROP DATABASE IF EXISTS whatsapp_crm_dev;"
+docker-compose exec db psql -U crm_user -d postgres -c "CREATE DATABASE whatsapp_crm_dev;"
+
+# Restore from backup
+cat backup_20231213_120000.sql | docker-compose exec -T db psql -U crm_user -d whatsapp_crm_dev
+
+# Start all services
+docker-compose up -d
+```
+
+## Useful Database Commands
+
+### View all tables
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "\dt"
+```
+
+### View table structure
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "\d tablename"
+```
+
+### Count rows in a table
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "SELECT COUNT(*) FROM tablename;"
+```
+
+### Drop specific table
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP TABLE IF EXISTS tablename CASCADE;"
+```
+
+### Check database size
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "SELECT pg_size_pretty(pg_database_size('whatsapp_crm_dev'));"
+```
+
+### List all databases
+```bash
+docker-compose exec db psql -U crm_user -d postgres -c "\l"
+```
+
+## Container Management Commands
+
+### View running containers
+```bash
+docker-compose ps
+```
+
+### View container logs
+```bash
+# All logs
+docker-compose logs
+
+# Specific service
+docker-compose logs backend
+
+# Follow logs (live)
+docker-compose logs -f backend
+
+# Last N lines
+docker-compose logs --tail=100 backend
+```
+
+### Restart specific service
+```bash
+docker-compose restart backend
+```
+
+### Stop all services
+```bash
+docker-compose stop
+```
+
+### Start all services
+```bash
+docker-compose start
+```
+
+### Rebuild and restart
+```bash
+docker-compose up -d --build
+```
+
+### Access container shell
+```bash
+docker-compose exec backend bash
+```
+
+### Access Django shell
+```bash
+docker-compose exec backend python manage.py shell
+```
+
+### Access PostgreSQL shell
+```bash
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev
+```
+
+## Best Practices
+
+1. **Always backup first** - Cannot be stressed enough!
+2. **Test in development** - Never run these commands in production without testing
+3. **Document your process** - Keep notes of what you did
+4. **Use version control** - Commit working migrations before changes
+5. **Verify each step** - Check the output of each command before proceeding
+6. **Have a rollback plan** - Know how to restore from backup
+7. **Communicate with team** - Ensure no one else is working on the database
+8. **Check dependencies** - Ensure no external systems are connected to the database
+
+## Related Documentation
+
+- [MIGRATION_RESET_GUIDE.md](./MIGRATION_RESET_GUIDE.md) - Comprehensive guide for the Python reset script
+- [README.md](./README.md) - Project overview and setup
+- [GETTING_STARTED.md](./GETTING_STARTED.md) - Initial setup guide
+- [Django Migrations Documentation](https://docs.djangoproject.com/en/stable/topics/migrations/)
+- [PostgreSQL Backup Documentation](https://www.postgresql.org/docs/current/backup.html)
+
+## Support
+
+If you encounter issues not covered in this guide:
+1. Check the troubleshooting section
+2. Review container logs: `docker-compose logs`
+3. Check the project's GitHub issues
+4. Consult the Django and PostgreSQL documentation

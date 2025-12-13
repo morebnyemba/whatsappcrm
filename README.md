@@ -457,11 +457,16 @@ If you're experiencing migration conflicts or errors that cannot be resolved thr
 python reset_migrations.py
 ```
 
-⚠️ **WARNING**: This will delete all data in your database! See [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) for:
-- Detailed usage instructions
-- Prerequisites and requirements
-- Troubleshooting common issues
-- Backup and restore procedures
+**Docker exec commands (for manual control):**
+```bash
+# See DOCKER_DATABASE_RESET_COMMANDS.md for step-by-step commands
+```
+
+⚠️ **WARNING**: This will delete all data in your database! 
+
+**Documentation:**
+- [DOCKER_DATABASE_RESET_COMMANDS.md](DOCKER_DATABASE_RESET_COMMANDS.md) - Docker exec commands for manual database reset
+- [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) - Comprehensive guide for the Python reset script
 
 ### Common Issues
 
