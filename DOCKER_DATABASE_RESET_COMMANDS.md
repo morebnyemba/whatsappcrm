@@ -367,8 +367,8 @@ sleep 5
 docker-compose exec db psql -U crm_user -d postgres -c "DROP DATABASE IF EXISTS whatsapp_crm_dev;"
 docker-compose exec db psql -U crm_user -d postgres -c "CREATE DATABASE whatsapp_crm_dev;"
 
-# Restore from backup
-cat backup_20231213_120000.sql | docker-compose exec -T db psql -U crm_user -d whatsapp_crm_dev
+# Restore from backup (replace with your actual backup filename)
+cat backup_YYYYMMDD_HHMMSS.sql | docker-compose exec -T db psql -U crm_user -d whatsapp_crm_dev
 
 # Start all services
 docker-compose up -d
@@ -476,9 +476,9 @@ docker-compose exec db psql -U crm_user -d whatsapp_crm_dev
 
 ## Related Documentation
 
-- [MIGRATION_RESET_GUIDE.md](./MIGRATION_RESET_GUIDE.md) - Comprehensive guide for the Python reset script
-- [README.md](./README.md) - Project overview and setup
-- [GETTING_STARTED.md](./GETTING_STARTED.md) - Initial setup guide
+- [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) - Comprehensive guide for the Python reset script
+- [README.md](README.md) - Project overview and setup
+- [GETTING_STARTED.md](GETTING_STARTED.md) - Initial setup guide
 - [Django Migrations Documentation](https://docs.djangoproject.com/en/stable/topics/migrations/)
 - [PostgreSQL Backup Documentation](https://www.postgresql.org/docs/current/backup.html)
 
