@@ -9,7 +9,7 @@ from django.utils import timezone
 from conversations.models import Message, Contact
 from meta_integration.models import MetaAppConfig
 from meta_integration.tasks import send_whatsapp_message_task
-from .services import process_message_for_flow
+from .services import process_message_for_flow, _clear_contact_flow_state
 from .models import ContactFlowState
 
 logger = logging.getLogger(__name__)
@@ -98,8 +98,6 @@ def cleanup_idle_conversations_task():
     Finds and cleans up idle conversations (flow mode) that have
     been inactive for more than 15 minutes (as per requirement).
     """
-    from .services import _clear_contact_flow_state
-    
     idle_threshold = timezone.now() - timedelta(minutes=15)
     log_prefix = "[Idle Conversation Cleanup]"
     logger.info(f"{log_prefix} Running task for conversations idle since before {idle_threshold}.")
