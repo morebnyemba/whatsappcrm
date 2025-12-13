@@ -29,7 +29,7 @@ psycopg2.errors.DuplicateColumn: column "triggered_by_flow_step_id" of relation 
 This happens because the old database tables still exist, and Django tries to create columns that are already there.
 
 **The correct order is:**
-1. Stop services → 2. Drop database → 3. Start services → 4. Delete migrations → 5. Create migrations → 6. Apply migrations
+1. Backup → 2. Stop services → 3. Drop database → 4. Start services → 5. Delete migrations → 6. Create migrations → 7. Apply migrations → 8. Create superuser → 9. Restart services
 
 ## Quick Reference - Complete Reset Process
 
@@ -48,8 +48,11 @@ docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA publ
 # 4. Start backend service
 docker-compose start backend
 
-# Wait for backend to be fully ready
+# Wait for backend to be fully ready (adjust timing if needed)
 sleep 10
+
+# Alternative: Wait until backend is healthy
+# docker-compose exec backend python -c "import django; django.setup()" 2>/dev/null || sleep 5
 
 # 5. Delete all migration files (inside backend container)
 docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete && find /app -path '*/migrations/*.pyc' -delete"
@@ -71,6 +74,8 @@ docker-compose restart backend celery_worker celery_worker_football celery_beat
 
 If you want to run all the critical steps in one go (after backup), use this command:
 
+**Note:** Adjust the `sleep 10` duration if your backend takes longer to start (check with `docker-compose logs backend`).
+
 ```bash
 docker-compose stop backend celery_worker celery_worker_football celery_beat && \
 docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;" && \
@@ -82,7 +87,10 @@ docker-compose exec backend python manage.py migrate && \
 docker-compose restart backend celery_worker celery_worker_football celery_beat
 ```
 
-**Note:** This command chains all steps together. If any step fails, the subsequent steps won't run. Create your backup first!
+**Important:** 
+- This command chains all steps together. If any step fails, the subsequent steps won't run.
+- Create your backup first!
+- If the backend takes longer than 10 seconds to start, the command may fail. Increase the sleep duration or run steps individually.
 
 ## Detailed Step-by-Step Guide
 
@@ -162,8 +170,24 @@ You should see "Did not find any relations" or an empty list.
 ```bash
 docker-compose start backend
 
-# Wait for backend to be ready (about 5-10 seconds)
+# Wait for backend to be ready
+# The backend needs time to initialize Django before accepting management commands
 sleep 10
+```
+
+**Note:** If your backend takes longer to start, increase the sleep duration. You can check startup status with:
+```bash
+docker-compose logs backend --tail=20
+```
+
+**Alternative wait method (more reliable):**
+```bash
+# Keep trying until Django is ready
+until docker-compose exec backend python -c "import django; django.setup()" 2>/dev/null; do
+  echo "Waiting for backend..."
+  sleep 2
+done
+echo "Backend is ready!"
 ```
 
 ### Step 5: Delete All Migration Files
