@@ -47,7 +47,7 @@ Two specialized workers are now configured:
   - Media management
 
 #### **Football Data Worker** (`celery_worker_football`)
-- **Container Name**: `whatsappcrm_celery_worker_football`
+- **Container Name**: `whatsappcrm_celery_cpu_worker`
 - **Queue**: `football_data`
 - **Pool Type**: `prefork` (for CPU-bound tasks)
 - **Concurrency**: 4 workers
@@ -140,7 +140,7 @@ To check if tasks are being routed correctly:
 docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect active
 
 # Monitor Football worker
-docker exec -it whatsappcrm_celery_worker_football celery -A whatsappcrm_backend inspect active
+docker exec -it whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect active
 
 # Check registered tasks
 docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect registered
