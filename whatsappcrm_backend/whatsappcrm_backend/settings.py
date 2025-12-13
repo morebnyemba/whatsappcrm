@@ -213,13 +213,14 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_BEAT_SCHEDULE = {
     'cleanup-idle-conversations': {
         'task': 'flows.cleanup_idle_conversations_task',
-        # Runs every 5 minutes to check for idle sessions (15 min timeout)
+        # Runs every 5 minutes to check for idle sessions (5 min timeout, matching reference repo)
         'schedule': crontab(minute='*/5'),
     },
 }
 
 # --- Application-Specific Settings ---
 CONVERSATION_EXPIRY_DAYS = int(os.getenv('CONVERSATION_EXPIRY_DAYS', '60'))
+SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv('SESSION_IDLE_TIMEOUT_MINUTES', '5'))  # Flow session timeout
 
 # --- Logging Configuration ---
 LOGGING = {

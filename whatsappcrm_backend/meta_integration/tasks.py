@@ -10,7 +10,7 @@ from conversations.models import Message, Contact # To update message status
 
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60) # bind=True gives access to self, retry settings
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='celery', priority=9)
 def send_whatsapp_message_task(self, outgoing_message_id: int, active_config_id: int):
     """
     Celery task to send a WhatsApp message asynchronously.
@@ -136,7 +136,7 @@ def send_whatsapp_message_task(self, outgoing_message_id: int, active_config_id:
         logger.info("="*80)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=10)
+@shared_task(bind=True, max_retries=3, default_retry_delay=10, queue='celery', priority=7)
 def send_read_receipt_task(self, wamid: str, config_id: int, show_typing_indicator: bool = False):
     """
     Celery task to send a read receipt for a given message ID.
