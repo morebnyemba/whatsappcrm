@@ -17,7 +17,23 @@ This guide provides the specific Docker exec commands needed to drop all databas
 2. **All containers should be running**: `docker-compose up -d`
 3. **Create a backup first** (see Backup section below)
 
+## ⚠️ IMPORTANT: You MUST Run ALL Steps in Order!
+
+**DO NOT skip Step 3 (Drop Database Tables)!**
+
+If you skip the database drop step and only delete migrations, you will get errors like:
+```
+psycopg2.errors.DuplicateColumn: column "triggered_by_flow_step_id" of relation "conversations_message" already exists
+```
+
+This happens because the old database tables still exist, and Django tries to create columns that are already there.
+
+**The correct order is:**
+1. Stop services → 2. Drop database → 3. Start services → 4. Delete migrations → 5. Create migrations → 6. Apply migrations
+
 ## Quick Reference - Complete Reset Process
+
+**⚠️ RUN ALL COMMANDS IN ORDER - DO NOT SKIP ANY STEPS!**
 
 ```bash
 # 1. BACKUP YOUR DATABASE FIRST!
@@ -26,11 +42,14 @@ docker-compose exec db pg_dump -U crm_user whatsapp_crm_dev > backup_$(date +%Y%
 # 2. Stop backend services to avoid connection issues
 docker-compose stop backend celery_worker celery_worker_football celery_beat
 
-# 3. Drop all tables in the database
+# 3. ⚠️ CRITICAL: Drop all tables in the database (DO NOT SKIP THIS STEP!)
 docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
 
 # 4. Start backend service
 docker-compose start backend
+
+# Wait for backend to be fully ready
+sleep 10
 
 # 5. Delete all migration files (inside backend container)
 docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete && find /app -path '*/migrations/*.pyc' -delete"
@@ -47,6 +66,23 @@ docker-compose exec backend python manage.py createsuperuser
 # 9. Restart all services
 docker-compose restart backend celery_worker celery_worker_football celery_beat
 ```
+
+## Alternative: One-Line Command (For Advanced Users)
+
+If you want to run all the critical steps in one go (after backup), use this command:
+
+```bash
+docker-compose stop backend celery_worker celery_worker_football celery_beat && \
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;" && \
+docker-compose start backend && \
+sleep 10 && \
+docker-compose exec backend bash -c "find /app -path '*/migrations/*.py' -not -path '*/migrations/__init__.py' -delete && find /app -path '*/migrations/*.pyc' -delete" && \
+docker-compose exec backend python manage.py makemigrations && \
+docker-compose exec backend python manage.py migrate && \
+docker-compose restart backend celery_worker celery_worker_football celery_beat
+```
+
+**Note:** This command chains all steps together. If any step fails, the subsequent steps won't run. Create your backup first!
 
 ## Detailed Step-by-Step Guide
 
@@ -82,13 +118,20 @@ docker-compose ps
 
 ### Step 3: Drop All Database Tables
 
+**⚠️ THIS IS THE MOST CRITICAL STEP - DO NOT SKIP!**
+
 **Option A: Drop and Recreate Schema (Recommended)**
 
-This is the cleanest method - it drops the entire schema and recreates it:
+This is the cleanest method - it drops the entire schema and recreates it, removing ALL tables, views, indexes, constraints, sequences, and relations:
 
 ```bash
 docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
 ```
+
+**What this command does:**
+- `DROP SCHEMA public CASCADE` - Removes the entire public schema and ALL objects in it (tables, indexes, constraints, sequences, etc.)
+- `CREATE SCHEMA public` - Creates a fresh, empty public schema
+- `GRANT ALL` - Restores permissions for the database user
 
 **Option B: Drop All Tables Individually**
 
@@ -262,6 +305,43 @@ docker-compose exec backend python /tmp/reset_migrations.py
 See [MIGRATION_RESET_GUIDE.md](MIGRATION_RESET_GUIDE.md) for details.
 
 ## Troubleshooting
+
+### "DuplicateColumn" or "already exists" errors during migration
+
+**Error message:**
+```
+psycopg2.errors.DuplicateColumn: column "triggered_by_flow_step_id" of relation "conversations_message" already exists
+```
+
+**Cause:** You skipped Step 3 (dropping the database) and only deleted migration files. The old database tables still exist with their columns, so Django tries to create columns that are already there.
+
+**Solution:**
+
+You MUST drop the database tables before creating new migrations. Run these commands:
+
+```bash
+# 1. Stop all backend services
+docker-compose stop backend celery_worker celery_worker_football celery_beat
+
+# 2. Drop the entire database schema (THIS IS THE KEY STEP!)
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
+
+# 3. Verify all tables are gone
+docker-compose exec db psql -U crm_user -d whatsapp_crm_dev -c "\dt"
+# You should see "Did not find any relations"
+
+# 4. Start backend service
+docker-compose start backend
+sleep 10
+
+# 5. Now apply the migrations you already created
+docker-compose exec backend python manage.py migrate
+
+# 6. Restart all services
+docker-compose restart
+```
+
+**Important:** The database drop command removes ALL tables, indexes, constraints, and relations. This is necessary for a clean slate.
 
 ### "Database is being accessed by other users"
 
