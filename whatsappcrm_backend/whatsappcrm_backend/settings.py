@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from celery.schedules import crontab
 import dotenv # For loading .env file
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -207,6 +208,15 @@ CELERY_CACHE_BACKEND = 'django-cache'
 
 # For Celery Beat (scheduled tasks)
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Celery Beat Schedule for periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-idle-conversations': {
+        'task': 'flows.cleanup_idle_conversations_task',
+        # Runs every 5 minutes to check for idle sessions (15 min timeout)
+        'schedule': crontab(minute='*/5'),
+    },
+}
 
 # --- Application-Specific Settings ---
 CONVERSATION_EXPIRY_DAYS = int(os.getenv('CONVERSATION_EXPIRY_DAYS', '60'))
