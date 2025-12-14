@@ -90,7 +90,7 @@ def parse_match_updated(match_updated_str: str) -> Optional[datetime]:
         match_updated = datetime.strptime(match_updated_str, '%Y-%m-%d %H:%M:%S')
         return timezone.make_aware(match_updated)
     except (ValueError, TypeError) as e:
-        logger.debug(f"Could not parse match_updated: {match_updated_str}, error: {e}")
+        logger.warning(f"Could not parse match_updated: {match_updated_str}, error: {e}")
         return None
 
 
@@ -784,17 +784,22 @@ def fetch_scores_for_league_task(self, league_id: int):
                         if match_updated:
                             fixture.match_updated = match_updated
                         
+                        # Prepare update fields list
+                        update_fields = ['home_team_score', 'away_team_score', 'status', 'last_score_update']
+                        if match_updated:
+                            update_fields.append('match_updated')
+                        
                         # Update status
                         if 'finished' in match_status or 'ft' in match_status:
                             fixture.status = FootballFixture.FixtureStatus.FINISHED
-                            fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update', 'match_updated'])
+                            fixture.save(update_fields=update_fields)
                             fixtures_finished += 1
                             logger.info(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) marked FINISHED. Score: {home_score}-{away_score}")
                             logger.info(f"Triggering settlement pipeline for fixture {fixture.id}...")
                             settle_fixture_pipeline_task.delay(fixture.id)
                         else:
                             fixture.status = FootballFixture.FixtureStatus.LIVE
-                            fixture.save(update_fields=['home_team_score', 'away_team_score', 'status', 'last_score_update', 'match_updated'])
+                            fixture.save(update_fields=update_fields)
                             fixtures_live += 1
                             logger.debug(f"Fixture {fixture.id} is LIVE. Score: {home_score}-{away_score}")
                         
