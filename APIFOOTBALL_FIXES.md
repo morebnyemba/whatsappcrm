@@ -181,9 +181,18 @@ To test these changes:
 5. ✅ More robust date parsing with fallback support
 
 ### Breaking Changes
-None - the changes are backward compatible:
-- New field is nullable
-- Date parsing tries multiple formats
+
+**API Serializer Field Name Change:**
+- `FootballFixtureSerializer` field name changed from `commence_time` (incorrect) to `match_date` (correct)
+- This affects API consumers that were using the `commence_time` field
+- **Action Required:** Update any API clients to use `match_date` instead of `commence_time`
+- **Rationale:** The old field name was incorrect and did not match the actual model field name. This is a bug fix that brings the API in line with the data model.
+
+**Database Schema:**
+- New `match_updated` field added to FootballFixture model
+- No impact on existing data or queries
+- New field is nullable and backward compatible
+- Date parsing tries multiple formats for compatibility
 - Existing data remains unchanged
 
 ## Future Improvements
