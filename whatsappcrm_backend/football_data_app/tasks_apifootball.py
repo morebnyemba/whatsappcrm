@@ -451,7 +451,6 @@ def fetch_events_for_league_task(self, league_id: int):
                     except (ValueError, TypeError):
                         away_score = None
                     
-                    # Parse match_updated timestamp
                     # Parse match_updated timestamp using helper function
                     match_updated = parse_match_updated(match_updated_str)
                     
