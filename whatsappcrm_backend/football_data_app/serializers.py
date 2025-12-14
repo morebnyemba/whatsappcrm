@@ -32,7 +32,7 @@ class FootballFixtureSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = FootballFixture
-        fields = ['id', 'home_team', 'away_team', 'commence_time', 'status', 'markets']
+        fields = ['id', 'home_team', 'away_team', 'match_date', 'match_updated', 'status', 'markets']
 
 class BetSerializer(serializers.ModelSerializer):
     market_outcome = MarketOutcomeSerializer(read_only=True)
