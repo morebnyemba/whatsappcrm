@@ -114,7 +114,7 @@ Expected output:
 
 ```python
 from football_data_app.models import FootballFixture, Market, MarketOutcome
-from customer_data.models import Bet, BetTicket, User, Wallet
+from customer_data.models import Bet, BetTicket, User, UserWallet
 from decimal import Decimal
 from django.db import transaction
 
@@ -139,7 +139,7 @@ else:
         print("ERROR: No users found. Create a user first.")
     else:
         # Get or create wallet
-        wallet, _ = Wallet.objects.get_or_create(user=user, defaults={'balance': Decimal('1000')})
+        wallet, _ = UserWallet.objects.get_or_create(user=user, defaults={'balance': Decimal('1000')})
         
         # Create bet ticket
         ticket = BetTicket.objects.create(
