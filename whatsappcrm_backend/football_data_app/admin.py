@@ -55,7 +55,7 @@ class MarketInline(admin.TabularInline):
 @admin.register(FootballFixture)
 class FootballFixtureAdmin(admin.ModelAdmin):
     """Admin configuration for the FootballFixture model."""
-    list_display = ('id', 'fixture_display', 'league', 'status', 'match_date', 'last_odds_update', 'last_score_update')
+    list_display = ('id', 'fixture_display', 'league', 'status', 'match_date', 'match_updated', 'last_odds_update', 'last_score_update')
     list_filter = ('status', 'league', 'match_date')
     search_fields = ('home_team__name', 'away_team__name', 'league__name', 'api_id')
     date_hierarchy = 'match_date'
