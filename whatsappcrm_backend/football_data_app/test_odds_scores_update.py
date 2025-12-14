@@ -21,8 +21,11 @@ from football_data_app.models import (
     League, Team, FootballFixture, Bookmaker, MarketCategory, 
     Market, MarketOutcome
 )
-from customer_data.models import Bet, BetTicket, User
+from customer_data.models import Bet, BetTicket, UserWallet
+from django.contrib.auth import get_user_model
 from football_data_app.tasks_apifootball import _process_apifootball_odds_data
+
+User = get_user_model()
 
 
 class OddsUpdateTestCase(TestCase):
@@ -115,12 +118,9 @@ class OddsUpdateTestCase(TestCase):
         home_outcome = market.outcomes.get(outcome_name=self.home_team.name)
         
         # Create user and bet (simplified for test)
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
         test_user = User.objects.create_user(username='testuser', password='testpass')
         
-        from customer_data.models import Wallet
-        wallet = Wallet.objects.create(user=test_user, balance=Decimal('100.00'))
+        wallet = UserWallet.objects.create(user=test_user, balance=Decimal('100.00'))
         
         ticket = BetTicket.objects.create(
             user=test_user,
@@ -274,8 +274,8 @@ class ScoresUpdateTestCase(TestCase):
             sport_key="soccer",
             active=True
         )
-        self.home_team = Team.objects.create(name="Home Team")
-        self.away_team = Team.objects.create(name="Away Team")
+        self.home_team = Team.objects.create(name="Home Team", api_team_id="home_1")
+        self.away_team = Team.objects.create(name="Away Team", api_team_id="away_1")
         self.fixture = FootballFixture.objects.create(
             league=self.league,
             home_team=self.home_team,
@@ -341,8 +341,8 @@ class TimestampTrackingTestCase(TestCase):
             sport_key="soccer",
             active=True
         )
-        self.home_team = Team.objects.create(name="Home Team")
-        self.away_team = Team.objects.create(name="Away Team")
+        self.home_team = Team.objects.create(name="Home Team", api_team_id="home_1")
+        self.away_team = Team.objects.create(name="Away Team", api_team_id="away_1")
         self.fixture = FootballFixture.objects.create(
             league=self.league,
             home_team=self.home_team,

@@ -155,6 +155,8 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
                 
                 # UPDATE OR CREATE market instead of delete + create
                 # This prevents CASCADE deletion of user bets
+                # Note: category is in defaults because the unique constraint is on
+                # (fixture, bookmaker, api_market_key) not including category
                 market, market_created = Market.objects.update_or_create(
                     fixture=fixture,
                     bookmaker=bookmaker,
