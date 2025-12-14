@@ -38,6 +38,62 @@ LEAGUE_SETUP_COMMAND_DOCKER = "docker-compose exec backend python manage.py foot
 
 # --- Helper Functions ---
 
+def parse_match_datetime(match_date: str, match_time: str) -> Optional[datetime]:
+    """
+    Parse match date and time from APIFootball format.
+    
+    Per APIFootball.com documentation: https://apifootball.com/documentation/
+    - match_date is in YYYY-MM-DD format
+    - match_time is in HH:MM format
+    
+    Args:
+        match_date: Date string in YYYY-MM-DD format
+        match_time: Time string in HH:MM or HH:MM:SS format
+        
+    Returns:
+        Timezone-aware datetime object or None if parsing fails
+    """
+    if not match_date or not match_time:
+        return None
+    
+    try:
+        datetime_str = f"{match_date} {match_time}"
+        # Try HH:MM format first (per APIFootball docs)
+        try:
+            match_datetime = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
+        except ValueError:
+            # Fallback to HH:MM:SS format for backward compatibility
+            match_datetime = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
+        # Make timezone aware
+        return timezone.make_aware(match_datetime)
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Could not parse match datetime: {datetime_str}, error: {e}")
+        return None
+
+def parse_match_updated(match_updated_str: str) -> Optional[datetime]:
+    """
+    Parse match_updated timestamp from APIFootball format.
+    
+    Per APIFootball.com documentation: https://apifootball.com/documentation/
+    match_updated is a timestamp string in YYYY-MM-DD HH:MM:SS format
+    
+    Args:
+        match_updated_str: Timestamp string from the API
+        
+    Returns:
+        Timezone-aware datetime object or None if parsing fails
+    """
+    if not match_updated_str:
+        return None
+    
+    try:
+        match_updated = datetime.strptime(match_updated_str, '%Y-%m-%d %H:%M:%S')
+        return timezone.make_aware(match_updated)
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Could not parse match_updated: {match_updated_str}, error: {e}")
+        return None
+
+
 @transaction.atomic
 def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
     """
@@ -364,23 +420,8 @@ def fetch_events_for_league_task(self, league_id: int):
                     if away_created:
                         logger.debug(f"Created new team: {away_team_name}")
                     
-                    # Parse match datetime
-                    # Per APIFootball.com documentation: https://apifootball.com/documentation/
-                    # match_date is in YYYY-MM-DD format, match_time is in HH:MM format
-                    match_datetime = None
-                    if match_date and match_time:
-                        try:
-                            datetime_str = f"{match_date} {match_time}"
-                            # Try HH:MM format first (per APIFootball docs)
-                            try:
-                                match_datetime = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
-                            except ValueError:
-                                # Fallback to HH:MM:SS format for backward compatibility
-                                match_datetime = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
-                            # Make timezone aware
-                            match_datetime = timezone.make_aware(match_datetime)
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Could not parse match datetime: {datetime_str}, error: {e}")
+                    # Parse match datetime using helper function
+                    match_datetime = parse_match_datetime(match_date, match_time)
                     
                     # Determine fixture status
                     status = FootballFixture.FixtureStatus.SCHEDULED
@@ -411,15 +452,8 @@ def fetch_events_for_league_task(self, league_id: int):
                         away_score = None
                     
                     # Parse match_updated timestamp
-                    # Per APIFootball.com documentation: https://apifootball.com/documentation/
-                    # match_updated is a timestamp string (YYYY-MM-DD HH:MM:SS format)
-                    match_updated = None
-                    if match_updated_str:
-                        try:
-                            match_updated = datetime.strptime(match_updated_str, '%Y-%m-%d %H:%M:%S')
-                            match_updated = timezone.make_aware(match_updated)
-                        except (ValueError, TypeError) as e:
-                            logger.debug(f"Could not parse match_updated: {match_updated_str}, error: {e}")
+                    # Parse match_updated timestamp using helper function
+                    match_updated = parse_match_updated(match_updated_str)
                     
                     # Create or update fixture
                     fixture, fixture_created = FootballFixture.objects.update_or_create(
@@ -738,14 +772,8 @@ def fetch_scores_for_league_task(self, league_id: int):
                         except (ValueError, TypeError):
                             away_score = None
                         
-                        # Parse match_updated timestamp
-                        match_updated = None
-                        if match_updated_str:
-                            try:
-                                match_updated = datetime.strptime(match_updated_str, '%Y-%m-%d %H:%M:%S')
-                                match_updated = timezone.make_aware(match_updated)
-                            except (ValueError, TypeError) as e:
-                                logger.debug(f"Could not parse match_updated: {match_updated_str}, error: {e}")
+                        # Parse match_updated timestamp using helper function
+                        match_updated = parse_match_updated(match_updated_str)
                         
                         # Update scores if available
                         if home_score is not None:
