@@ -109,10 +109,26 @@ whatsappcrm/
 | **flows** | Visual flow builder for automated conversations |
 | **meta_integration** | WhatsApp Business API webhook handling and message sending |
 | **media_manager** | Media file upload and management |
-| **football_data_app** | Sports data, fixtures, odds, and betting markets |
+| **football_data_app** | Sports data, fixtures, odds, and betting markets (powered by [API-Football v3](https://www.api-football.com/)) |
 | **paynow_integration** | Paynow payment gateway for deposits/withdrawals |
 | **referrals** | Customer referral tracking system |
 | **stats** | Analytics and reporting dashboard data |
+
+### ⚽ Football Data Integration
+
+The `football_data_app` uses **API-Football v3** from [api-football.com](https://www.api-football.com/) as the recommended provider for:
+- Live scores and fixtures
+- Betting odds from multiple bookmakers
+- League standings and team statistics
+- Player information and performance data
+- Head-to-head match history
+
+**Quick Setup:**
+1. Get your API key from [api-football.com](https://www.api-football.com/)
+2. Add to `.env`: `API_FOOTBALL_V3_KEY=your_key_here`
+3. See [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md) for full documentation
+
+**Legacy providers** (apifootball.com, The Odds API) remain supported for backward compatibility.
 
 ## 💻 Frontend Pages
 
