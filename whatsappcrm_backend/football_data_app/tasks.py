@@ -1,8 +1,18 @@
 """
-Football data tasks - Now using APIFootball.com by default.
+Football data tasks - API-Football v3 (api-football.com) recommended.
 
 This module imports and re-exports tasks from tasks_apifootball.py for backward compatibility.
-To use the old The Odds API, you can still import from tasks_theoddsapi_backup.py directly.
+The existing implementation uses apifootball.com (without dash), but the system now supports
+API-Football v3 (api-football.com with dash) which is the recommended provider.
+
+To use API-Football v3 (api-football.com):
+1. Set API_FOOTBALL_V3_KEY in your .env file
+2. Create a Configuration entry with provider_name='API-Football'
+3. Use the new api_football_v3_client.APIFootballV3Client
+
+Legacy providers (for backward compatibility):
+- apifootball.com (without dash): tasks_apifootball.py
+- The Odds API: tasks_theoddsapi_backup.py
 """
 
 import logging
@@ -39,7 +49,8 @@ run_the_odds_api_full_update = run_apifootball_full_update_task
 run_the_odds_api_full_update_task = run_apifootball_full_update_task
 
 # Log the transition
-logger.info("Football data tasks now using APIFootball.com as the primary provider.")
+logger.info("Football data tasks: API-Football v3 (api-football.com) is now the recommended provider.")
+logger.info("Legacy provider (apifootball.com without dash) tasks are still available for backward compatibility.")
 
 # Make all tasks available for import
 __all__ = [
