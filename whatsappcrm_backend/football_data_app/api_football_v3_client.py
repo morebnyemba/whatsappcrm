@@ -6,6 +6,7 @@ Documentation: https://www.api-football.com/documentation-v3
 import os
 import requests
 import logging
+import time
 from typing import List, Optional, Dict, Union, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -114,7 +115,6 @@ class APIFootballV3Client:
                 if response.status_code == 429:
                     logger.warning(f"Rate limit reached. Attempt {attempt + 1}/{MAX_RETRIES}")
                     if attempt < MAX_RETRIES - 1:
-                        import time
                         time.sleep(RETRY_DELAY * (attempt + 1))
                         continue
                 
@@ -149,7 +149,6 @@ class APIFootballV3Client:
                 logger.warning(log_message)
                 
                 if attempt < MAX_RETRIES - 1:
-                    import time
                     time.sleep(RETRY_DELAY * (attempt + 1))
                     continue
                 
@@ -160,7 +159,6 @@ class APIFootballV3Client:
             except requests.exceptions.RequestException as e:
                 logger.error(f"API-Football v3 RequestException: {e}")
                 if attempt < MAX_RETRIES - 1:
-                    import time
                     time.sleep(RETRY_DELAY * (attempt + 1))
                     continue
                 raise APIFootballV3Exception(f"Request failed: {e}") from e
@@ -335,7 +333,7 @@ class APIFootballV3Client:
         """
         try:
             odds_list = self.get_odds(fixture_id=fixture_id)
-            if odds_list and len(odds_list) > 0:
+            if odds_list:
                 return odds_list[0]
             return None
         except APIFootballV3Exception as e:
