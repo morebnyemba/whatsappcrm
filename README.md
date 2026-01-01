@@ -200,6 +200,8 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
    Without this step, scheduled tasks will report "0 active leagues" and no betting data will be available.
    
    **Note**: Ensure your APIFootball API key is configured in `.env` or Django admin before running this command.
+   
+   **📖 For complete task scheduling guide, see [FOOTBALL_TASKS_SETUP_GUIDE.md](FOOTBALL_TASKS_SETUP_GUIDE.md)**
 
 7. **Configure Nginx Proxy Manager**
    - Access NPM Admin UI: http://localhost:81
@@ -255,7 +257,7 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
    - NPM's built-in Access Lists feature
    - VPN or SSH tunnel for remote access
 
-9. **Verify Football Data Setup** (Optional)
+9. **Verify Football Data Setup & Schedule Tasks**
    
    Check that leagues are initialized and scheduled tasks are running:
    ```bash
@@ -270,6 +272,24 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
    ```
    
    You should see log messages indicating leagues are being processed, not "Found 0 active leagues".
+   
+   **⚙️ IMPORTANT: Schedule Periodic Tasks**
+   
+   After verifying setup, you must configure periodic tasks in Django Admin to automatically fetch fixtures, odds, and scores:
+   
+   1. Go to http://your-domain/admin/
+   2. Navigate to **DJANGO CELERY BEAT > Periodic Tasks**
+   3. Create schedules for:
+      - `football_data_app.run_apifootball_full_update` (every 10 minutes)
+      - `football_data_app.run_score_and_settlement_task` (every 5 minutes)
+   
+   **📖 For complete task scheduling instructions, see [FOOTBALL_TASKS_SETUP_GUIDE.md](FOOTBALL_TASKS_SETUP_GUIDE.md)**
+   
+   This guide covers:
+   - Where to find the football tasks
+   - How to schedule tasks in Django admin
+   - First-time setup commands
+   - Troubleshooting and monitoring
 
 ## ⚙️ Environment Variables
 
