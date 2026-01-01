@@ -161,15 +161,16 @@ class Configuration(models.Model):
     """Configuration for football data API providers."""
     
     PROVIDER_CHOICES = [
-        ('APIFootball', 'APIFootball.com'),
-        ('The Odds API', 'The Odds API'),
+        ('API-Football', 'API-Football (api-football.com)'),
+        ('APIFootball', 'APIFootball (apifootball.com) - Legacy'),
+        ('The Odds API', 'The Odds API - Legacy'),
     ]
     
     provider_name = models.CharField(
         max_length=50,
         choices=PROVIDER_CHOICES,
-        default="APIFootball",
-        help_text="Football data API provider"
+        default="API-Football",
+        help_text="Football data API provider (default: API-Football from api-football.com)"
     )
     email = models.EmailField(help_text="Contact email for this API configuration")
     api_key = models.CharField(max_length=100, help_text="API key for authentication")

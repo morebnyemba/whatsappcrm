@@ -243,6 +243,7 @@ LOGGING = {
         'football_data_app.tasks': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app.tasks_apifootball': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app.apifootball_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
+        'football_data_app.api_football_v3_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
         'football_data_app.the_odds_api_client': {'handlers': ['console'], 'level': 'DEBUG', 'propagate': True},
     },
 }
@@ -320,10 +321,22 @@ JAZZMIN_UI_TWEAKS = {
 # JWT_REFRESH_TOKEN_LIFETIME_DAYS="7"
 # --- Football Data API Configuration ---
 
-# APIFootball.com (Primary Provider)
+# API-Football v3 (api-football.com) - Primary Provider
+API_FOOTBALL_V3_KEY = os.environ.get('API_FOOTBALL_V3_KEY')
+API_FOOTBALL_V3_CURRENT_SEASON = int(os.environ.get('API_FOOTBALL_V3_CURRENT_SEASON', '2024'))
+
+# API-Football v3 Operational Parameters
+API_FOOTBALL_V3_LEAD_TIME_DAYS = 7  # How many days ahead to fetch fixtures
+API_FOOTBALL_V3_EVENT_DISCOVERY_STALENESS_HOURS = 6  # Hours before refetching events
+API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES = 60  # Minutes before refetching odds
+API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES = 120  # Minutes after scheduled start to assume completion
+API_FOOTBALL_V3_MAX_EVENT_RETRIES = 3
+API_FOOTBALL_V3_EVENT_RETRY_DELAY = 300
+
+# Legacy: APIFootball.com (apifootball.com - without dash) - kept for backward compatibility
 API_FOOTBALL_KEY = os.environ.get('API_FOOTBALL_KEY')
 
-# APIFootball Operational Parameters
+# Legacy: APIFootball Operational Parameters
 APIFOOTBALL_LEAD_TIME_DAYS = 7  # How many days ahead to fetch fixtures
 APIFOOTBALL_EVENT_DISCOVERY_STALENESS_HOURS = 6  # Hours before refetching events
 APIFOOTBALL_UPCOMING_STALENESS_MINUTES = 60  # Minutes before refetching odds
