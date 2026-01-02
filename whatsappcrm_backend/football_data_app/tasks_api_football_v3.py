@@ -721,7 +721,8 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         client = APIFootballV3Client()
         
         # Fetch odds for all supported bet types
-        logger.info(f"Fetching odds for fixture {api_fixture_id} across {len(API_FOOTBALL_BET_IDS)} bet types: {API_FOOTBALL_BET_IDS}")
+        logger.info(f"Fetching odds for fixture {api_fixture_id} across {len(API_FOOTBALL_BET_IDS)} bet types")
+        logger.debug(f"Bet types to fetch: {API_FOOTBALL_BET_IDS}")
         all_odds_data = []
         failed_bet_types = []
         
