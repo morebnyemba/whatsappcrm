@@ -714,10 +714,30 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         
         client = APIFootballV3Client()
         
-        logger.debug(f"Calling APIFootballV3Client.get_odds(fixture_id={api_fixture_id})...")
-        odds_data = client.get_odds(fixture_id=api_fixture_id)
+        # Fetch odds for all 8 betting market types
+        # Bet IDs per API-Football v3 documentation:
+        # 1: Match Winner, 2: Double Chance, 3: Asian Handicap, 4: Draw No Bet,
+        # 5: Goals Over/Under, 7: Odd/Even, 8: Both Teams To Score, 9: Correct Score
+        bet_ids = [1, 2, 3, 4, 5, 7, 8, 9]
+        all_odds_data = []
         
-        logger.info(f"API returned {len(odds_data) if odds_data else 0} odds items for fixture {fixture.id}")
+        logger.debug(f"Fetching odds for fixture {api_fixture_id} across {len(bet_ids)} bet types...")
+        for bet_id in bet_ids:
+            try:
+                logger.debug(f"Calling APIFootballV3Client.get_odds(fixture_id={api_fixture_id}, bet_id={bet_id})...")
+                bet_odds = client.get_odds(fixture_id=api_fixture_id, bet_id=bet_id)
+                if bet_odds:
+                    all_odds_data.extend(bet_odds)
+                    logger.debug(f"  ✓ Bet type {bet_id}: {len(bet_odds)} odds items returned")
+                else:
+                    logger.debug(f"  - Bet type {bet_id}: No odds available")
+            except APIFootballV3Exception as e:
+                # Log but don't fail the entire task if one bet type fails
+                logger.warning(f"  ✗ Bet type {bet_id} failed: {e}")
+                continue
+        
+        odds_data = all_odds_data
+        logger.info(f"API returned {len(odds_data)} total odds items for fixture {fixture.id} across {len(bet_ids)} bet types")
         
         if not odds_data:
             logger.info(f"No odds data returned from API for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
