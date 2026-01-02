@@ -398,7 +398,7 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         # Get current season from Configuration or settings
         current_season = get_current_season()
         
-        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, from={from_date.date()}, to={to_date.date()})...")
+        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, date_from={from_date.date()}, date_to={to_date.date()})...")
         fixtures_data = client.get_fixtures(
             league_id=api_league_id,
             season=current_season,
@@ -772,7 +772,7 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
         # Get finished matches from the past few days
         date_from = (now - timedelta(days=2)).strftime('%Y-%m-%d')
         date_to = now.strftime('%Y-%m-%d')
-        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, from={date_from}, to={date_to}, status=FT)...")
+        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, date_from={date_from}, date_to={date_to}, status=FT)...")
         finished_fixtures = client.get_fixtures(
             league_id=api_league_id,
             season=current_season,
