@@ -28,11 +28,14 @@ def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> O
     Helper function to format handicap markets (Asian Handicap variants).
     Returns formatted string or None if no outcomes.
     """
+    # Local import for type hints
+    from football_data_app.models import MarketOutcome
+    
     if not outcomes_dict:
         return None
     
     # Group by point value
-    handicap_by_point: Dict[float, Dict[str, Any]] = {}
+    handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
     for outcome in outcomes_dict.values():
         if outcome.point_value is not None:
             if outcome.point_value not in handicap_by_point:
@@ -70,10 +73,13 @@ def _format_totals_market(outcomes_dict: Dict, market_name: str, max_lines: int 
     Helper function to format totals/over-under markets.
     Returns formatted string or None if no outcomes.
     """
+    # Local import for type hints
+    from football_data_app.models import MarketOutcome
+    
     if not outcomes_dict:
         return None
     
-    totals_by_point: Dict[float, Dict[str, Any]] = {}
+    totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
     for outcome in outcomes_dict.values():
         if outcome.point_value is not None:
             if outcome.point_value not in totals_by_point:
