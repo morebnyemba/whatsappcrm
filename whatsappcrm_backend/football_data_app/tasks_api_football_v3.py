@@ -736,7 +736,7 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
                 else:
                     logger.debug(f"  - Bet type {bet_id}: No odds available")
             except Exception as e:
-                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds", exc_info=True)
+                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {e}", exc_info=True)
                 failed_bet_types.append(bet_id)
         
         if failed_bet_types:
