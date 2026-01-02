@@ -47,7 +47,7 @@ This document explains the fixes implemented to address the issues reported in #
 Name: Football Data Update (API-Football v3)
 Task: football_data_app.run_api_football_v3_full_update
 Interval: Every 10 Minutes
-Queue: football_data
+Queue: cpu_heavy
 Enabled: ✓
 ```
 

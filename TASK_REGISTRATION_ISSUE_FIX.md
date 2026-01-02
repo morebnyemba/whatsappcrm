@@ -153,14 +153,14 @@ football_data_app.run_score_and_settlement_task
 - Name: `Football Data Update (API-Football v3)`
 - Task: `football_data_app.run_api_football_v3_full_update`
 - Interval: Every 10 Minutes
-- Queue: `football_data`
+- Queue: `cpu_heavy`
 - Enabled: ✓
 
 **Task 2: Score and Settlement (API-Football v3)**
 - Name: `Score and Settlement (API-Football v3)`
 - Task: `football_data_app.run_score_and_settlement_v3_task`
 - Interval: Every 5 Minutes
-- Queue: `football_data`
+- Queue: `cpu_heavy`
 - Enabled: ✓
 
 ### Option 2: Legacy Provider (APIFootball.com without dash)
