@@ -15,10 +15,28 @@ from .models import (
 @admin.register(League)
 class LeagueAdmin(admin.ModelAdmin):
     """Admin configuration for the League model."""
-    list_display = ('name', 'api_id', 'sport_key', 'active', 'last_fetched_events')
+    list_display = ('name', 'api_id', 'sport_key', 'league_season', 'active', 'last_fetched_events')
     list_filter = ('active', 'sport_key')
     search_fields = ('name', 'api_id')
     actions = ['mark_as_active', 'mark_as_inactive']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'api_id', 'sport_key', 'sport_group_name', 'short_name')
+        }),
+        ('Season & Status', {
+            'fields': ('league_season', 'active')
+        }),
+        ('Additional Details', {
+            'fields': ('logo_url', 'country_id', 'country_name', 'api_description'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('last_fetched_events', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    readonly_fields = ('created_at', 'updated_at')
 
     def mark_as_active(self, request, queryset):
         queryset.update(active=True)
@@ -123,7 +141,7 @@ class MarketOutcomeAdmin(admin.ModelAdmin):
 @admin.register(Configuration)
 class ConfigurationAdmin(admin.ModelAdmin):
     """Admin configuration for the Configuration model."""
-    list_display = ('provider_name', 'email', 'is_active', 'api_key_display', 'updated_at')
+    list_display = ('provider_name', 'email', 'current_season', 'is_active', 'api_key_display', 'updated_at')
     list_filter = ('provider_name', 'is_active')
     search_fields = ('provider_name', 'email')
     readonly_fields = ('created_at', 'updated_at')
@@ -133,7 +151,7 @@ class ConfigurationAdmin(admin.ModelAdmin):
             'fields': ('provider_name', 'email', 'is_active')
         }),
         ('API Configuration', {
-            'fields': ('api_key',)
+            'fields': ('api_key', 'current_season')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
