@@ -166,14 +166,30 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     category, _ = MarketCategory.objects.get_or_create(name='Double Chance')
                     api_market_key = 'double_chance'
                 elif (('Asian Handicap' in bet_name or 'Handicap' in bet_name) or bet_id == 3):
-                    category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
-                    api_market_key = 'handicap'
+                    # Handle different handicap variants (full time, 1st half, 2nd half, etc.)
+                    if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 20:
+                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (2nd Half)')
+                        api_market_key = 'handicap_2h'
+                    elif '1st Half' in bet_name or '1H' in bet_name or bet_id == 19:
+                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (1st Half)')
+                        api_market_key = 'handicap_1h'
+                    else:
+                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
+                        api_market_key = 'handicap'
                 elif ('Draw No Bet' in bet_name or bet_id == 4):
                     category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
                     api_market_key = 'draw_no_bet'
                 elif (('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5):
-                    category, _ = MarketCategory.objects.get_or_create(name='Totals')
-                    api_market_key = 'totals'
+                    # Handle different totals variants (full time, 1st half, 2nd half, etc.)
+                    if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 22:
+                        category, _ = MarketCategory.objects.get_or_create(name='Totals (2nd Half)')
+                        api_market_key = 'totals_2h'
+                    elif '1st Half' in bet_name or '1H' in bet_name or bet_id == 21:
+                        category, _ = MarketCategory.objects.get_or_create(name='Totals (1st Half)')
+                        api_market_key = 'totals_1h'
+                    else:
+                        category, _ = MarketCategory.objects.get_or_create(name='Totals')
+                        api_market_key = 'totals'
                 elif ('Odd/Even' in bet_name or bet_id == 7):
                     category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
                     api_market_key = 'odd_even'
@@ -227,7 +243,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                             
                             # Extract point values for totals and handicap markets
                             # API-Football v3 format: "Over 2.5", "Under 2.5", "Home -1.5", "Away +1.5"
-                            if api_market_key in ['totals', 'handicap']:
+                            if api_market_key in ['totals', 'handicap', 'handicap_1h', 'handicap_2h', 'totals_1h', 'totals_2h']:
                                 parts = outcome_value.split()
                                 if len(parts) >= 2:
                                     try:
@@ -235,7 +251,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                                         point_str = parts[-1]
                                         point_value = float(point_str)
                                         # For handicap, map Home/Away to team names
-                                        if api_market_key == 'handicap':
+                                        if 'handicap' in api_market_key:
                                             if parts[0] == 'Home':
                                                 outcome_name = fixture.home_team.name
                                             elif parts[0] == 'Away':
