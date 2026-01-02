@@ -537,13 +537,16 @@ def fetch_events_for_league_v3_task(self, league_id: int):
             if fixture_ids_for_odds:
                 logger.info(f"Dispatching odds fetching tasks for {len(fixture_ids_for_odds)} scheduled fixtures...")
                 try:
-                    # Batch tasks to avoid overwhelming the queue
+                    # Create all task signatures
+                    odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in fixture_ids_for_odds]
+                    
+                    # Dispatch in batches to avoid overwhelming the queue
                     batch_size = 50
-                    for i in range(0, len(fixture_ids_for_odds), batch_size):
-                        batch = fixture_ids_for_odds[i:i + batch_size]
-                        odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in batch]
-                        group(odds_tasks).apply_async()
-                    logger.info(f"Successfully dispatched {len(fixture_ids_for_odds)} odds fetching tasks in batches")
+                    for i in range(0, len(odds_tasks), batch_size):
+                        batch = odds_tasks[i:i + batch_size]
+                        group(batch).apply_async()
+                    
+                    logger.info(f"Successfully dispatched {len(odds_tasks)} odds fetching tasks in {(len(odds_tasks) + batch_size - 1) // batch_size} batch(es)")
                 except Exception as e:
                     logger.error(f"Failed to dispatch odds fetching tasks: {e}", exc_info=True)
                     # Don't fail the entire task if odds dispatching fails
@@ -606,14 +609,15 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     logger.info(f"Criteria: SCHEDULED status, match_date in next {API_FOOTBALL_V3_LEAD_TIME_DAYS} days, odds older than {API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES} minutes")
     
     # Get fixtures that need odds updates (only v3 fixtures)
-    fixture_ids_to_update = FootballFixture.objects.filter(
+    # Convert to list once to avoid duplicate queries
+    fixture_ids_to_update = list(FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
         api_id__startswith='v3_'  # Only v3 fixtures
-    ).values_list('id', flat=True)
+    ).values_list('id', flat=True))
     
-    fixture_count = fixture_ids_to_update.count()
+    fixture_count = len(fixture_ids_to_update)
     
     # Log more details about what we found
     total_scheduled = FootballFixture.objects.filter(
