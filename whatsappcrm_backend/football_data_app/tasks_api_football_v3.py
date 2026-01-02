@@ -157,16 +157,32 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 bet_name = bet_data.get('name', 'Unknown Market')
                 bet_id = bet_data.get('id')
                 
-                # Map bet names to our categories
+                # Map bet names and IDs to our categories and api_market_keys
+                # Based on API-Football v3 documentation: https://www.api-football.com/documentation-v3
                 if bet_name == 'Match Winner' or bet_id == 1:
                     category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
                     api_market_key = 'h2h'
-                elif 'Goals' in bet_name and 'Over' in bet_name:
+                elif bet_name == 'Double Chance' or bet_id == 2:
+                    category, _ = MarketCategory.objects.get_or_create(name='Double Chance')
+                    api_market_key = 'double_chance'
+                elif 'Asian Handicap' in bet_name or 'Handicap' in bet_name or bet_id == 3:
+                    category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
+                    api_market_key = 'handicap'
+                elif 'Draw No Bet' in bet_name or bet_id == 4:
+                    category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
+                    api_market_key = 'draw_no_bet'
+                elif 'Goals' in bet_name and 'Over' in bet_name or bet_id == 5:
                     category, _ = MarketCategory.objects.get_or_create(name='Totals')
                     api_market_key = 'totals'
-                elif 'Both Teams Score' in bet_name:
+                elif 'Odd/Even' in bet_name or 'Goals Odd/Even' in bet_name or bet_id == 7:
+                    category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
+                    api_market_key = 'odd_even'
+                elif 'Both Teams Score' in bet_name or bet_id == 8:
                     category, _ = MarketCategory.objects.get_or_create(name='Both Teams To Score')
                     api_market_key = 'btts'
+                elif 'Exact Score' in bet_name or 'Correct Score' in bet_name or bet_id == 9:
+                    category, _ = MarketCategory.objects.get_or_create(name='Correct Score')
+                    api_market_key = 'correct_score'
                 else:
                     # Generic category for other markets
                     category, _ = MarketCategory.objects.get_or_create(name=bet_name)
@@ -200,18 +216,42 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     if outcome_value and odd:
                         try:
                             outcome_name = outcome_value
-                            # Map Home/Away to actual team names for h2h markets
-                            if api_market_key == 'h2h':
+                            point_value = None
+                            
+                            # Map Home/Away to actual team names for relevant markets
+                            if api_market_key in ['h2h', 'draw_no_bet']:
                                 if outcome_value == 'Home':
                                     outcome_name = fixture.home_team.name
                                 elif outcome_value == 'Away':
                                     outcome_name = fixture.away_team.name
+                            
+                            # Extract point values for totals and handicap markets
+                            # API-Football v3 format: "Over 2.5", "Under 2.5", "Home -1.5", "Away +1.5"
+                            if api_market_key in ['totals', 'handicap']:
+                                parts = outcome_value.split()
+                                if len(parts) >= 2:
+                                    try:
+                                        # Try to parse the last part as a number
+                                        point_str = parts[-1].replace('+', '')
+                                        point_value = float(point_str)
+                                        # For handicap, map Home/Away to team names
+                                        if api_market_key == 'handicap':
+                                            if parts[0] == 'Home':
+                                                outcome_name = fixture.home_team.name
+                                            elif parts[0] == 'Away':
+                                                outcome_name = fixture.away_team.name
+                                        else:
+                                            # For totals, keep "Over" or "Under" as name
+                                            outcome_name = parts[0]
+                                    except (ValueError, IndexError):
+                                        pass
                             
                             outcomes_to_create.append(
                                 MarketOutcome(
                                     market=market,
                                     outcome_name=outcome_name,
                                     odds=Decimal(str(odd)),
+                                    point_value=point_value
                                 )
                             )
                         except (ValueError, TypeError) as e:
