@@ -285,9 +285,13 @@ def get_formatted_football_data(
                     if market_key.startswith('bet_'):
                         # Get a better name from the actual market category if available
                         # Use the first outcome's market to get category name
-                        first_outcome = next(iter(outcomes_dict.values()))
-                        if hasattr(first_outcome, 'market') and hasattr(first_outcome.market, 'category'):
-                            market_name = first_outcome.market.category.name
+                        try:
+                            first_outcome = next(iter(outcomes_dict.values()))
+                            if hasattr(first_outcome, 'market') and hasattr(first_outcome.market, 'category'):
+                                market_name = first_outcome.market.category.name
+                        except (StopIteration, AttributeError):
+                            # If we can't get a better name, keep the formatted key name
+                            pass
                     
                     other_parts = []
                     for outcome in outcomes_dict.values():
@@ -295,9 +299,10 @@ def get_formatted_football_data(
                     
                     if other_parts:
                         # Limit to first 10 outcomes to avoid message overflow
-                        if len(other_parts) > 10:
+                        total_outcomes = len(other_parts)
+                        if total_outcomes > 10:
                             other_parts = other_parts[:10]
-                            other_parts.append(f"  _... and {len(outcomes_dict) - 10} more options_")
+                            other_parts.append(f"  _... and {total_outcomes - 10} more options_")
                         market_lines.append(f"\n*{market_name}:*\n" + "\n".join(other_parts))
             
             if market_lines:
