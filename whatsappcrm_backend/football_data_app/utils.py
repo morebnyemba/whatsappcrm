@@ -3,7 +3,7 @@
 import re
 import logging
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.apps import apps
 from django.utils import timezone
 from datetime import timedelta
@@ -34,7 +34,7 @@ def get_formatted_football_data(
     This function now returns a list of strings (message parts) OR None if no data is found.
     """
     # --- Local Import to Prevent Circular Dependency ---
-    from football_data_app.models import FootballFixture, MarketOutcome
+    from football_data_app.models import FootballFixture, MarketOutcome, Market
 
     logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past})")
 
@@ -57,7 +57,8 @@ def get_formatted_football_data(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            'markets__outcomes'
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
         ).order_by('match_date')
 
 
