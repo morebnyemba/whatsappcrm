@@ -34,7 +34,7 @@ def get_formatted_football_data(
     This function now returns a list of strings (message parts) OR None if no data is found.
     """
     # --- Local Import to Prevent Circular Dependency ---
-    from football_data_app.models import FootballFixture, MarketOutcome
+    from football_data_app.models import FootballFixture, MarketOutcome, Market
 
     logger.info(f"Function Call: get_formatted_football_data(data_type='{data_type}', league_code='{league_code}', days_ahead={days_ahead}, days_past={days_past})")
 
@@ -53,9 +53,6 @@ def get_formatted_football_data(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
-        
-        # Import Market and MarketOutcome models here to avoid circular import
-        from football_data_app.models import Market, MarketOutcome
         
         fixtures_qs = FootballFixture.objects.filter(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
