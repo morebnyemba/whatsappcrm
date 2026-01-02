@@ -15,8 +15,13 @@ from typing import Optional, Dict, List, Any, Union
 
 logger = logging.getLogger(__name__)
 
+# Message formatting constants
 MAX_CHARS_PER_MESSAGE_PART = 4000
 MESSAGE_PART_SEPARATOR = "\n\n---\n"
+
+# Display limits for betting options (configurable)
+MAX_TOTALS_LINES_TO_DISPLAY = 3  # Maximum Over/Under lines to show per fixture
+MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per fixture
 
 def get_formatted_football_data(
     data_type: str,
@@ -155,8 +160,8 @@ def get_formatted_football_data(
 
                 sorted_points = sorted(totals_by_point.keys())
                 totals_parts = []
-                # Show up to 3 most common lines
-                for point in sorted_points[:3]:
+                # Show up to MAX_TOTALS_LINES_TO_DISPLAY most common lines
+                for point in sorted_points[:MAX_TOTALS_LINES_TO_DISPLAY]:
                     over_outcome = totals_by_point[point].get('over')
                     under_outcome = totals_by_point[point].get('under')
                     over_str = f"Over {point:.1f}: *{over_outcome.odds:.2f}* (ID: {over_outcome.id})" if over_outcome else ""
@@ -230,12 +235,12 @@ def get_formatted_football_data(
                     if hcp_parts:
                         market_lines.append("\n*Asian Handicap:*\n" + "\n".join(hcp_parts))
 
-            # 7. Format Correct Score (show top 3-4 most likely scores)
+            # 7. Format Correct Score (show top MAX_CORRECT_SCORES_TO_DISPLAY most likely scores)
             if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
                 cs_outcomes = aggregated_outcomes.get('correct_score') or aggregated_outcomes.get('correctscore') or {}
                 
                 # Sort by odds (lower odds = more likely)
-                sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:4]
+                sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:MAX_CORRECT_SCORES_TO_DISPLAY]
                 
                 cs_parts = []
                 for score_key, outcome in sorted_scores:

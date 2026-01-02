@@ -17,6 +17,10 @@ MAX_REQUESTS_PER_MINUTE = getattr(settings, 'API_FOOTBALL_MAX_REQUESTS_PER_MINUT
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_CACHE_KEY_PREFIX = 'api_football_rate_limit'
 
+# Rate limiting constants
+CACHE_TIMEOUT_BUFFER_SECONDS = 10  # Extra seconds added to cache timeout to prevent premature expiration
+WINDOW_RESET_BUFFER_SECONDS = 0.1  # Small buffer to ensure clean window reset
+
 
 class RateLimitExceeded(Exception):
     """Exception raised when rate limit is exceeded."""
@@ -46,8 +50,8 @@ class APIFootballRateLimiter:
     
     def _reset_window(self):
         """Reset the rate limit window."""
-        cache.set(self.cache_key, 0, timeout=self.window_seconds + 10)  # Add buffer
-        cache.set(self.window_start_key, time.time(), timeout=self.window_seconds + 10)
+        cache.set(self.cache_key, 0, timeout=self.window_seconds + CACHE_TIMEOUT_BUFFER_SECONDS)
+        cache.set(self.window_start_key, time.time(), timeout=self.window_seconds + CACHE_TIMEOUT_BUFFER_SECONDS)
         logger.info(f"Rate limit window reset. New window starts now.")
     
     def _increment_counter(self):
@@ -59,7 +63,7 @@ class APIFootballRateLimiter:
             # Fallback for cache backends that don't support incr
             current_count = cache.get(self.cache_key, 0)
             new_count = current_count + 1
-            cache.set(self.cache_key, new_count, timeout=self.window_seconds + 10)
+            cache.set(self.cache_key, new_count, timeout=self.window_seconds + CACHE_TIMEOUT_BUFFER_SECONDS)
         return new_count
     
     def acquire(self, wait: bool = True) -> bool:
@@ -99,7 +103,7 @@ class APIFootballRateLimiter:
                 f"Rate limit reached ({request_count}/{self.max_requests} requests). "
                 f"Waiting {time_until_reset:.1f} seconds for window reset..."
             )
-            time.sleep(time_until_reset + 0.1)  # Add small buffer
+            time.sleep(time_until_reset + WINDOW_RESET_BUFFER_SECONDS)
             
             # Reset window and try again
             self._reset_window()

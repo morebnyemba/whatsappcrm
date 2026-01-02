@@ -34,6 +34,7 @@ API_FOOTBALL_V3_BASE_URL = "https://v3.football.api-sports.io"
 DEFAULT_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
+RETRY_BACKOFF_MULTIPLIER = 2  # Multiplier for exponential backoff on rate limit (429) errors
 
 
 class APIFootballV3Exception(Exception):
@@ -145,8 +146,8 @@ class APIFootballV3Client:
                 if response.status_code == 429:
                     logger.warning(f"API rate limit reached (429). Attempt {attempt + 1}/{MAX_RETRIES}")
                     if attempt < MAX_RETRIES - 1:
-                        # Wait longer when API itself returns 429
-                        wait_time = RETRY_DELAY * (attempt + 1) * 2
+                        # Wait longer when API itself returns 429 (exponential backoff)
+                        wait_time = RETRY_DELAY * (attempt + 1) * RETRY_BACKOFF_MULTIPLIER
                         logger.info(f"Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
                         continue
