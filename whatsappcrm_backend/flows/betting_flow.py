@@ -284,7 +284,7 @@ def create_betting_flow():
                 "config": {
                     "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "menu"}]
                 },
-                "transitions": []
+                "transitions": []  # Empty because switch_flow clears current flow state and starts a new flow
             },
             {
                 "name": "end_betting_flow",
