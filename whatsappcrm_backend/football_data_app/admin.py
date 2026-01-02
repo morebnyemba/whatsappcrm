@@ -25,7 +25,8 @@ class LeagueAdmin(admin.ModelAdmin):
             'fields': ('name', 'api_id', 'sport_key', 'sport_group_name', 'short_name')
         }),
         ('Season & Status', {
-            'fields': ('league_season', 'active')
+            'fields': ('league_season', 'active'),
+            'description': 'Season format: YYYY or YYYY/YYYY (e.g., 2024 or 2023/2024). Set active=False to exclude from updates.'
         }),
         ('Additional Details', {
             'fields': ('logo_url', 'country_id', 'country_name', 'api_description'),
@@ -36,7 +37,7 @@ class LeagueAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at', 'last_fetched_events')
 
     def mark_as_active(self, request, queryset):
         queryset.update(active=True)
@@ -50,7 +51,7 @@ class LeagueAdmin(admin.ModelAdmin):
 class TeamAdmin(admin.ModelAdmin):
     """Admin configuration for the Team model."""
     list_display = ('name', 'display_logo')
-    search_fields = ('name',)
+    search_fields = ('name', 'api_team_id')
 
     def display_logo(self, obj):
         if obj.logo_url:
