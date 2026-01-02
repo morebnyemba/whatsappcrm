@@ -32,7 +32,9 @@ API_FOOTBALL_V3_MAX_EVENT_RETRIES = getattr(settings, 'API_FOOTBALL_V3_MAX_EVENT
 API_FOOTBALL_V3_EVENT_RETRY_DELAY = getattr(settings, 'API_FOOTBALL_V3_EVENT_RETRY_DELAY', 300)
 
 # Bet types to fetch from API-Football v3
-# Note: Bet ID 6 is skipped as it's reserved but not commonly documented
+# According to API-Football v3 documentation, bet IDs represent different betting markets
+# Bet ID 6 exists in the API but is not actively used by most bookmakers and is not documented
+# in standard API guides, so we exclude it to avoid unnecessary API calls
 API_FOOTBALL_BET_IDS = [1, 2, 3, 4, 5, 7, 8, 9]
 
 # Setup command reference for consistent messaging
@@ -734,7 +736,7 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
                 else:
                     logger.debug(f"  - Bet type {bet_id}: No odds available")
             except Exception as e:
-                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {str(e)}", exc_info=True)
+                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds", exc_info=True)
                 failed_bet_types.append(bet_id)
         
         if failed_bet_types:
