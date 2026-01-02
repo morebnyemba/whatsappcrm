@@ -733,7 +733,7 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
                 else:
                     logger.debug(f"  - Bet type {bet_id}: No odds available")
             except Exception as e:
-                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {str(e)}")
+                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {str(e)}", exc_info=True)
         
         logger.info(f"API returned {len(all_odds_data)} total odds items across all bet types for fixture {fixture.id}")
         
