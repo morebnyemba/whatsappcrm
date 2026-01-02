@@ -2,18 +2,19 @@
 
 ## ⚠️ Important: API Provider Clarification
 
-**PR #56** added support for the **new API-Football v3** (api-football.com with dash) as the recommended provider. However, **the existing Celery tasks currently use the legacy APIFootball.com** (without dash) provider.
+**PR #56** added support for the **new API-Football v3** (api-football.com with dash) as the recommended provider. **NEW**: Robust production-ready tasks are now available!
 
 ### Current Status:
 - ✅ **New API Client Available**: `api_football_v3_client.py` for API-Football v3 (api-football.com)
-- ❌ **Tasks Not Yet Migrated**: The scheduled tasks in `tasks_apifootball.py` still use the legacy provider
-- 📖 **This Guide**: Documents the **legacy tasks** that are currently available
+- ✅ **New Tasks Created**: `tasks_api_football_v3.py` provides full-featured scheduled tasks
+- ⚙️ **Legacy Tasks Still Available**: Tasks in `tasks_apifootball.py` still use the legacy provider
+- 📖 **This Guide**: Documents **both** the new API-Football v3 tasks and legacy tasks
 
 ### Your Options:
 
-1. **Use Legacy Tasks (Documented Here)** - Works now but uses older API
-2. **Use New API-Football v3 Client Directly** - See [Using the New API-Football v3](#using-new-api-football-v3) section below
-3. **Wait for Task Migration** - Future update will migrate tasks to the new API
+1. **Use New API-Football v3 Tasks (RECOMMENDED)** - Production-ready tasks for the new API
+2. **Use Legacy Tasks** - Still works but uses older APIFootball.com API
+3. **Use API-Football v3 Client Directly** - For custom implementations
 
 For complete information about the new API-Football v3, see [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md).
 
@@ -57,7 +58,9 @@ The football tasks are located in:
 
 ## Using New API-Football v3 (Recommended)
 
-If you want to use the **new API-Football v3** (api-football.com with dash) instead of the legacy provider:
+✅ **NEW**: Robust production-ready tasks are now available for API-Football v3!
+
+The new tasks are located in `/whatsappcrm_backend/football_data_app/tasks_api_football_v3.py` and provide full feature parity with the legacy tasks.
 
 ### Step 1: Get API-Football v3 API Key
 
@@ -83,9 +86,94 @@ API_FOOTBALL_V3_CURRENT_SEASON=2024
    - API Key: `your_api_key_here`
    - Is Active: ✓ (checked)
 
-### Step 3: Use the Client Directly
+### Step 3: Initialize Leagues
 
-Since the scheduled tasks haven't been migrated yet, you can use the API-Football v3 client directly in your code:
+Run the setup command to populate leagues from API-Football v3:
+
+```bash
+# From outside the container (recommended)
+docker-compose exec backend python manage.py football_league_setup_v3
+
+# From inside the container
+python manage.py football_league_setup_v3
+```
+
+**What this does:**
+- Fetches leagues from API-Football v3 (api-football.com)
+- Creates leagues with `v3_` prefix to distinguish from legacy leagues
+- Safe to run multiple times (uses update_or_create)
+
+**Expected output:**
+```
+Starting the football league setup process with API-Football v3 (api-football.com)...
+Starting football leagues setup with API-Football v3 (api-football.com).
+Football leagues setup finished. Created: 150, Updated: 0.
+Football league setup process completed.
+```
+
+### Step 4: Schedule the New Tasks in Django Admin
+
+#### Task 1: Football Data Update (API-Football v3)
+
+1. Go to Django Admin → **DJANGO CELERY BEAT > Periodic Tasks**
+2. Click **"Add Periodic Task"**
+3. Fill in:
+   - **Name**: `Football Data Update (API-Football v3)`
+   - **Task (registered)**: `football_data_app.run_api_football_v3_full_update`
+   - **Interval**: Create new interval - Every `10` Minutes
+   - **Queue**: `football_data`
+   - **Enabled**: ✓ (checked)
+4. Click **Save**
+
+**What this task does:**
+- Fetches leagues from API-Football v3
+- Fetches upcoming fixtures (next 7 days)
+- Fetches betting odds from multiple bookmakers
+- Updates fixture and odds data automatically
+
+#### Task 2: Score and Settlement (API-Football v3)
+
+1. Click **"Add Periodic Task"** again
+2. Fill in:
+   - **Name**: `Score and Settlement (API-Football v3)`
+   - **Task (registered)**: `football_data_app.run_score_and_settlement_v3_task`
+   - **Interval**: Create new interval - Every `5` Minutes
+   - **Queue**: `football_data`
+   - **Enabled**: ✓ (checked)
+3. Click **Save**
+
+**What this task does:**
+- Fetches live scores and finished matches
+- Updates fixture statuses (LIVE → FINISHED)
+- Settles bets and tickets automatically
+- Sends WhatsApp notifications to customers
+
+### Step 5: Verify Tasks Are Running
+
+Check the logs to see tasks executing:
+
+```bash
+# View Celery Beat logs (scheduler)
+docker-compose logs -f celery_beat
+
+# View Football Worker logs (task execution)
+docker-compose logs -f celery_cpu_worker
+
+# View last 100 lines
+docker-compose logs --tail=100 celery_cpu_worker
+```
+
+**Look for entries like:**
+```
+[INFO] TASK START: run_api_football_v3_full_update_task
+[INFO] Received 150 leagues from API-Football v3 API
+[INFO] Processing 25 fixtures for league Premier League...
+[INFO] TASK END: run_api_football_v3_full_update_task - SUCCESS
+```
+
+### Using the Client Directly (Advanced)
+
+You can also use the API-Football v3 client directly in your code:
 
 ```python
 from football_data_app.api_football_v3_client import APIFootballV3Client
@@ -103,24 +191,7 @@ fixtures = client.get_fixtures(league_id=39, season=2024)  # Premier League
 odds = client.get_odds(fixture_id=12345)
 
 # Get live scores
-live_scores = client.get_live_scores()
-```
-
-### Step 4: Create Custom Tasks (Optional)
-
-You can create custom tasks using the new client. Example:
-
-```python
-from celery import shared_task
-from football_data_app.api_football_v3_client import APIFootballV3Client
-
-@shared_task(name="football_data_app.fetch_leagues_v3", queue='football_data')
-def fetch_leagues_v3():
-    """Fetch leagues using API-Football v3"""
-    client = APIFootballV3Client()
-    leagues = client.get_leagues()
-    # Process leagues...
-    return len(leagues)
+live_scores = client.get_live_fixtures()
 ```
 
 For complete documentation on the new API-Football v3 client, see [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md).
@@ -545,12 +616,22 @@ The task will stop being scheduled but remains configured for future use.
 - [ ] Monitor logs to ensure tasks are executing: `docker-compose logs -f celery_cpu_worker`
 - [ ] Check that fixtures and odds are being populated in the database
 
-### For New API-Football v3:
+### For New API-Football v3 Tasks (RECOMMENDED):
 - [ ] Get API key from [api-football.com](https://www.api-football.com/)
 - [ ] Configure API-Football v3 key in `.env`: `API_FOOTBALL_V3_KEY=your_key`
 - [ ] Set current season: `API_FOOTBALL_V3_CURRENT_SEASON=2024`
-- [ ] Test the client: Use `APIFootballV3Client` in Django shell
-- [ ] Create custom tasks using the new client (see examples above)
+- [ ] Run setup command: `docker-compose exec backend python manage.py football_league_setup_v3`
+- [ ] Verify leagues initialized (should have `v3_` prefix in api_id)
+- [ ] Ensure Celery workers are running: `docker-compose ps`
+- [ ] Create periodic task: **Football Data Update (API-Football v3)** (every 10 mins)
+  - Task name: `football_data_app.run_api_football_v3_full_update`
+  - Queue: `football_data`
+- [ ] Create periodic task: **Score and Settlement (API-Football v3)** (every 5 mins)
+  - Task name: `football_data_app.run_score_and_settlement_v3_task`
+  - Queue: `football_data`
+- [ ] Verify tasks are enabled in Django admin
+- [ ] Monitor logs: `docker-compose logs -f celery_cpu_worker`
+- [ ] Check fixtures and odds are being populated
 - [ ] Review [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md) for complete documentation
 
 ---
@@ -570,19 +651,23 @@ The task will stop being scheduled but remains configured for future use.
 
 For additional help:
 
+**New API-Football v3 Tasks:**
+1. Check task logs: `docker-compose logs celery_cpu_worker celery_beat`
+2. Verify leagues have `v3_` prefix: Check Django admin → Leagues
+3. Run setup command if needed: `docker-compose exec backend python manage.py football_league_setup_v3`
+4. See comprehensive guide: [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md)
+5. Check API-Football v3 documentation: https://www.api-football.com/documentation-v3
+6. Visit API dashboard: https://www.api-football.com/account
+7. Monitor API usage and remaining calls on your dashboard
+
 **Legacy APIFootball.com:**
 1. Check task logs: `docker-compose logs celery_cpu_worker celery_beat`
 2. Run system check: `docker-compose exec backend python manage.py check_football_setup`
 3. Review the [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) guide
 4. Check APIFootball.com API documentation: https://apifootball.com/documentation/
 
-**New API-Football v3:**
-1. See comprehensive guide: [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md)
-2. Check API-Football v3 documentation: https://www.api-football.com/documentation-v3
-3. Visit API dashboard: https://www.api-football.com/account
-4. Test client in Django shell: `from football_data_app.api_football_v3_client import APIFootballV3Client`
-
 **Remember**: 
-- Legacy tasks use **APIFootball.com** (without dash)
-- New client uses **API-Football v3** (with dash) at api-football.com
-- These are **two different services** with different API keys!
+- **New v3 tasks** use **API-Football v3** (with dash) at api-football.com - Task names: `run_api_football_v3_full_update`, `run_score_and_settlement_v3_task`
+- **Legacy tasks** use **APIFootball.com** (without dash) - Task names: `run_apifootball_full_update`, `run_score_and_settlement_task`
+- These are **two different services** with different API keys and task names!
+- Leagues from v3 have `v3_` prefix in their `api_id` field
