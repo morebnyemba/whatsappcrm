@@ -408,6 +408,8 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         
         logger.info(f"API returned {len(fixtures_data) if fixtures_data else 0} fixtures for league {league.name}")
         
+        fixture_ids_for_odds = []  # Track fixtures that need odds fetching
+        
         if fixtures_data:
             logger.info(f"Processing {len(fixtures_data)} fixtures for league {league.name}...")
             with transaction.atomic():
@@ -513,8 +515,21 @@ def fetch_events_for_league_v3_task(self, league_id: int):
                         logger.debug(f"Created fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id})")
                     else:
                         logger.debug(f"Updated fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id})")
+                    
+                    # Add fixture to odds fetching list if it's scheduled and upcoming
+                    if status == FootballFixture.FixtureStatus.SCHEDULED and match_datetime:
+                        fixture_ids_for_odds.append(fixture.id)
             
             logger.info(f"Successfully processed {events_processed_count} fixtures in database transaction")
+            
+            # Immediately dispatch odds fetching for scheduled fixtures
+            if fixture_ids_for_odds:
+                logger.info(f"Dispatching odds fetching tasks for {len(fixture_ids_for_odds)} scheduled fixtures...")
+                odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in fixture_ids_for_odds]
+                group(odds_tasks).apply_async()
+                logger.info(f"Successfully dispatched {len(odds_tasks)} odds fetching tasks")
+            else:
+                logger.info("No scheduled fixtures to fetch odds for")
         
         # Update league's last fetch timestamp
         league.last_fetched_events = timezone.now()
