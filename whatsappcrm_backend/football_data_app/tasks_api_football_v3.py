@@ -128,7 +128,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
     logger.info(f"Found {len(odds_data)} odds items to process")
     total_markets_created = 0
     total_outcomes_created = 0
-    total_bookmakers = 0
+    total_bookmakers_processed = 0
+    bookmakers_created = 0
     
     for odds_item in odds_data:
         bookmakers_list = odds_item.get('bookmakers', [])
@@ -143,9 +144,10 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 api_bookmaker_key=str(bookmaker_id) if bookmaker_id else bookmaker_name.lower().replace(' ', '_'),
                 defaults={'name': bookmaker_name}
             )
+            total_bookmakers_processed += 1
             if bookmaker_created:
                 logger.info(f"Created new bookmaker: {bookmaker_name}")
-                total_bookmakers += 1
+                bookmakers_created += 1
             
             # Process bets (markets)
             bets_list = bookmaker_data.get('bets', [])
@@ -222,7 +224,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 else:
                     logger.warning(f"No valid outcomes created for market '{bet_name}' from bookmaker {bookmaker_name}")
     
-    logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {total_bookmakers} new bookmakers, {total_markets_created} markets, {total_outcomes_created} outcomes")
+    logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {total_bookmakers_processed} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
 
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
@@ -534,9 +536,17 @@ def fetch_events_for_league_v3_task(self, league_id: int):
             # Immediately dispatch odds fetching for scheduled fixtures
             if fixture_ids_for_odds:
                 logger.info(f"Dispatching odds fetching tasks for {len(fixture_ids_for_odds)} scheduled fixtures...")
-                odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in fixture_ids_for_odds]
-                group(odds_tasks).apply_async()
-                logger.info(f"Successfully dispatched {len(odds_tasks)} odds fetching tasks")
+                try:
+                    # Batch tasks to avoid overwhelming the queue
+                    batch_size = 50
+                    for i in range(0, len(fixture_ids_for_odds), batch_size):
+                        batch = fixture_ids_for_odds[i:i + batch_size]
+                        odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in batch]
+                        group(odds_tasks).apply_async()
+                    logger.info(f"Successfully dispatched {len(fixture_ids_for_odds)} odds fetching tasks in batches")
+                except Exception as e:
+                    logger.error(f"Failed to dispatch odds fetching tasks: {e}", exc_info=True)
+                    # Don't fail the entire task if odds dispatching fails
             else:
                 logger.info("No scheduled fixtures to fetch odds for")
         
@@ -596,14 +606,14 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     logger.info(f"Criteria: SCHEDULED status, match_date in next {API_FOOTBALL_V3_LEAD_TIME_DAYS} days, odds older than {API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES} minutes")
     
     # Get fixtures that need odds updates (only v3 fixtures)
-    fixture_ids_to_update = list(FootballFixture.objects.filter(
+    fixture_ids_to_update = FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
         api_id__startswith='v3_'  # Only v3 fixtures
-    ).values_list('id', flat=True))
+    ).values_list('id', flat=True)
     
-    fixture_count = len(fixture_ids_to_update)
+    fixture_count = fixture_ids_to_update.count()
     
     # Log more details about what we found
     total_scheduled = FootballFixture.objects.filter(
