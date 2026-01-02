@@ -31,6 +31,10 @@ API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES = getattr(settings, 'API_FOOTBALL_V3_
 API_FOOTBALL_V3_MAX_EVENT_RETRIES = getattr(settings, 'API_FOOTBALL_V3_MAX_EVENT_RETRIES', 3)
 API_FOOTBALL_V3_EVENT_RETRY_DELAY = getattr(settings, 'API_FOOTBALL_V3_EVENT_RETRY_DELAY', 300)
 
+# Bet types to fetch from API-Football v3
+# Note: Bet ID 6 is skipped as it's reserved but not commonly documented
+API_FOOTBALL_BET_IDS = [1, 2, 3, 4, 5, 7, 8, 9]
+
 # Setup command reference for consistent messaging
 LEAGUE_SETUP_COMMAND = "python manage.py football_league_setup_v3"
 LEAGUE_SETUP_COMMAND_DOCKER = "docker-compose exec backend python manage.py football_league_setup_v3"
@@ -714,10 +718,27 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         
         client = APIFootballV3Client()
         
-        logger.debug(f"Calling APIFootballV3Client.get_odds(fixture_id={api_fixture_id})...")
-        odds_data = client.get_odds(fixture_id=api_fixture_id)
+        # Fetch odds for all supported bet types
+        logger.info(f"Fetching odds for fixture {api_fixture_id} across {len(API_FOOTBALL_BET_IDS)} bet types...")
+        all_odds_data = []
         
-        logger.info(f"API returned {len(odds_data) if odds_data else 0} odds items for fixture {fixture.id}")
+        for bet_id in API_FOOTBALL_BET_IDS:
+            try:
+                logger.debug(f"Fetching bet type {bet_id} for fixture {api_fixture_id}...")
+                bet_odds = client.get_odds(fixture_id=api_fixture_id, bet_id=bet_id)
+                
+                if bet_odds:
+                    logger.info(f"  ✓ Bet type {bet_id}: {len(bet_odds)} odds items returned")
+                    all_odds_data.extend(bet_odds)
+                else:
+                    logger.debug(f"  - Bet type {bet_id}: No odds available")
+            except Exception as e:
+                logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {str(e)}")
+                # Continue with other bet types even if one fails
+                continue
+        
+        odds_data = all_odds_data
+        logger.info(f"API returned {len(odds_data)} total odds items across all bet types for fixture {fixture.id}")
         
         if not odds_data:
             logger.info(f"No odds data returned from API for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
