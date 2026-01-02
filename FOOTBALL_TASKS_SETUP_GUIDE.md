@@ -1,18 +1,38 @@
 # Football Tasks Setup Guide
 
+## ⚠️ Important: API Provider Clarification
+
+**PR #56** added support for the **new API-Football v3** (api-football.com with dash) as the recommended provider. However, **the existing Celery tasks currently use the legacy APIFootball.com** (without dash) provider.
+
+### Current Status:
+- ✅ **New API Client Available**: `api_football_v3_client.py` for API-Football v3 (api-football.com)
+- ❌ **Tasks Not Yet Migrated**: The scheduled tasks in `tasks_apifootball.py` still use the legacy provider
+- 📖 **This Guide**: Documents the **legacy tasks** that are currently available
+
+### Your Options:
+
+1. **Use Legacy Tasks (Documented Here)** - Works now but uses older API
+2. **Use New API-Football v3 Client Directly** - See [Using the New API-Football v3](#using-new-api-football-v3) section below
+3. **Wait for Task Migration** - Future update will migrate tasks to the new API
+
+For complete information about the new API-Football v3, see [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md).
+
+---
+
 ## Overview
 
 This guide answers the question: **"Where are the tasks and how do I schedule the tasks for football from implementation #56 and what's the first time command?"**
 
 This comprehensive guide covers:
-1. Where the football tasks are located
+1. Where the football tasks are located (currently using legacy provider)
 2. The first-time setup command you need to run
 3. How to schedule tasks for automatic execution
-4. Verification and troubleshooting
+4. How to use the new API-Football v3 client
+5. Verification and troubleshooting
 
 ---
 
-## Quick Answer
+## Quick Answer (Legacy Tasks)
 
 ### 🎯 First Time Command (REQUIRED)
 
@@ -35,7 +55,79 @@ The football tasks are located in:
 
 ---
 
-## Complete Setup Workflow
+## Using New API-Football v3 (Recommended)
+
+If you want to use the **new API-Football v3** (api-football.com with dash) instead of the legacy provider:
+
+### Step 1: Get API-Football v3 API Key
+
+1. Visit [api-football.com](https://www.api-football.com/)
+2. Sign up for an account
+3. Get your API key from the dashboard
+4. Note: This is a **different service** from apifootball.com (without dash)
+
+### Step 2: Configure API-Football v3
+
+Add to your `.env` file:
+
+```env
+API_FOOTBALL_V3_KEY=your_api_key_here
+API_FOOTBALL_V3_CURRENT_SEASON=2024
+```
+
+**Or** configure via Django Admin:
+1. Go to http://your-domain/admin/
+2. Navigate to **Football Data App > Configurations**
+3. Add a new Configuration:
+   - Provider Name: `API-Football` (with dash)
+   - API Key: `your_api_key_here`
+   - Is Active: ✓ (checked)
+
+### Step 3: Use the Client Directly
+
+Since the scheduled tasks haven't been migrated yet, you can use the API-Football v3 client directly in your code:
+
+```python
+from football_data_app.api_football_v3_client import APIFootballV3Client
+
+# Initialize client
+client = APIFootballV3Client()
+
+# Get leagues
+leagues = client.get_leagues()
+
+# Get fixtures for a league
+fixtures = client.get_fixtures(league_id=39, season=2024)  # Premier League
+
+# Get odds
+odds = client.get_odds(fixture_id=12345)
+
+# Get live scores
+live_scores = client.get_live_scores()
+```
+
+### Step 4: Create Custom Tasks (Optional)
+
+You can create custom tasks using the new client. Example:
+
+```python
+from celery import shared_task
+from football_data_app.api_football_v3_client import APIFootballV3Client
+
+@shared_task(name="football_data_app.fetch_leagues_v3", queue='football_data')
+def fetch_leagues_v3():
+    """Fetch leagues using API-Football v3"""
+    client = APIFootballV3Client()
+    leagues = client.get_leagues()
+    # Process leagues...
+    return len(leagues)
+```
+
+For complete documentation on the new API-Football v3 client, see [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md).
+
+---
+
+## Complete Setup Workflow (Legacy Tasks)
 
 ### Step 1: Configure API Key
 
@@ -198,7 +290,7 @@ docker-compose logs --tail=100 celery_cpu_worker
 
 ---
 
-## Task Details
+## Task Details (Legacy APIFootball.com)
 
 ### Task 1: run_apifootball_full_update
 
@@ -442,7 +534,8 @@ The task will stop being scheduled but remains configured for future use.
 
 ## Summary Checklist
 
-- [ ] Configure APIFootball.com API key in `.env` or Django admin
+### For Legacy APIFootball.com Tasks:
+- [ ] Configure APIFootball.com API key in `.env` or Django admin (provider: `APIFootball`)
 - [ ] Run first-time setup: `docker-compose exec backend python manage.py football_league_setup`
 - [ ] Verify leagues were initialized: Check admin or run `check_football_setup`
 - [ ] Ensure Celery workers are running: `docker-compose ps`
@@ -452,10 +545,19 @@ The task will stop being scheduled but remains configured for future use.
 - [ ] Monitor logs to ensure tasks are executing: `docker-compose logs -f celery_cpu_worker`
 - [ ] Check that fixtures and odds are being populated in the database
 
+### For New API-Football v3:
+- [ ] Get API key from [api-football.com](https://www.api-football.com/)
+- [ ] Configure API-Football v3 key in `.env`: `API_FOOTBALL_V3_KEY=your_key`
+- [ ] Set current season: `API_FOOTBALL_V3_CURRENT_SEASON=2024`
+- [ ] Test the client: Use `APIFootballV3Client` in Django shell
+- [ ] Create custom tasks using the new client (see examples above)
+- [ ] Review [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md) for complete documentation
+
 ---
 
 ## Related Documentation
 
+- [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md) - **New API-Football v3 complete guide**
 - [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) - Detailed periodic task configuration
 - [GETTING_STARTED.md](GETTING_STARTED.md) - Complete deployment guide
 - [README.md](README.md) - Project overview and architecture
@@ -467,9 +569,20 @@ The task will stop being scheduled but remains configured for future use.
 ## Support
 
 For additional help:
+
+**Legacy APIFootball.com:**
 1. Check task logs: `docker-compose logs celery_cpu_worker celery_beat`
 2. Run system check: `docker-compose exec backend python manage.py check_football_setup`
 3. Review the [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) guide
 4. Check APIFootball.com API documentation: https://apifootball.com/documentation/
 
-**Remember**: Always run `football_league_setup` command before scheduling tasks!
+**New API-Football v3:**
+1. See comprehensive guide: [API_FOOTBALL_V3_INTEGRATION.md](API_FOOTBALL_V3_INTEGRATION.md)
+2. Check API-Football v3 documentation: https://www.api-football.com/documentation-v3
+3. Visit API dashboard: https://www.api-football.com/account
+4. Test client in Django shell: `from football_data_app.api_football_v3_client import APIFootballV3Client`
+
+**Remember**: 
+- Legacy tasks use **APIFootball.com** (without dash)
+- New client uses **API-Football v3** (with dash) at api-football.com
+- These are **two different services** with different API keys!
