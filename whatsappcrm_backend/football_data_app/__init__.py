@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 # These tasks are for the new API-Football v3 provider (api-football.com)
 try:
     from .tasks_api_football_v3 import (
-        run_api_football_v3_full_update,
+        run_api_football_v3_full_update_task,
         fetch_and_update_leagues_v3_task,
         fetch_events_for_league_v3_task,
         fetch_odds_for_single_event_v3_task,
