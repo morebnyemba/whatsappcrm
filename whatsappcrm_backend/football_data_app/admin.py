@@ -26,7 +26,7 @@ class LeagueAdmin(admin.ModelAdmin):
         }),
         ('Season & Status', {
             'fields': ('league_season', 'active'),
-            'description': 'The league_season field is editable. You can manually update the season here.'
+            'description': 'Season format: YYYY or YYYY/YYYY (e.g., 2024 or 2023/2024). Set active=False to exclude from updates.'
         }),
         ('Additional Details', {
             'fields': ('logo_url', 'country_id', 'country_name', 'api_description'),

@@ -11,10 +11,19 @@ class FootballDataAppConfig(AppConfig):
         Import tasks when the app is ready to ensure they are registered with Celery.
         This is crucial for tasks to appear in Django admin's periodic task dropdown.
         """
+        # Import tasks to ensure they're registered with Celery
+        # Each import is individually wrapped to handle missing modules gracefully
         try:
-            # Import tasks to ensure they're registered with Celery
             from . import tasks  # noqa: F401
+        except ImportError:
+            pass
+        
+        try:
             from . import tasks_apifootball  # noqa: F401
+        except ImportError:
+            pass
+        
+        try:
             from . import tasks_api_football_v3  # noqa: F401
         except ImportError:
             pass
