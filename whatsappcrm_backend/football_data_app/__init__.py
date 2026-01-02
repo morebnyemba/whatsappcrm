@@ -13,6 +13,9 @@ try:
         fetch_and_update_leagues_v3_task,
         fetch_events_for_league_v3_task,
         fetch_odds_for_single_event_v3_task,
+        # Note: _prepare_and_launch_event_odds_chord_v3 is imported despite being "private"
+        # because it's a @shared_task that's called via .s() signature in chains/chords
+        # and must be registered with Celery for proper task routing
         _prepare_and_launch_event_odds_chord_v3,
         dispatch_odds_fetching_after_events_v3_task,
         run_score_and_settlement_v3_task,
