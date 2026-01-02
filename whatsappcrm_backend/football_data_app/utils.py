@@ -53,7 +53,6 @@ def get_formatted_football_data(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
-        
         fixtures_qs = FootballFixture.objects.filter(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
