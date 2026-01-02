@@ -24,7 +24,7 @@ try:
     logger.debug("Successfully imported API-Football v3 tasks")
 except ImportError as e:
     logger.warning(f"Could not import API-Football v3 tasks: {e}. "
-                   "This is expected if dependencies are not installed yet.")
+                   f"This is expected if dependencies are not installed yet.")
 
 # Import tasks from tasks.py (which re-exports from tasks_apifootball.py)
 # These tasks are for the legacy provider compatibility
@@ -42,4 +42,4 @@ try:
     logger.debug("Successfully imported legacy football tasks")
 except ImportError as e:
     logger.warning(f"Could not import legacy football tasks: {e}. "
-                   "This is expected if dependencies are not installed yet.")
+                   f"This is expected if dependencies are not installed yet.")
