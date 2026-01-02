@@ -1,8 +1,9 @@
 # Import all tasks to make them discoverable by Celery autodiscovery
 # This ensures tasks from both legacy and new API-Football v3 implementations are registered
 
-# Import tasks for Celery autodiscovery
-default_app_config = 'football_data_app.apps.FootballDataAppConfig'
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import tasks from tasks_api_football_v3.py to ensure they are registered
 # These tasks are for the new API-Football v3 provider (api-football.com)
@@ -17,8 +18,10 @@ try:
         run_score_and_settlement_v3_task,
         fetch_scores_for_league_v3_task,
     )
-except ImportError:
-    pass  # Tasks may not be available in all environments
+    logger.debug("Successfully imported API-Football v3 tasks")
+except ImportError as e:
+    logger.warning(f"Could not import API-Football v3 tasks: {e}. "
+                   "This is expected if dependencies are not installed yet.")
 
 # Import tasks from tasks.py (which re-exports from tasks_apifootball.py)
 # These tasks are for the legacy provider compatibility
@@ -33,5 +36,8 @@ try:
         run_score_and_settlement_task,
         fetch_scores_for_league_task,
     )
-except ImportError:
-    pass  # Tasks may not be available in all environments
+    logger.debug("Successfully imported legacy football tasks")
+except ImportError as e:
+    logger.warning(f"Could not import legacy football tasks: {e}. "
+                   "This is expected if dependencies are not installed yet.")
+
