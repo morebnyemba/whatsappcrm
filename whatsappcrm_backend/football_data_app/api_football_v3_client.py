@@ -13,6 +13,22 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
+# Import rate limiter
+try:
+    from .rate_limiter import rate_limit, check_rate_limit_status
+    RATE_LIMITER_AVAILABLE = True
+    logger.info("Rate limiter imported successfully")
+except ImportError as e:
+    logger.warning(f"Rate limiter not available: {e}. API calls will not be rate limited.")
+    RATE_LIMITER_AVAILABLE = False
+    # Create a no-op decorator if rate limiter is not available
+    def rate_limit(wait=True):
+        def decorator(func):
+            return func
+        return decorator
+    def check_rate_limit_status():
+        return {"status": "Rate limiter not available"}
+
 # API-Football v3 base URL
 API_FOOTBALL_V3_BASE_URL = "https://v3.football.api-sports.io"
 DEFAULT_TIMEOUT = 30
@@ -96,14 +112,28 @@ class APIFootballV3Client:
         }
     
     def _request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """Internal method to handle all API requests with retry logic."""
+        """Internal method to handle all API requests with retry logic and rate limiting."""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         
         # Log the request without the API key
         logger.info(f"API-Football v3 Request: URL='{url}', Params={params}")
         
+        # Log rate limit status before making request
+        if RATE_LIMITER_AVAILABLE:
+            rate_status = check_rate_limit_status()
+            logger.debug(
+                f"Rate limit status: {rate_status['requests_made']}/{rate_status['max_requests']} "
+                f"({rate_status['percentage_used']:.1f}% used)"
+            )
+        
         for attempt in range(MAX_RETRIES):
             try:
+                # Apply rate limiting before making the request
+                if RATE_LIMITER_AVAILABLE:
+                    from .rate_limiter import get_rate_limiter
+                    limiter = get_rate_limiter()
+                    limiter.acquire(wait=True)  # Wait if rate limit is reached
+                
                 response = requests.get(
                     url,
                     params=params,
@@ -113,9 +143,12 @@ class APIFootballV3Client:
                 
                 # Check for rate limiting or error responses
                 if response.status_code == 429:
-                    logger.warning(f"Rate limit reached. Attempt {attempt + 1}/{MAX_RETRIES}")
+                    logger.warning(f"API rate limit reached (429). Attempt {attempt + 1}/{MAX_RETRIES}")
                     if attempt < MAX_RETRIES - 1:
-                        time.sleep(RETRY_DELAY * (attempt + 1))
+                        # Wait longer when API itself returns 429
+                        wait_time = RETRY_DELAY * (attempt + 1) * 2
+                        logger.info(f"Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
                         continue
                 
                 response.raise_for_status()

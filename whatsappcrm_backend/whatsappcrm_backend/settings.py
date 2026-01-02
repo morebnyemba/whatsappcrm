@@ -330,6 +330,15 @@ JAZZMIN_UI_TWEAKS = {
 API_FOOTBALL_V3_KEY = os.environ.get('API_FOOTBALL_V3_KEY')
 API_FOOTBALL_V3_CURRENT_SEASON = int(os.environ.get('API_FOOTBALL_V3_CURRENT_SEASON', '2024'))
 
+# API-Football v3 Rate Limiting
+# Maximum requests per minute to api-football.com (default: 300)
+# Adjust based on your subscription plan:
+# - Free: 100 req/day, 10 req/min
+# - Basic: 3000 req/day, 30 req/min
+# - Pro: 30000 req/day, 100 req/min
+# - Ultra: 300000 req/day, 300 req/min
+API_FOOTBALL_MAX_REQUESTS_PER_MINUTE = int(os.environ.get('API_FOOTBALL_MAX_REQUESTS_PER_MINUTE', '300'))
+
 # API-Football v3 Operational Parameters
 API_FOOTBALL_V3_LEAD_TIME_DAYS = 7  # How many days ahead to fetch fixtures
 API_FOOTBALL_V3_EVENT_DISCOVERY_STALENESS_HOURS = 6  # Hours before refetching events

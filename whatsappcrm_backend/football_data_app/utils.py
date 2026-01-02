@@ -101,23 +101,47 @@ def get_formatted_football_data(
 
             market_lines: List[str] = []
 
-            # 1. Format H2H (Match Winner)
-            if 'h2h' in aggregated_outcomes:
-                h2h_outcomes = aggregated_outcomes['h2h']
-                home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-")
-                draw_odds = h2h_outcomes.get('Draw-')
-                away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-")
+            # 1. Format H2H (Match Winner / 1X2)
+            if 'h2h' in aggregated_outcomes or '1x2' in aggregated_outcomes or 'match_winner' in aggregated_outcomes:
+                # Try different possible keys for match winner market
+                h2h_outcomes = (aggregated_outcomes.get('h2h') or 
+                               aggregated_outcomes.get('1x2') or 
+                               aggregated_outcomes.get('match_winner') or {})
+                
+                home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-") or h2h_outcomes.get('Home-') or h2h_outcomes.get('1-')
+                draw_odds = h2h_outcomes.get('Draw-') or h2h_outcomes.get('X-')
+                away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-") or h2h_outcomes.get('Away-') or h2h_outcomes.get('2-')
                 
                 h2h_parts = []
-                if home_odds: h2h_parts.append(f"  - {fixture.home_team.name}: *{home_odds.odds:.2f}*")
-                if draw_odds: h2h_parts.append(f"  - Draw: *{draw_odds.odds:.2f}*")
-                if away_odds: h2h_parts.append(f"  - {fixture.away_team.name}: *{away_odds.odds:.2f}*")
+                if home_odds: h2h_parts.append(f"  - {fixture.home_team.name}: *{home_odds.odds:.2f}* (ID: {home_odds.id})")
+                if draw_odds: h2h_parts.append(f"  - Draw: *{draw_odds.odds:.2f}* (ID: {draw_odds.id})")
+                if away_odds: h2h_parts.append(f"  - {fixture.away_team.name}: *{away_odds.odds:.2f}* (ID: {away_odds.id})")
                 
                 if h2h_parts:
-                    market_lines.append("\n*Match Winner (H2H):*\n" + "\n".join(h2h_parts))
+                    market_lines.append("\n*Match Winner (1X2):*\n" + "\n".join(h2h_parts))
 
-            # 2. Format Totals (Over/Under), combining 'totals' and 'alternate_totals'
-            all_totals_outcomes = {**aggregated_outcomes.get('totals', {}), **aggregated_outcomes.get('alternate_totals', {})}
+            # 2. Format Double Chance
+            if 'double_chance' in aggregated_outcomes or 'doublechance' in aggregated_outcomes:
+                dc_outcomes = aggregated_outcomes.get('double_chance') or aggregated_outcomes.get('doublechance') or {}
+                
+                home_draw = dc_outcomes.get('Home/Draw-') or dc_outcomes.get('1X-')
+                home_away = dc_outcomes.get('Home/Away-') or dc_outcomes.get('12-')
+                draw_away = dc_outcomes.get('Draw/Away-') or dc_outcomes.get('X2-')
+                
+                dc_parts = []
+                if home_draw: dc_parts.append(f"  - Home/Draw (1X): *{home_draw.odds:.2f}* (ID: {home_draw.id})")
+                if home_away: dc_parts.append(f"  - Home/Away (12): *{home_away.odds:.2f}* (ID: {home_away.id})")
+                if draw_away: dc_parts.append(f"  - Draw/Away (X2): *{draw_away.odds:.2f}* (ID: {draw_away.id})")
+                
+                if dc_parts:
+                    market_lines.append("\n*Double Chance:*\n" + "\n".join(dc_parts))
+
+            # 3. Format Totals (Over/Under), combining 'totals', 'alternate_totals', 'goals_over_under'
+            all_totals_outcomes = {
+                **aggregated_outcomes.get('totals', {}), 
+                **aggregated_outcomes.get('alternate_totals', {}),
+                **aggregated_outcomes.get('goals_over_under', {})
+            }
             if all_totals_outcomes:
                 totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
                 for outcome in all_totals_outcomes.values():
@@ -131,28 +155,110 @@ def get_formatted_football_data(
 
                 sorted_points = sorted(totals_by_point.keys())
                 totals_parts = []
-                for point in sorted_points:
+                # Show up to 3 most common lines
+                for point in sorted_points[:3]:
                     over_outcome = totals_by_point[point].get('over')
                     under_outcome = totals_by_point[point].get('under')
-                    over_str = f"Over {point:.1f}: *{over_outcome.odds:.2f}*" if over_outcome else ""
-                    under_str = f"Under {point:.1f}: *{under_outcome.odds:.2f}*" if under_outcome else ""
-                    point_line = " | ".join(filter(None, [over_str, under_str]))
-                    if point_line:
-                        totals_parts.append(f"  - {point_line}")
+                    over_str = f"Over {point:.1f}: *{over_outcome.odds:.2f}* (ID: {over_outcome.id})" if over_outcome else ""
+                    under_str = f"Under {point:.1f}: *{under_outcome.odds:.2f}* (ID: {under_outcome.id})" if under_outcome else ""
+                    if over_str and under_str:
+                        totals_parts.append(f"  - {over_str}")
+                        totals_parts.append(f"  - {under_str}")
+                    elif over_str or under_str:
+                        totals_parts.append(f"  - {over_str or under_str}")
 
                 if totals_parts:
                     market_lines.append("\n*Total Goals (Over/Under):*\n" + "\n".join(totals_parts))
 
-            # 3. Format BTTS
-            if 'btts' in aggregated_outcomes:
-                btts_outcomes = aggregated_outcomes['btts']
-                yes_odds = btts_outcomes.get('Yes-')
-                no_odds = btts_outcomes.get('No-')
+            # 4. Format BTTS (Both Teams To Score)
+            if 'btts' in aggregated_outcomes or 'both_teams_score' in aggregated_outcomes:
+                btts_outcomes = aggregated_outcomes.get('btts') or aggregated_outcomes.get('both_teams_score') or {}
+                yes_odds = btts_outcomes.get('Yes-') or btts_outcomes.get('Both Teams Score-')
+                no_odds = btts_outcomes.get('No-') or btts_outcomes.get('Not Both Teams Score-')
                 btts_parts = []
-                if yes_odds: btts_parts.append(f"  - Yes: *{yes_odds.odds:.2f}*")
-                if no_odds: btts_parts.append(f"  - No: *{no_odds.odds:.2f}*")
+                if yes_odds: btts_parts.append(f"  - Yes: *{yes_odds.odds:.2f}* (ID: {yes_odds.id})")
+                if no_odds: btts_parts.append(f"  - No: *{no_odds.odds:.2f}* (ID: {no_odds.id})")
                 if btts_parts:
                     market_lines.append("\n*Both Teams To Score:*\n" + "\n".join(btts_parts))
+
+            # 5. Format Draw No Bet
+            if 'draw_no_bet' in aggregated_outcomes or 'drawnob' in aggregated_outcomes:
+                dnb_outcomes = aggregated_outcomes.get('draw_no_bet') or aggregated_outcomes.get('drawnob') or {}
+                home_dnb = dnb_outcomes.get(f"{fixture.home_team.name}-") or dnb_outcomes.get('Home-')
+                away_dnb = dnb_outcomes.get(f"{fixture.away_team.name}-") or dnb_outcomes.get('Away-')
+                
+                dnb_parts = []
+                if home_dnb: dnb_parts.append(f"  - {fixture.home_team.name}: *{home_dnb.odds:.2f}* (ID: {home_dnb.id})")
+                if away_dnb: dnb_parts.append(f"  - {fixture.away_team.name}: *{away_dnb.odds:.2f}* (ID: {away_dnb.id})")
+                
+                if dnb_parts:
+                    market_lines.append("\n*Draw No Bet:*\n" + "\n".join(dnb_parts))
+
+            # 6. Format Asian Handicap (show most popular line)
+            if 'handicap' in aggregated_outcomes or 'asian_handicap' in aggregated_outcomes or 'spreads' in aggregated_outcomes:
+                handicap_outcomes = (aggregated_outcomes.get('handicap') or 
+                                    aggregated_outcomes.get('asian_handicap') or 
+                                    aggregated_outcomes.get('spreads') or {})
+                
+                # Group by point value
+                handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+                for outcome in handicap_outcomes.values():
+                    if outcome.point_value is not None:
+                        if outcome.point_value not in handicap_by_point:
+                            handicap_by_point[outcome.point_value] = {}
+                        # Identify home vs away handicap
+                        if fixture.home_team.name in outcome.outcome_name or 'Home' in outcome.outcome_name:
+                            handicap_by_point[outcome.point_value]['home'] = outcome
+                        elif fixture.away_team.name in outcome.outcome_name or 'Away' in outcome.outcome_name:
+                            handicap_by_point[outcome.point_value]['away'] = outcome
+                
+                if handicap_by_point:
+                    # Show the line closest to 0 (most balanced)
+                    closest_line = min(handicap_by_point.keys(), key=lambda x: abs(x))
+                    home_hcp = handicap_by_point[closest_line].get('home')
+                    away_hcp = handicap_by_point[closest_line].get('away')
+                    
+                    hcp_parts = []
+                    if home_hcp:
+                        sign = '+' if closest_line >= 0 else ''
+                        hcp_parts.append(f"  - {fixture.home_team.name} ({sign}{closest_line}): *{home_hcp.odds:.2f}* (ID: {home_hcp.id})")
+                    if away_hcp:
+                        opposite_line = -closest_line
+                        sign = '+' if opposite_line >= 0 else ''
+                        hcp_parts.append(f"  - {fixture.away_team.name} ({sign}{opposite_line}): *{away_hcp.odds:.2f}* (ID: {away_hcp.id})")
+                    
+                    if hcp_parts:
+                        market_lines.append("\n*Asian Handicap:*\n" + "\n".join(hcp_parts))
+
+            # 7. Format Correct Score (show top 3-4 most likely scores)
+            if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
+                cs_outcomes = aggregated_outcomes.get('correct_score') or aggregated_outcomes.get('correctscore') or {}
+                
+                # Sort by odds (lower odds = more likely)
+                sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:4]
+                
+                cs_parts = []
+                for score_key, outcome in sorted_scores:
+                    cs_parts.append(f"  - {outcome.outcome_name}: *{outcome.odds:.2f}* (ID: {outcome.id})")
+                
+                if cs_parts:
+                    market_lines.append("\n*Correct Score (Top Picks):*\n" + "\n".join(cs_parts))
+
+            # 8. Format Odd/Even Goals
+            if 'odd_even' in aggregated_outcomes or 'oddeven' in aggregated_outcomes or 'goals_odd_even' in aggregated_outcomes:
+                oe_outcomes = (aggregated_outcomes.get('odd_even') or 
+                              aggregated_outcomes.get('oddeven') or 
+                              aggregated_outcomes.get('goals_odd_even') or {})
+                
+                odd_outcome = oe_outcomes.get('Odd-')
+                even_outcome = oe_outcomes.get('Even-')
+                
+                oe_parts = []
+                if odd_outcome: oe_parts.append(f"  - Odd: *{odd_outcome.odds:.2f}* (ID: {odd_outcome.id})")
+                if even_outcome: oe_parts.append(f"  - Even: *{even_outcome.odds:.2f}* (ID: {even_outcome.id})")
+                
+                if oe_parts:
+                    market_lines.append("\n*Odd/Even Goals:*\n" + "\n".join(oe_parts))
             
             if market_lines:
                 line += "\n" + "\n".join(market_lines)
