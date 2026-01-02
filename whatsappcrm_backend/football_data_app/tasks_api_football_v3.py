@@ -119,17 +119,20 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
         ]
     }
     """
-    logger.debug(f"Processing odds data for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
+    logger.info(f"Processing odds data for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
     
     if not odds_data:
-        logger.debug(f"No odds data provided for fixture {fixture.id}")
+        logger.warning(f"No odds data provided for fixture {fixture.id}")
         return
     
+    logger.info(f"Found {len(odds_data)} odds items to process")
     total_markets_created = 0
     total_outcomes_created = 0
+    total_bookmakers = 0
     
     for odds_item in odds_data:
         bookmakers_list = odds_item.get('bookmakers', [])
+        logger.info(f"Processing {len(bookmakers_list)} bookmakers for fixture {fixture.id}")
         
         for bookmaker_data in bookmakers_list:
             bookmaker_name = bookmaker_data.get('name', 'Unknown')
@@ -141,10 +144,14 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 defaults={'name': bookmaker_name}
             )
             if bookmaker_created:
-                logger.debug(f"Created new bookmaker: {bookmaker_name}")
+                logger.info(f"Created new bookmaker: {bookmaker_name}")
+                total_bookmakers += 1
             
             # Process bets (markets)
-            for bet_data in bookmaker_data.get('bets', []):
+            bets_list = bookmaker_data.get('bets', [])
+            logger.debug(f"Processing {len(bets_list)} markets for bookmaker {bookmaker_name}")
+            
+            for bet_data in bets_list:
                 bet_name = bet_data.get('name', 'Unknown Market')
                 bet_id = bet_data.get('id')
                 
@@ -212,8 +219,10 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     MarketOutcome.objects.bulk_create(outcomes_to_create)
                     total_outcomes_created += len(outcomes_to_create)
                     logger.debug(f"Created market '{bet_name}' with {len(outcomes_to_create)} outcomes for bookmaker {bookmaker_name}")
+                else:
+                    logger.warning(f"No valid outcomes created for market '{bet_name}' from bookmaker {bookmaker_name}")
     
-    logger.debug(f"Odds processing complete for fixture {fixture.id}: {total_markets_created} markets, {total_outcomes_created} outcomes")
+    logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {total_bookmakers} new bookmakers, {total_markets_created} markets, {total_outcomes_created} outcomes")
 
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
@@ -587,14 +596,23 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     logger.info(f"Criteria: SCHEDULED status, match_date in next {API_FOOTBALL_V3_LEAD_TIME_DAYS} days, odds older than {API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES} minutes")
     
     # Get fixtures that need odds updates (only v3 fixtures)
-    fixture_ids_to_update = FootballFixture.objects.filter(
+    fixture_ids_to_update = list(FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
         api_id__startswith='v3_'  # Only v3 fixtures
-    ).values_list('id', flat=True)
+    ).values_list('id', flat=True))
     
     fixture_count = len(fixture_ids_to_update)
+    
+    # Log more details about what we found
+    total_scheduled = FootballFixture.objects.filter(
+        status=FootballFixture.FixtureStatus.SCHEDULED,
+        match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
+        api_id__startswith='v3_'
+    ).count()
+    logger.info(f"Total scheduled v3 fixtures in date range: {total_scheduled}")
+    logger.info(f"Fixtures needing odds update: {fixture_count}")
     
     if not fixture_ids_to_update:
         logger.info("No fixtures require an odds update at this time.")
@@ -645,14 +663,16 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         logger.debug(f"Calling APIFootballV3Client.get_odds(fixture_id={api_fixture_id})...")
         odds_data = client.get_odds(fixture_id=api_fixture_id)
         
+        logger.info(f"API returned {len(odds_data) if odds_data else 0} odds items for fixture {fixture.id}")
+        
         if not odds_data:
-            logger.info(f"No odds data returned from API for fixture {fixture.id}")
+            logger.info(f"No odds data returned from API for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
             fixture.last_odds_update = timezone.now()
             fixture.save(update_fields=['last_odds_update'])
             logger.info(f"TASK END: fetch_odds_for_single_event_v3_task - No odds available")
             return {"fixture_id": fixture.id, "status": "no_odds_data"}
         
-        logger.debug(f"Odds data received, processing...")
+        logger.info(f"Processing odds data for fixture {fixture.id}...")
         with transaction.atomic():
             fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
             
