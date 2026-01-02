@@ -265,6 +265,41 @@ def get_formatted_football_data(
                 if oe_parts:
                     market_lines.append("\n*Odd/Even Goals:*\n" + "\n".join(oe_parts))
             
+            # 9. Format any OTHER bet types not covered above (e.g., Halftime/Fulltime, etc.)
+            # These are bet types saved with generic keys like "bet_10", "bet_11", etc.
+            known_market_keys = {
+                'h2h', '1x2', 'match_winner',
+                'double_chance', 'doublechance',
+                'totals', 'alternate_totals', 'goals_over_under',
+                'btts', 'both_teams_score',
+                'draw_no_bet', 'drawnob',
+                'handicap', 'asian_handicap', 'spreads',
+                'correct_score', 'correctscore',
+                'odd_even', 'oddeven', 'goals_odd_even'
+            }
+            
+            for market_key, outcomes_dict in aggregated_outcomes.items():
+                if market_key not in known_market_keys and outcomes_dict:
+                    # Format the market name from the key
+                    market_name = market_key.replace('_', ' ').title()
+                    if market_key.startswith('bet_'):
+                        # Get a better name from the actual market category if available
+                        # Use the first outcome's market to get category name
+                        first_outcome = next(iter(outcomes_dict.values()))
+                        if hasattr(first_outcome, 'market') and hasattr(first_outcome.market, 'category'):
+                            market_name = first_outcome.market.category.name
+                    
+                    other_parts = []
+                    for outcome in outcomes_dict.values():
+                        other_parts.append(f"  - {outcome.outcome_name}: *{outcome.odds:.2f}* (ID: {outcome.id})")
+                    
+                    if other_parts:
+                        # Limit to first 10 outcomes to avoid message overflow
+                        if len(other_parts) > 10:
+                            other_parts = other_parts[:10]
+                            other_parts.append(f"  _... and {len(outcomes_dict) - 10} more options_")
+                        market_lines.append(f"\n*{market_name}:*\n" + "\n".join(other_parts))
+            
             if market_lines:
                 line += "\n" + "\n".join(market_lines)
             else:
