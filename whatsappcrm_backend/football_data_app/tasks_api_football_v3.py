@@ -171,7 +171,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 elif 'Draw No Bet' in bet_name or bet_id == 4:
                     category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
                     api_market_key = 'draw_no_bet'
-                elif 'Goals' in bet_name and 'Over' in bet_name or bet_id == 5:
+                elif ('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5:
                     category, _ = MarketCategory.objects.get_or_create(name='Totals')
                     api_market_key = 'totals'
                 elif 'Odd/Even' in bet_name or 'Goals Odd/Even' in bet_name or bet_id == 7:
@@ -243,8 +243,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                                         else:
                                             # For totals, keep "Over" or "Under" as name
                                             outcome_name = parts[0]
-                                    except (ValueError, IndexError):
-                                        pass
+                                    except (ValueError, IndexError) as e:
+                                        logger.debug(f"Could not parse point value from '{outcome_value}' for market '{bet_name}': {e}")
                             
                             outcomes_to_create.append(
                                 MarketOutcome(
