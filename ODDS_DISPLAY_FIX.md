@@ -226,6 +226,8 @@ Some API-Football subscription tiers may:
 
 ## Bet Type Mapping Reference
 
+**Note**: Bet type IDs follow API-Football v3 convention. bet_id 6 is reserved in the API but not commonly documented or used, which is why we fetch bet_ids [1, 2, 3, 4, 5, 7, 8, 9].
+
 | bet_id | Market Name | api_market_key | Category Name |
 |--------|-------------|----------------|---------------|
 | 1 | Match Winner | h2h | Match Winner |
@@ -233,6 +235,7 @@ Some API-Football subscription tiers may:
 | 3 | Asian Handicap | handicap | Asian Handicap |
 | 4 | Draw No Bet | draw_no_bet | Draw No Bet |
 | 5 | Goals Over/Under | totals | Totals |
+| 6 | *Reserved/Unused* | - | - |
 | 7 | Odd/Even | odd_even | Odd/Even Goals |
 | 8 | Both Teams Score | btts | Both Teams To Score |
 | 9 | Exact/Correct Score | correct_score | Correct Score |
