@@ -40,4 +40,3 @@ try:
 except ImportError as e:
     logger.warning(f"Could not import legacy football tasks: {e}. "
                    "This is expected if dependencies are not installed yet.")
-

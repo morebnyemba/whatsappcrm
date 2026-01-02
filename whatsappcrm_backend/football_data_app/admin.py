@@ -19,7 +19,7 @@ class LeagueAdmin(admin.ModelAdmin):
     list_filter = ('active', 'sport_key')
     search_fields = ('name', 'api_id')
     actions = ['mark_as_active', 'mark_as_inactive']
-    
+
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'api_id', 'sport_key', 'sport_group_name', 'short_name')
