@@ -734,13 +734,10 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
                     logger.debug(f"  - Bet type {bet_id}: No odds available")
             except Exception as e:
                 logger.warning(f"  ✗ Bet type {bet_id}: Error fetching odds - {str(e)}")
-                # Continue with other bet types even if one fails
-                continue
         
-        odds_data = all_odds_data
-        logger.info(f"API returned {len(odds_data)} total odds items across all bet types for fixture {fixture.id}")
+        logger.info(f"API returned {len(all_odds_data)} total odds items across all bet types for fixture {fixture.id}")
         
-        if not odds_data:
+        if not all_odds_data:
             logger.info(f"No odds data returned from API for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name})")
             fixture.last_odds_update = timezone.now()
             fixture.save(update_fields=['last_odds_update'])
@@ -752,7 +749,7 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
             fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
             
             # Process odds data
-            _process_api_football_v3_odds_data(fixture_for_update, odds_data)
+            _process_api_football_v3_odds_data(fixture_for_update, all_odds_data)
             
             fixture_for_update.last_odds_update = timezone.now()
             fixture_for_update.save(update_fields=['last_odds_update'])
