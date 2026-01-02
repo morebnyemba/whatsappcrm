@@ -73,7 +73,7 @@ services:
   celery_io_worker:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_celery_io_worker
-    command: celery -A whatsappcrm_backend worker -Q celery -l INFO --concurrency=20
+    command: celery -A whatsappcrm_backend worker -Q celery -l INFO --pool=gevent --concurrency=20
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:
@@ -94,7 +94,7 @@ services:
   celery_cpu_worker:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_celery_cpu_worker
-    command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --concurrency=1
+    command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --pool=prefork --concurrency=1
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:

@@ -32,10 +32,10 @@ CELERY_BROKER_URL='redis://:your_redis_password@redis:6379/0'
 Two specialized workers are now configured:
 
 #### **WhatsApp Worker** (`celery_io_worker`)
-- **Container Name**: `whatsappcrm_celery_worker_whatsapp`
-- **Queue**: `whatsapp` (default queue)
-- **Pool Type**: `gevent` (for I/O-bound tasks)
-- **Concurrency**: 100 (configurable via `CELERY_WORKER_CONCURRENCY`)
+- **Container Name**: `whatsappcrm_celery_io_worker`
+- **Queue**: `celery` (default queue)
+- **Pool Type**: `gevent` (for I/O-bound tasks) - **Note**: Pool type must be explicitly set in docker-compose.yml command with `--pool=gevent`
+- **Concurrency**: 20 (configurable via `--concurrency` parameter)
 - **Handles**:
   - WhatsApp message sending/receiving
   - Meta integration tasks
@@ -46,11 +46,11 @@ Two specialized workers are now configured:
   - Referral tasks
   - Media management
 
-#### **Football Data Worker** (`celery_worker_football`)
+#### **Football Data Worker** (`celery_cpu_worker`)
 - **Container Name**: `whatsappcrm_celery_cpu_worker`
-- **Queue**: `football_data`
-- **Pool Type**: `prefork` (for CPU-bound tasks)
-- **Concurrency**: 4 workers
+- **Queue**: `cpu_heavy`
+- **Pool Type**: `prefork` (for CPU-bound tasks) - **Note**: Pool type must be explicitly set in docker-compose.yml command with `--pool=prefork`
+- **Concurrency**: 1 worker
 - **Handles**:
   - Football fixture fetching
   - Odds updates
@@ -58,26 +58,25 @@ Two specialized workers are now configured:
   - Bet settlement
   - Ticket processing
 
-### 3. Task Routing Configuration
+### 3. Task Queue Configuration
 
-The `celery.py` file now includes automatic task routing:
+Currently, tasks are routed based on the `queue` parameter in their task decorator:
 
-```python
-app.conf.task_routes = {
-    # Football data tasks go to the football_data queue
-    'football_data_app.tasks.*': {'queue': 'football_data'},
-    'football_data_app.tasks_apifootball.*': {'queue': 'football_data'},
-    
-    # WhatsApp and general business tasks go to the whatsapp queue
-    'meta_integration.tasks.*': {'queue': 'whatsapp'},
-    'conversations.tasks.*': {'queue': 'whatsapp'},
-    'flows.tasks.*': {'queue': 'whatsapp'},
-    'customer_data.tasks.*': {'queue': 'whatsapp'},
-    'paynow_integration.tasks.*': {'queue': 'whatsapp'},
-    'referrals.tasks.*': {'queue': 'whatsapp'},
-    'media_manager.tasks.*': {'queue': 'whatsapp'},
-}
-```
+#### celery queue (handled by celery_io_worker)
+- `meta_integration.tasks.*` - WhatsApp message sending/receiving
+- `flows.tasks.*` - Flow processing
+- `conversations.tasks.*` - Conversation management
+- `customer_data.tasks.*` - Customer data operations
+- `paynow_integration.tasks.*` - Payment processing
+- `referrals.tasks.*` - Referral tasks
+- `media_manager.tasks.*` - Media management
+
+#### cpu_heavy queue (handled by celery_cpu_worker)
+- `football_data_app.tasks.*` - Football fixture fetching
+- `football_data_app.tasks_apifootball.*` - Odds updates
+- `football_data_app.tasks_api_football_v3.*` - API Football v3 tasks
+
+Tasks default to the `celery` queue unless explicitly specified with `queue='cpu_heavy'` in the task decorator.
 
 ## Benefits
 
@@ -87,6 +86,28 @@ app.conf.task_routes = {
    - Prefork pool for CPU-bound football data tasks (better for data processing)
 3. **Better Resource Management**: Each worker can be scaled independently
 4. **Improved Reliability**: If one worker crashes, the other continues operating
+5. **Concurrent Message Processing**: With gevent pool, multiple messages can be sent simultaneously (fixes issue where only first fixture message was sent)
+
+## Important: Pool Type Configuration
+
+⚠️ **Critical**: The pool type MUST be explicitly specified in the docker-compose.yml worker command using `--pool=<type>`.
+
+If not specified, the worker defaults to the 'solo' pool from settings.py, which:
+- Processes tasks **one at a time** (no concurrency)
+- Ignores the `--concurrency` parameter
+- Causes issues like only sending the first message when multiple messages are queued
+
+### Current Configuration (Correct)
+
+```yaml
+celery_io_worker:
+  command: celery -A whatsappcrm_backend worker -Q celery -l INFO --pool=gevent --concurrency=20
+
+celery_cpu_worker:
+  command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --pool=prefork --concurrency=1
+```
+
+**Do not remove the `--pool=` parameters!**
 
 ## Docker Compose Services
 
@@ -137,13 +158,16 @@ To check if tasks are being routed correctly:
 
 ```bash
 # Monitor WhatsApp worker
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect active
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active
 
 # Monitor Football worker
 docker exec -it whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect active
 
 # Check registered tasks
-docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect registered
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect registered
+
+# Check worker stats (including pool type)
+docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect stats
 ```
 
 ## Troubleshooting
@@ -165,16 +189,27 @@ If you see authentication errors:
 
 1. Check worker logs for errors:
    ```bash
-   docker-compose logs celery_worker
-   docker-compose logs celery_worker_football
+   docker-compose logs celery_io_worker
+   docker-compose logs celery_cpu_worker
    ```
 
 2. Verify workers are connected to Redis:
    ```bash
-   docker exec -it whatsappcrm_celery_worker_whatsapp celery -A whatsappcrm_backend inspect ping
+   docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect ping
    ```
 
-3. Check task routing configuration in `celery.py`
+3. **Check pool type** (IMPORTANT):
+   ```bash
+   docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect stats | grep -i pool
+   ```
+   Should show `"pool": {"implementation": "celery.concurrency.gevent:TaskPool"}`
+   
+   If it shows `solo`, the worker is using single-threaded mode and won't process tasks concurrently!
+
+4. Verify task queue configuration:
+   - Check that tasks have the correct `queue` parameter in their decorator
+   - `queue='celery'` → handled by celery_io_worker
+   - `queue='cpu_heavy'` → handled by celery_cpu_worker
 
 ### Tasks Going to Wrong Queue
 
