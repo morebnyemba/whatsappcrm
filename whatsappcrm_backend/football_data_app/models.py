@@ -174,6 +174,10 @@ class Configuration(models.Model):
     )
     email = models.EmailField(help_text="Contact email for this API configuration")
     api_key = models.CharField(max_length=100, help_text="API key for authentication")
+    current_season = models.IntegerField(
+        default=2024,
+        help_text="Current season year for API-Football v3 (e.g., 2024). Used when fetching fixtures and standings."
+    )
     is_active = models.BooleanField(default=True, help_text="Whether this configuration is currently active")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

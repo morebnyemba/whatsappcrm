@@ -70,6 +70,7 @@ If all checks pass, you're ready to go! 🎉
 | [FIX_SUMMARY.md](FIX_SUMMARY.md) | Overview of what was fixed | **Start here** - Read first |
 | [CELERY_WORKER_SETUP.md](CELERY_WORKER_SETUP.md) | Complete setup guide | For deployment and configuration |
 | [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) | Periodic task configuration | **Required** - Set up scheduled tasks |
+| [FOOTBALL_TASKS_SETUP_GUIDE.md](FOOTBALL_TASKS_SETUP_GUIDE.md) | Football tasks location & scheduling | **Essential** - First-time setup & task scheduling |
 | [CELERY_QUICK_REFERENCE.md](CELERY_QUICK_REFERENCE.md) | Developer cheat sheet | For daily development tasks |
 | [.env.example](.env.example) | Configuration template | When setting up new environments |
 

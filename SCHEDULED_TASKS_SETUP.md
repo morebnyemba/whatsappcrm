@@ -4,11 +4,23 @@
 
 This application uses **Celery Beat** with **django-celery-beat** to run periodic tasks. The Celery Beat scheduler is already configured in `docker-compose.yml` and reads task schedules from the database.
 
+> 📖 **For a comprehensive guide covering first-time setup, task locations, and detailed troubleshooting, see [FOOTBALL_TASKS_SETUP_GUIDE.md](FOOTBALL_TASKS_SETUP_GUIDE.md)**
+
 ## Pre-configured Components
 
 ✅ **Celery Beat Service** - Running in Docker container `whatsappcrm_celery_beat`  
 ✅ **django-celery-beat** - Installed and configured in `settings.py`  
 ✅ **Database Scheduler** - Stores schedules in PostgreSQL  
+
+## ⚠️ CRITICAL FIRST STEP
+
+Before scheduling any tasks, you **MUST** initialize football leagues:
+
+```bash
+docker-compose exec backend python manage.py football_league_setup
+```
+
+This populates the database with leagues from APIFootball.com. Without this step, scheduled tasks will report "0 active leagues" and no data will be fetched.
 
 ## Tasks That Should Be Scheduled
 
