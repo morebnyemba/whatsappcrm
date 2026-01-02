@@ -205,6 +205,11 @@ CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT_SECONDS', '1800')
 CELERY_RESULT_EXTENDED = True
 CELERY_CACHE_BACKEND = 'django-cache'
 
+# Worker pool configuration
+# This fixes the AttributeError: 'str' object has no attribute '__module__' error
+# The worker_pool setting is converted from string to class in celery.py
+# Supported values: 'solo', 'prefork', 'threads', 'eventlet', 'gevent'
+CELERY_WORKER_POOL = os.getenv('CELERY_WORKER_POOL', 'solo')
 
 # For Celery Beat (scheduled tasks)
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
