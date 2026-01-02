@@ -159,28 +159,28 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 
                 # Map bet names and IDs to our categories and api_market_keys
                 # Based on API-Football v3 documentation: https://www.api-football.com/documentation-v3
-                if bet_name == 'Match Winner' or bet_id == 1:
+                if (bet_name == 'Match Winner' or bet_id == 1):
                     category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
                     api_market_key = 'h2h'
-                elif bet_name == 'Double Chance' or bet_id == 2:
+                elif (bet_name == 'Double Chance' or bet_id == 2):
                     category, _ = MarketCategory.objects.get_or_create(name='Double Chance')
                     api_market_key = 'double_chance'
-                elif 'Asian Handicap' in bet_name or 'Handicap' in bet_name or bet_id == 3:
+                elif (('Asian Handicap' in bet_name or 'Handicap' in bet_name) or bet_id == 3):
                     category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
                     api_market_key = 'handicap'
-                elif 'Draw No Bet' in bet_name or bet_id == 4:
+                elif ('Draw No Bet' in bet_name or bet_id == 4):
                     category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
                     api_market_key = 'draw_no_bet'
-                elif ('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5:
+                elif (('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5):
                     category, _ = MarketCategory.objects.get_or_create(name='Totals')
                     api_market_key = 'totals'
-                elif 'Odd/Even' in bet_name or bet_id == 7:
+                elif ('Odd/Even' in bet_name or bet_id == 7):
                     category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
                     api_market_key = 'odd_even'
-                elif 'Both Teams Score' in bet_name or bet_id == 8:
+                elif ('Both Teams Score' in bet_name or bet_id == 8):
                     category, _ = MarketCategory.objects.get_or_create(name='Both Teams To Score')
                     api_market_key = 'btts'
-                elif 'Exact Score' in bet_name or 'Correct Score' in bet_name or bet_id == 9:
+                elif (('Exact Score' in bet_name or 'Correct Score' in bet_name) or bet_id == 9):
                     category, _ = MarketCategory.objects.get_or_create(name='Correct Score')
                     api_market_key = 'correct_score'
                 else:
