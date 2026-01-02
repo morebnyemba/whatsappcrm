@@ -402,8 +402,8 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         fixtures_data = client.get_fixtures(
             league_id=api_league_id,
             season=current_season,
-            from_date=from_date.strftime('%Y-%m-%d'),
-            to_date=to_date.strftime('%Y-%m-%d')
+            date_from=from_date.strftime('%Y-%m-%d'),
+            date_to=to_date.strftime('%Y-%m-%d')
         )
         
         logger.info(f"API returned {len(fixtures_data) if fixtures_data else 0} fixtures for league {league.name}")
@@ -776,8 +776,8 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
         finished_fixtures = client.get_fixtures(
             league_id=api_league_id,
             season=current_season,
-            from_date=date_from,
-            to_date=date_to,
+            date_from=date_from,
+            date_to=date_to,
             status='FT'  # Full Time
         )
         logger.info(f"Received {len(finished_fixtures) if finished_fixtures else 0} finished fixtures from API")
