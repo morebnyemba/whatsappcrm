@@ -3,7 +3,7 @@
 import re
 import logging
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.apps import apps
 from django.utils import timezone
 from datetime import timedelta
@@ -53,11 +53,16 @@ def get_formatted_football_data(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         logger.debug(f"Querying for SCHEDULED fixtures between {start_date} and {end_date}.")
+        
+        # Import Market and MarketOutcome models here to avoid circular import
+        from football_data_app.models import Market, MarketOutcome
+        
         fixtures_qs = FootballFixture.objects.filter(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            'markets__outcomes'
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
         ).order_by('match_date')
 
 
