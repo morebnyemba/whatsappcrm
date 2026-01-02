@@ -43,7 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-'football_data_app.apps.FootballDataAppConfig',
+    'football_data_app.apps.FootballDataAppConfig',
     # Third-party apps
     'rest_framework',
     'rest_framework_simplejwt',
