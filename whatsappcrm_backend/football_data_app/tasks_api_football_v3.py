@@ -128,7 +128,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
     logger.info(f"Found {len(odds_data)} odds items to process")
     total_markets_created = 0
     total_outcomes_created = 0
-    total_bookmakers_processed = 0
+    bookmakers_encountered = 0
     bookmakers_created = 0
     
     for odds_item in odds_data:
@@ -144,7 +144,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 api_bookmaker_key=str(bookmaker_id) if bookmaker_id else bookmaker_name.lower().replace(' ', '_'),
                 defaults={'name': bookmaker_name}
             )
-            total_bookmakers_processed += 1
+            bookmakers_encountered += 1
             if bookmaker_created:
                 logger.info(f"Created new bookmaker: {bookmaker_name}")
                 bookmakers_created += 1
@@ -224,7 +224,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 else:
                     logger.warning(f"No valid outcomes created for market '{bet_name}' from bookmaker {bookmaker_name}")
     
-    logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {total_bookmakers_processed} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
+    logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {bookmakers_encountered} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
 
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
