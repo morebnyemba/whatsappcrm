@@ -174,7 +174,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 elif ('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5:
                     category, _ = MarketCategory.objects.get_or_create(name='Totals')
                     api_market_key = 'totals'
-                elif 'Odd/Even' in bet_name or 'Goals Odd/Even' in bet_name or bet_id == 7:
+                elif 'Odd/Even' in bet_name or bet_id == 7:
                     category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
                     api_market_key = 'odd_even'
                 elif 'Both Teams Score' in bet_name or bet_id == 8:
@@ -231,8 +231,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                                 parts = outcome_value.split()
                                 if len(parts) >= 2:
                                     try:
-                                        # Try to parse the last part as a number
-                                        point_str = parts[-1].replace('+', '')
+                                        # Try to parse the last part as a number (handles +/- signs)
+                                        point_str = parts[-1]
                                         point_value = float(point_str)
                                         # For handicap, map Home/Away to team names
                                         if api_market_key == 'handicap':
