@@ -71,6 +71,22 @@ The new tasks are located in `/whatsappcrm_backend/football_data_app/tasks_api_f
 
 ### Step 2: Configure API-Football v3
 
+You have two options for configuration:
+
+**Option A: Via Django Admin (Recommended)**
+
+1. Go to http://your-domain/admin/
+2. Navigate to **Football Data App > Configurations**
+3. Add a new Configuration:
+   - **Provider Name**: `API-Football` (with dash)
+   - **API Key**: `your_api_key_here`
+   - **Current Season**: `2024` (or the current season year)
+   - **Email**: Your contact email
+   - **Is Active**: ✓ (checked)
+4. Click **Save**
+
+**Option B: Via Environment Variables**
+
 Add to your `.env` file:
 
 ```env
@@ -78,15 +94,21 @@ API_FOOTBALL_V3_KEY=your_api_key_here
 API_FOOTBALL_V3_CURRENT_SEASON=2024
 ```
 
-**Or** configure via Django Admin:
-1. Go to http://your-domain/admin/
-2. Navigate to **Football Data App > Configurations**
-3. Add a new Configuration:
-   - Provider Name: `API-Football` (with dash)
-   - API Key: `your_api_key_here`
-   - Is Active: ✓ (checked)
+**Note**: Django Admin configuration takes priority over environment variables. If you configure via Django Admin, the system will use those values instead of environment variables.
 
-### Step 3: Initialize Leagues
+### Step 3: Apply Database Migration
+
+After configuring the API key and season, apply the database migration to add the `current_season` field:
+
+```bash
+# Create the migration
+docker-compose exec backend python manage.py makemigrations football_data_app
+
+# Apply the migration
+docker-compose exec backend python manage.py migrate football_data_app
+```
+
+### Step 4: Initialize Leagues
 
 Run the setup command to populate leagues from API-Football v3:
 
@@ -111,7 +133,7 @@ Football leagues setup finished. Created: 150, Updated: 0.
 Football league setup process completed.
 ```
 
-### Step 4: Schedule the New Tasks in Django Admin
+### Step 5: Schedule the New Tasks in Django Admin
 
 #### Task 1: Football Data Update (API-Football v3)
 
@@ -148,7 +170,7 @@ Football league setup process completed.
 - Settles bets and tickets automatically
 - Sends WhatsApp notifications to customers
 
-### Step 5: Verify Tasks Are Running
+### Step 6: Verify Tasks Are Running
 
 Check the logs to see tasks executing:
 
@@ -618,8 +640,11 @@ The task will stop being scheduled but remains configured for future use.
 
 ### For New API-Football v3 Tasks (RECOMMENDED):
 - [ ] Get API key from [api-football.com](https://www.api-football.com/)
-- [ ] Configure API-Football v3 key in `.env`: `API_FOOTBALL_V3_KEY=your_key`
-- [ ] Set current season: `API_FOOTBALL_V3_CURRENT_SEASON=2024`
+- [ ] Configure via Django Admin (recommended):
+  - Go to **Football Data App > Configurations**
+  - Add: Provider=`API-Football`, API Key, Current Season=`2024`, Is Active=✓
+- [ ] OR configure in `.env`: `API_FOOTBALL_V3_KEY=your_key` and `API_FOOTBALL_V3_CURRENT_SEASON=2024`
+- [ ] Apply database migration: `docker-compose exec backend python manage.py makemigrations football_data_app && docker-compose exec backend python manage.py migrate football_data_app`
 - [ ] Run setup command: `docker-compose exec backend python manage.py football_league_setup_v3`
 - [ ] Verify leagues initialized (should have `v3_` prefix in api_id)
 - [ ] Ensure Celery workers are running: `docker-compose ps`

@@ -30,13 +30,42 @@ API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES = getattr(settings, 'API_FOOTBALL_V3_
 API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES = getattr(settings, 'API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES', 120)
 API_FOOTBALL_V3_MAX_EVENT_RETRIES = getattr(settings, 'API_FOOTBALL_V3_MAX_EVENT_RETRIES', 3)
 API_FOOTBALL_V3_EVENT_RETRY_DELAY = getattr(settings, 'API_FOOTBALL_V3_EVENT_RETRY_DELAY', 300)
-API_FOOTBALL_V3_CURRENT_SEASON = getattr(settings, 'API_FOOTBALL_V3_CURRENT_SEASON', 2024)
 
 # Setup command reference for consistent messaging
 LEAGUE_SETUP_COMMAND = "python manage.py football_league_setup_v3"
 LEAGUE_SETUP_COMMAND_DOCKER = "docker-compose exec backend python manage.py football_league_setup_v3"
 
 # --- Helper Functions ---
+
+def get_current_season() -> int:
+    """
+    Get the current season from Configuration model or fallback to settings/default.
+    
+    Priority:
+    1. Database Configuration (provider_name='API-Football', is_active=True)
+    2. Settings API_FOOTBALL_V3_CURRENT_SEASON
+    3. Default: 2024
+    
+    Returns:
+        Current season year as integer
+    """
+    try:
+        from .models import Configuration
+        config = Configuration.objects.filter(
+            provider_name="API-Football",
+            is_active=True
+        ).first()
+        if config and config.current_season:
+            logger.debug(f"Current season loaded from database Configuration: {config.current_season}")
+            return config.current_season
+    except Exception as e:
+        logger.warning(f"Could not load season from database Configuration: {e}")
+    
+    # Fallback to settings
+    season = getattr(settings, 'API_FOOTBALL_V3_CURRENT_SEASON', 2024)
+    logger.debug(f"Current season loaded from settings: {season}")
+    return season
+
 
 def parse_api_football_v3_datetime(timestamp_str: str) -> Optional[datetime]:
     """
@@ -366,10 +395,13 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         from_date = datetime.now()
         to_date = from_date + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)
         
-        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={API_FOOTBALL_V3_CURRENT_SEASON}, from={from_date.date()}, to={to_date.date()})...")
+        # Get current season from Configuration or settings
+        current_season = get_current_season()
+        
+        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, from={from_date.date()}, to={to_date.date()})...")
         fixtures_data = client.get_fixtures(
             league_id=api_league_id,
-            season=API_FOOTBALL_V3_CURRENT_SEASON,
+            season=current_season,
             from_date=from_date.strftime('%Y-%m-%d'),
             to_date=to_date.strftime('%Y-%m-%d')
         )
@@ -734,13 +766,16 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
         live_fixtures = client.get_live_fixtures()
         logger.info(f"Received {len(live_fixtures) if live_fixtures else 0} live fixtures from API")
         
+        # Get current season from Configuration or settings
+        current_season = get_current_season()
+        
         # Get finished matches from the past few days
         date_from = (now - timedelta(days=2)).strftime('%Y-%m-%d')
         date_to = now.strftime('%Y-%m-%d')
-        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={API_FOOTBALL_V3_CURRENT_SEASON}, from={date_from}, to={date_to}, status=FT)...")
+        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, from={date_from}, to={date_to}, status=FT)...")
         finished_fixtures = client.get_fixtures(
             league_id=api_league_id,
-            season=API_FOOTBALL_V3_CURRENT_SEASON,
+            season=current_season,
             from_date=date_from,
             to_date=date_to,
             status='FT'  # Full Time
