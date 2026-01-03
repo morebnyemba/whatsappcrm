@@ -143,8 +143,8 @@ def get_formatted_football_data(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
-            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
+            Prefetch('markets', queryset=Market.objects.all()),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.all())
         ).order_by('match_date')
 
 
@@ -190,6 +190,12 @@ def get_formatted_football_data(
                     current_best_outcome = aggregated_outcomes[market_key].get(outcome_identifier)
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
+            
+            # Debug logging
+            if not aggregated_outcomes:
+                logger.warning(f"No aggregated outcomes for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Markets count: {fixture.markets.count()}")
+            else:
+                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types: {list(aggregated_outcomes.keys())}")
 
             market_lines: List[str] = []
 
