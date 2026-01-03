@@ -183,7 +183,7 @@ def get_formatted_football_data(
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             markets_list = list(fixture.markets.all())
             
-            # Count total outcomes from all markets (for logging only, not validation)
+            # Count total outcomes from all markets (used for diagnostic logging)
             total_outcome_count = 0
             
             for market in markets_list:
