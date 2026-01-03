@@ -205,10 +205,9 @@ def get_formatted_football_data(
                 if markets_count == 0:
                     logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - NO active markets in database")
                 else:
-                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - has {markets_count} active markets but {total_outcomes_processed} total active outcomes could not be aggregated properly")
+                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - has {markets_count} active markets with {total_outcomes_processed} outcomes but no valid odds aggregated")
             else:
-                total_odds_count = sum(len(outcomes) for outcomes in aggregated_outcomes.values())
-                logger.info(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with {total_odds_count} total odds: {list(aggregated_outcomes.keys())}")
+                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with odds: {list(aggregated_outcomes.keys())}")
 
             market_lines: List[str] = []
 
@@ -473,10 +472,13 @@ def get_formatted_football_data(
         return None
 
     if not individual_item_strings:
-        logger.warning(f"No items to format for {data_type_label}. All fixtures were skipped (no odds available). Returning None.")
+        if data_type == "scheduled_fixtures":
+            logger.warning(f"No {data_type_label} to display. All fixtures were skipped (no odds available). Returning None.")
+        else:
+            logger.warning(f"No {data_type_label} to display. Returning None.")
         return None
 
-    logger.info(f"Successfully formatted {len(individual_item_strings)} fixtures with odds for {data_type_label}.")
+    logger.info(f"Successfully formatted {len(individual_item_strings)} items for {data_type_label}.")
 
     # Assemble message parts
     all_message_parts: List[str] = []
