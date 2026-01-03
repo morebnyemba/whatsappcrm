@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Message formatting constants
 MAX_CHARS_PER_MESSAGE_PART = 4000
 MESSAGE_PART_SEPARATOR = "\n\n---\n"
+MAX_SINGLE_FIXTURE_LENGTH = 3500  # Max length for individual fixture (leaves room for headers/separators)
 
 # Display limits for betting options (configurable)
 MAX_TOTALS_LINES_TO_DISPLAY = 3  # Maximum Over/Under lines to show per fixture
@@ -423,13 +424,14 @@ def get_formatted_football_data(
             
             # ONLY include fixtures that have at least one market with odds
             if market_lines:
-                line += "\n" + "\n".join(market_lines)
-                fixture_text = line.strip()
+                # Store base fixture info separately for potential reuse
+                base_fixture_info = line.strip()
+                fixture_text = line + "\n" + "\n".join(market_lines)
+                fixture_text = fixture_text.strip()
                 
                 # Check if single fixture exceeds safe limit (leaving room for header/footer)
                 # WhatsApp limit is 4096, we use 4000 for parts, but a single fixture should be max 3500
                 # to allow room for header and separator
-                MAX_SINGLE_FIXTURE_LENGTH = 3500
                 if len(fixture_text) > MAX_SINGLE_FIXTURE_LENGTH:
                     logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) "
                                  f"exceeds safe length ({len(fixture_text)} > {MAX_SINGLE_FIXTURE_LENGTH} chars). "
@@ -437,8 +439,7 @@ def get_formatted_football_data(
                     # Truncate by reducing the number of market lines shown
                     # Keep essential markets: Match Winner, Totals, BTTS (first 3 market sections)
                     essential_markets = market_lines[:3]
-                    truncated_line = line.split("\n" + "\n".join(market_lines))[0]  # Get base info
-                    truncated_line += "\n" + "\n".join(essential_markets)
+                    truncated_line = base_fixture_info + "\n" + "\n".join(essential_markets)
                     truncated_line += "\n\n_(...additional markets not shown due to length)_"
                     fixture_text = truncated_line.strip()
                     logger.info(f"Truncated fixture {fixture.id} to {len(fixture_text)} chars (kept {len(essential_markets)}/{len(market_lines)} market sections)")
@@ -528,19 +529,19 @@ def get_formatted_football_data(
         if not all_message_parts:
             final_part_str = main_header + "\n\n" + final_part_str
         
-        # Final safety check: ensure this part doesn't exceed WhatsApp's limit
+        # Final safety check: ensure this part doesn't exceed WhatsApp's limit (4096)
         if len(final_part_str) > 4096:
             logger.error(f"CRITICAL: Final message part exceeds WhatsApp limit! Length: {len(final_part_str)}. "
                         f"This should not happen after fixture truncation. Splitting further...")
             # Emergency split - this shouldn't happen if our MAX_SINGLE_FIXTURE_LENGTH is correct
             # but provides a failsafe
-            while len(final_part_str) > 4000 and current_part_items:
+            while len(final_part_str) > MAX_CHARS_PER_MESSAGE_PART and current_part_items:
                 # Remove last item and save it for next part
                 removed_item = current_part_items.pop()
                 temp_part = MESSAGE_PART_SEPARATOR.join(current_part_items)
                 if not all_message_parts:
                     temp_part = main_header + "\n\n" + temp_part
-                if len(temp_part) <= 4000:
+                if len(temp_part) <= MAX_CHARS_PER_MESSAGE_PART:
                     all_message_parts.append(temp_part)
                     current_part_items = [removed_item]
                     final_part_str = removed_item
