@@ -193,7 +193,8 @@ def get_formatted_football_data(
             
             # Debug logging
             if not aggregated_outcomes:
-                logger.warning(f"No aggregated outcomes for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Markets count: {fixture.markets.count()}")
+                markets_count = len(list(fixture.markets.all()))
+                logger.warning(f"No aggregated outcomes for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Markets count: {markets_count}")
             else:
                 logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types: {list(aggregated_outcomes.keys())}")
 
