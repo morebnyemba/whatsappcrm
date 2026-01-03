@@ -183,15 +183,15 @@ def get_formatted_football_data(
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             markets_list = list(fixture.markets.all())
             
-            # Track total outcomes across all markets for better debugging
-            total_outcomes_processed = 0
+            # Count total outcomes from all markets (for logging only, not validation)
+            total_outcome_count = 0
             
             for market in markets_list:
                 market_key = market.api_market_key
                 if market_key not in aggregated_outcomes:
                     aggregated_outcomes[market_key] = {}
                 outcomes_list = list(market.outcomes.all())
-                total_outcomes_processed += len(outcomes_list)
+                total_outcome_count += len(outcomes_list)
                 
                 for outcome in outcomes_list:
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
@@ -205,7 +205,7 @@ def get_formatted_football_data(
                 if markets_count == 0:
                     logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - NO active markets in database")
                 else:
-                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - has {markets_count} active markets with {total_outcomes_processed} outcomes but no valid odds aggregated")
+                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - has {markets_count} active markets with {total_outcome_count} outcomes but no valid odds aggregated")
             else:
                 logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with odds: {list(aggregated_outcomes.keys())}")
 
@@ -472,10 +472,8 @@ def get_formatted_football_data(
         return None
 
     if not individual_item_strings:
-        if data_type == "scheduled_fixtures":
-            logger.warning(f"No {data_type_label} to display. All fixtures were skipped (no odds available). Returning None.")
-        else:
-            logger.warning(f"No {data_type_label} to display. Returning None.")
+        reason = " All fixtures were skipped (no odds available)." if data_type == "scheduled_fixtures" else ""
+        logger.warning(f"No {data_type_label} to display.{reason} Returning None.")
         return None
 
     logger.info(f"Successfully formatted {len(individual_item_strings)} items for {data_type_label}.")
