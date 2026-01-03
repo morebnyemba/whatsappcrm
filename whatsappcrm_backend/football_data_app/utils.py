@@ -143,8 +143,8 @@ def get_formatted_football_data(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            Prefetch('markets', queryset=Market.objects.all()),
-            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.all())
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
         ).order_by('match_date')
 
 
