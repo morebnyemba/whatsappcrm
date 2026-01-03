@@ -739,6 +739,11 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         
         # Fetch odds for all 8 betting market types
         # Without specifying bet_id, API only returns default bet types (1 and 8)
+        # Note: We fetch sequentially rather than in parallel to:
+        # - Respect API rate limits (300 requests/minute)
+        # - Work with existing jitter delays that spread out requests
+        # - Simplify error handling for individual bet type failures
+        # - Maintain compatibility with the rate limiter decorator
         all_odds_data = []
         
         logger.debug(f"Fetching odds for fixture {api_fixture_id} across {len(API_FOOTBALL_BET_IDS)} bet types...")
