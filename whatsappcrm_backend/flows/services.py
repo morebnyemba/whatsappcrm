@@ -1187,7 +1187,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         days_past=days_past
                     )
                     current_step_context[action_item_root.output_variable_name] = display_text
-                    logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Length: {len(display_text)}")
+                    if display_text is not None:
+                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Parts: {len(display_text)}")
+                    else:
+                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set to None (no data found).")
                 
                 # --- NEW ACTION DISPATCHES ---
                 elif action_type == ActionType.CREATE_ACCOUNT:
