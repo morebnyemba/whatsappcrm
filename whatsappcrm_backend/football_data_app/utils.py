@@ -23,6 +23,92 @@ MESSAGE_PART_SEPARATOR = "\n\n---\n"
 MAX_TOTALS_LINES_TO_DISPLAY = 3  # Maximum Over/Under lines to show per fixture
 MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per fixture
 
+def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
+    """
+    Helper function to format handicap markets (Asian Handicap variants).
+    Returns formatted string or None if no outcomes.
+    """
+    # Local import for type hints
+    from football_data_app.models import MarketOutcome
+    
+    if not outcomes_dict:
+        return None
+    
+    # Group by point value
+    handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+    for outcome in outcomes_dict.values():
+        if outcome.point_value is not None:
+            if outcome.point_value not in handicap_by_point:
+                handicap_by_point[outcome.point_value] = {}
+            # Identify home vs away handicap
+            if fixture.home_team.name in outcome.outcome_name or 'Home' in outcome.outcome_name:
+                handicap_by_point[outcome.point_value]['home'] = outcome
+            elif fixture.away_team.name in outcome.outcome_name or 'Away' in outcome.outcome_name:
+                handicap_by_point[outcome.point_value]['away'] = outcome
+    
+    if not handicap_by_point:
+        return None
+    
+    # Show ALL handicap lines, sorted by point value
+    sorted_points = sorted(handicap_by_point.keys(), key=lambda x: abs(x))
+    hcp_parts = []
+    for point in sorted_points:
+        home_hcp = handicap_by_point[point].get('home')
+        away_hcp = handicap_by_point[point].get('away')
+        
+        if home_hcp:
+            sign = '+' if point >= 0 else ''
+            hcp_parts.append(f"  - {fixture.home_team.name} ({sign}{point}): *{home_hcp.odds:.2f}* (ID: {home_hcp.id})")
+        if away_hcp:
+            opposite_line = -point
+            sign = '+' if opposite_line >= 0 else ''
+            hcp_parts.append(f"  - {fixture.away_team.name} ({sign}{opposite_line}): *{away_hcp.odds:.2f}* (ID: {away_hcp.id})")
+    
+    if hcp_parts:
+        return f"\n*{market_name}:*\n" + "\n".join(hcp_parts)
+    return None
+
+def _format_totals_market(outcomes_dict: Dict, market_name: str, max_lines: int = 3) -> Optional[str]:
+    """
+    Helper function to format totals/over-under markets.
+    Returns formatted string or None if no outcomes.
+    """
+    # Local import for type hints
+    from football_data_app.models import MarketOutcome
+    
+    if not outcomes_dict:
+        return None
+    
+    totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+    for outcome in outcomes_dict.values():
+        if outcome.point_value is not None:
+            if outcome.point_value not in totals_by_point:
+                totals_by_point[outcome.point_value] = {}
+            if 'over' in outcome.outcome_name.lower():
+                totals_by_point[outcome.point_value]['over'] = outcome
+            elif 'under' in outcome.outcome_name.lower():
+                totals_by_point[outcome.point_value]['under'] = outcome
+    
+    if not totals_by_point:
+        return None
+    
+    sorted_points = sorted(totals_by_point.keys())
+    totals_parts = []
+    for point in sorted_points[:max_lines]:
+        over_outcome = totals_by_point[point].get('over')
+        under_outcome = totals_by_point[point].get('under')
+        over_str = f"Over {point:.1f}: *{over_outcome.odds:.2f}* (ID: {over_outcome.id})" if over_outcome else ""
+        under_str = f"Under {point:.1f}: *{under_outcome.odds:.2f}* (ID: {under_outcome.id})" if under_outcome else ""
+        if over_str and under_str:
+            totals_parts.append(f"  - {over_str}")
+            totals_parts.append(f"  - {under_str}")
+        elif over_str or under_str:
+            totals_parts.append(f"  - {over_str or under_str}")
+    
+    if totals_parts:
+        return f"\n*{market_name}:*\n" + "\n".join(totals_parts)
+    return None
+
 def get_formatted_football_data(
     data_type: str,
     league_code: Optional[str] = None,
@@ -57,8 +143,8 @@ def get_formatted_football_data(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
-            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
+            Prefetch('markets', queryset=Market.objects.all()),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.all())
         ).order_by('match_date')
 
 
@@ -104,6 +190,13 @@ def get_formatted_football_data(
                     current_best_outcome = aggregated_outcomes[market_key].get(outcome_identifier)
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
+            
+            # Debug logging
+            if not aggregated_outcomes:
+                markets_count = len(list(fixture.markets.all()))
+                logger.warning(f"No aggregated outcomes for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Markets count: {markets_count}")
+            else:
+                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types: {list(aggregated_outcomes.keys())}")
 
             market_lines: List[str] = []
 
@@ -200,41 +293,15 @@ def get_formatted_football_data(
                 if dnb_parts:
                     market_lines.append("\n*Draw No Bet:*\n" + "\n".join(dnb_parts))
 
-            # 6. Format Asian Handicap (show most popular line)
+            # 6. Format Asian Handicap (show ALL lines, not just the closest to 0)
             if 'handicap' in aggregated_outcomes or 'asian_handicap' in aggregated_outcomes or 'spreads' in aggregated_outcomes:
                 handicap_outcomes = (aggregated_outcomes.get('handicap') or 
                                     aggregated_outcomes.get('asian_handicap') or 
                                     aggregated_outcomes.get('spreads') or {})
                 
-                # Group by point value
-                handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
-                for outcome in handicap_outcomes.values():
-                    if outcome.point_value is not None:
-                        if outcome.point_value not in handicap_by_point:
-                            handicap_by_point[outcome.point_value] = {}
-                        # Identify home vs away handicap
-                        if fixture.home_team.name in outcome.outcome_name or 'Home' in outcome.outcome_name:
-                            handicap_by_point[outcome.point_value]['home'] = outcome
-                        elif fixture.away_team.name in outcome.outcome_name or 'Away' in outcome.outcome_name:
-                            handicap_by_point[outcome.point_value]['away'] = outcome
-                
-                if handicap_by_point:
-                    # Show the line closest to 0 (most balanced)
-                    closest_line = min(handicap_by_point.keys(), key=lambda x: abs(x))
-                    home_hcp = handicap_by_point[closest_line].get('home')
-                    away_hcp = handicap_by_point[closest_line].get('away')
-                    
-                    hcp_parts = []
-                    if home_hcp:
-                        sign = '+' if closest_line >= 0 else ''
-                        hcp_parts.append(f"  - {fixture.home_team.name} ({sign}{closest_line}): *{home_hcp.odds:.2f}* (ID: {home_hcp.id})")
-                    if away_hcp:
-                        opposite_line = -closest_line
-                        sign = '+' if opposite_line >= 0 else ''
-                        hcp_parts.append(f"  - {fixture.away_team.name} ({sign}{opposite_line}): *{away_hcp.odds:.2f}* (ID: {away_hcp.id})")
-                    
-                    if hcp_parts:
-                        market_lines.append("\n*Asian Handicap:*\n" + "\n".join(hcp_parts))
+                formatted_handicap = _format_handicap_market(handicap_outcomes, fixture, "Asian Handicap")
+                if formatted_handicap:
+                    market_lines.append(formatted_handicap)
 
             # 7. Format Correct Score (show top MAX_CORRECT_SCORES_TO_DISPLAY most likely scores)
             if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
@@ -266,15 +333,55 @@ def get_formatted_football_data(
                 if oe_parts:
                     market_lines.append("\n*Odd/Even Goals:*\n" + "\n".join(oe_parts))
             
-            # 9. Format any OTHER bet types not covered above (e.g., Halftime/Fulltime, etc.)
+            # 9. Format Asian Handicap (1st Half)
+            if 'handicap_1h' in aggregated_outcomes:
+                formatted_handicap = _format_handicap_market(
+                    aggregated_outcomes.get('handicap_1h', {}), 
+                    fixture, 
+                    "Asian Handicap (1st Half)"
+                )
+                if formatted_handicap:
+                    market_lines.append(formatted_handicap)
+            
+            # 10. Format Asian Handicap (2nd Half)
+            if 'handicap_2h' in aggregated_outcomes:
+                formatted_handicap = _format_handicap_market(
+                    aggregated_outcomes.get('handicap_2h', {}), 
+                    fixture, 
+                    "Asian Handicap (2nd Half)"
+                )
+                if formatted_handicap:
+                    market_lines.append(formatted_handicap)
+            
+            # 11. Format Totals (1st Half)
+            if 'totals_1h' in aggregated_outcomes:
+                formatted_totals = _format_totals_market(
+                    aggregated_outcomes.get('totals_1h', {}),
+                    "Total Goals (1st Half)",
+                    MAX_TOTALS_LINES_TO_DISPLAY
+                )
+                if formatted_totals:
+                    market_lines.append(formatted_totals)
+            
+            # 12. Format Totals (2nd Half)
+            if 'totals_2h' in aggregated_outcomes:
+                formatted_totals = _format_totals_market(
+                    aggregated_outcomes.get('totals_2h', {}),
+                    "Total Goals (2nd Half)",
+                    MAX_TOTALS_LINES_TO_DISPLAY
+                )
+                if formatted_totals:
+                    market_lines.append(formatted_totals)
+            
+            # 13. Format any OTHER bet types not covered above (e.g., Halftime/Fulltime, etc.)
             # These are bet types saved with generic keys like "bet_10", "bet_11", etc.
             known_market_keys = {
                 'h2h', '1x2', 'match_winner',
                 'double_chance', 'doublechance',
-                'totals', 'alternate_totals', 'goals_over_under',
+                'totals', 'alternate_totals', 'goals_over_under', 'totals_1h', 'totals_2h',
                 'btts', 'both_teams_score',
                 'draw_no_bet', 'drawnob',
-                'handicap', 'asian_handicap', 'spreads',
+                'handicap', 'asian_handicap', 'spreads', 'handicap_1h', 'handicap_2h',
                 'correct_score', 'correctscore',
                 'odd_even', 'oddeven', 'goals_odd_even'
             }
@@ -299,11 +406,8 @@ def get_formatted_football_data(
                         other_parts.append(f"  - {outcome.outcome_name}: *{outcome.odds:.2f}* (ID: {outcome.id})")
                     
                     if other_parts:
-                        # Limit to first 10 outcomes to avoid message overflow
-                        total_outcomes = len(other_parts)
-                        if total_outcomes > 10:
-                            other_parts = other_parts[:10]
-                            other_parts.append(f"  _... and {total_outcomes - 10} more options_")
+                        # Display all outcomes for unrecognized markets
+                        # (No truncation - WhatsApp can handle messages up to 4096 characters)
                         market_lines.append(f"\n*{market_name}:*\n" + "\n".join(other_parts))
             
             if market_lines:

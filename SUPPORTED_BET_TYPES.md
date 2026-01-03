@@ -51,9 +51,9 @@ Combine two of the three possible outcomes, reducing risk but with lower odds.
 ```
 
 ### 3. Total Goals (Over/Under)
-**Market Keys**: `totals`, `alternate_totals`, `goals_over_under`
+**Market Keys**: `totals`, `alternate_totals`, `goals_over_under`, `totals_1h`, `totals_2h`
 
-Bet on whether the total goals scored will be over or under a specific number.
+Bet on whether the total goals scored will be over or under a specific number. Now supports full-time, 1st half, and 2nd half markets.
 
 **Common Lines**:
 - Over/Under 0.5
@@ -69,9 +69,17 @@ Bet on whether the total goals scored will be over or under a specific number.
   - Under 2.5: *1.95* (ID: 12361)
   - Over 3.5: *2.70* (ID: 12362)
   - Under 3.5: *1.45* (ID: 12363)
+
+*Total Goals (1st Half):*
+  - Over 0.5: *1.45* (ID: 12364)
+  - Under 0.5: *2.70* (ID: 12365)
+
+*Total Goals (2nd Half):*
+  - Over 1.5: *1.75* (ID: 12366)
+  - Under 1.5: *2.05* (ID: 12367)
 ```
 
-**Note**: Up to 3 most common lines are displayed to avoid message overflow.
+**Note**: Up to 3 most common lines are displayed per market type to avoid message overflow.
 
 ### 4. Both Teams To Score (BTTS)
 **Market Keys**: `btts`, `both_teams_score`
@@ -106,9 +114,9 @@ If the match ends in a draw, your stake is refunded. You only win/lose if there'
 ```
 
 ### 6. Asian Handicap
-**Market Keys**: `handicap`, `asian_handicap`, `spreads`
+**Market Keys**: `handicap`, `asian_handicap`, `spreads`, `handicap_1h`, `handicap_2h`
 
-One team gets a virtual head start (or deficit). The most balanced line is displayed.
+One team gets a virtual head start (or deficit). **All available handicap lines are now displayed** (previously only the most balanced line was shown).
 
 **Common Lines**:
 - -0.5, 0.0, +0.5 (most common)
@@ -118,8 +126,20 @@ One team gets a virtual head start (or deficit). The most balanced line is displ
 **Example Display**:
 ```
 *Asian Handicap:*
+  - Manchester United (+0.5): *1.30* (ID: 12387)
+  - Liverpool (-0.5): *2.08* (ID: 12388)
   - Manchester United (-0.5): *1.90* (ID: 12390)
   - Liverpool (+0.5): *1.95* (ID: 12391)
+  - Manchester United (-1.5): *4.15* (ID: 12392)
+  - Liverpool (+1.5): *1.22* (ID: 12393)
+
+*Asian Handicap (1st Half):*
+  - Manchester United (+0.0): *1.51* (ID: 12394)
+  - Liverpool (-0.0): *2.32* (ID: 12395)
+
+*Asian Handicap (2nd Half):*
+  - Manchester United (+0.0): *1.51* (ID: 12396)
+  - Liverpool (-0.0): *2.32* (ID: 12397)
 ```
 
 **How to Read**:
@@ -158,25 +178,24 @@ Bet on whether the total number of goals will be odd or even.
 
 ## Additional Markets (Available but not displayed by default)
 
-These markets are supported by API-Football but not currently displayed in fixtures to keep messages concise:
+These markets are supported by API-Football and **will be displayed if available** (previously truncated):
 
 ### 9. Half Time / Full Time (HT/FT)
-Predict the result at half-time and full-time.
+Predict the result at half-time and full-time. All available options displayed.
 
 ### 10. First/Last Team to Score
-Bet on which team will score first or last.
+Bet on which team will score first or last. All available options displayed.
 
 ### 11. Clean Sheet
-Bet on whether a team will keep a clean sheet (no goals conceded).
+Bet on whether a team will keep a clean sheet (no goals conceded). All available options displayed.
 
 ### 12. Win to Nil
-Bet on a team winning without conceding.
+Bet on a team winning without conceding. All available options displayed.
 
-### 13. Goals in First/Second Half
-Over/Under for specific match periods.
+### 13. Exact Number of Goals
+Bet on the precise total number of goals (0, 1, 2, 3, 4+, etc.). All available options displayed.
 
-### 14. Exact Number of Goals
-Bet on the precise total number of goals (0, 1, 2, 3, 4+, etc.).
+**Note**: All unrecognized markets will now display **all available outcomes** instead of being truncated to 10 options.
 
 ## Bet Placement
 
@@ -238,9 +257,13 @@ The system recognizes multiple API market keys for flexibility across different 
 | Match Winner | `h2h` | `1x2`, `match_winner` |
 | Double Chance | `double_chance` | `doublechance` |
 | Total Goals | `totals` | `alternate_totals`, `goals_over_under` |
+| Total Goals (1st Half) | `totals_1h` | - |
+| Total Goals (2nd Half) | `totals_2h` | - |
 | BTTS | `btts` | `both_teams_score` |
 | Draw No Bet | `draw_no_bet` | `drawnob` |
 | Asian Handicap | `handicap` | `asian_handicap`, `spreads` |
+| Asian Handicap (1st Half) | `handicap_1h` | - |
+| Asian Handicap (2nd Half) | `handicap_2h` | - |
 | Correct Score | `correct_score` | `correctscore` |
 | Odd/Even | `odd_even` | `oddeven`, `goals_odd_even` |
 
