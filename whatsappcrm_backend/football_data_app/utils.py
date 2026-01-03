@@ -143,8 +143,8 @@ def get_formatted_football_data(
             Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
             Q(status=FootballFixture.FixtureStatus.LIVE)
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            Prefetch('markets', queryset=Market.objects.all()),
-            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.all())
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
         ).order_by('match_date')
 
 
@@ -181,22 +181,30 @@ def get_formatted_football_data(
                 line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}"
 
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
-            for market in fixture.markets.all():
+            markets_list = list(fixture.markets.all())
+            
+            for market in markets_list:
                 market_key = market.api_market_key
                 if market_key not in aggregated_outcomes:
                     aggregated_outcomes[market_key] = {}
-                for outcome in market.outcomes.all():
+                outcomes_list = list(market.outcomes.all())
+                for outcome in outcomes_list:
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
                     current_best_outcome = aggregated_outcomes[market_key].get(outcome_identifier)
                     if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
             
-            # Debug logging
+            # Enhanced debug logging
             if not aggregated_outcomes:
-                markets_count = len(list(fixture.markets.all()))
-                logger.warning(f"No aggregated outcomes for fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}). Markets count: {markets_count}")
+                markets_count = len(markets_list)
+                if markets_count == 0:
+                    logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) has NO active markets in database")
+                else:
+                    # Check if markets have outcomes
+                    total_outcomes = sum(len(list(m.outcomes.all())) for m in markets_list)
+                    logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) has {markets_count} active markets but {total_outcomes} total active outcomes - no odds could be aggregated")
             else:
-                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types: {list(aggregated_outcomes.keys())}")
+                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with odds: {list(aggregated_outcomes.keys())}")
 
             market_lines: List[str] = []
 

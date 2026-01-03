@@ -923,6 +923,11 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     variable_path = single_var_match.group(1).strip()
                     # Directly get the value of the variable from context/contact
                     potential_list_value = _get_value_from_context_or_contact(variable_path, current_step_context, contact)
+                    logger.debug(f"Step '{step.name}': Single variable template detected: '{variable_path}'. Value type: {type(potential_list_value)}, Is list: {isinstance(potential_list_value, list)}")
+                    if potential_list_value is not None and isinstance(potential_list_value, list):
+                        logger.debug(f"Step '{step.name}': List has {len(potential_list_value)} items. First item preview: {str(potential_list_value[0])[:200] if potential_list_value else 'N/A'}")
+                else:
+                    logger.debug(f"Step '{step.name}': Template does not match single variable pattern. Template: '{body_template_string[:100]}'")
 
                 if isinstance(potential_list_value, list):
                     # The template variable resolved directly to a list of strings (message parts), send each as a separate message
@@ -930,12 +935,13 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     for i, part_body in enumerate(potential_list_value):
                         part_body_str = str(part_body).strip() if part_body is not None else ""
                         if part_body_str:
-                             actions_to_perform.append({
+                            logger.debug(f"Step '{step.name}': Creating send action {i+1}/{len(potential_list_value)}. Body length: {len(part_body_str)}, Preview: {part_body_str[:150]}...")
+                            actions_to_perform.append({
                                 'type': 'send_whatsapp_message',
                                 'message_type': 'text',
                                 'data': {'body': part_body_str, 'preview_url': text_content.preview_url}
                             })
-                    logger.debug(f"Step '{step.name}': Added send action for text part {i+1} from list variable.")
+                    logger.info(f"Step '{step.name}': Added {len(potential_list_value)} send actions for list variable '{variable_path}'")
                     final_api_data_structure = None # Indicate that actions were already added
                 else:
                     # This path handles general Django templating, including {% if %} and filters.
@@ -1187,7 +1193,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         days_past=days_past
                     )
                     current_step_context[action_item_root.output_variable_name] = display_text
-                    logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Length: {len(display_text)}")
+                    if display_text is not None:
+                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Parts: {len(display_text)}")
+                    else:
+                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set to None (no data found).")
                 
                 # --- NEW ACTION DISPATCHES ---
                 elif action_type == ActionType.CREATE_ACCOUNT:
