@@ -183,11 +183,16 @@ def get_formatted_football_data(
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             markets_list = list(fixture.markets.all())
             
+            # Track total outcomes across all markets for better debugging
+            total_outcomes_processed = 0
+            
             for market in markets_list:
                 market_key = market.api_market_key
                 if market_key not in aggregated_outcomes:
                     aggregated_outcomes[market_key] = {}
                 outcomes_list = list(market.outcomes.all())
+                total_outcomes_processed += len(outcomes_list)
+                
                 for outcome in outcomes_list:
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
                     current_best_outcome = aggregated_outcomes[market_key].get(outcome_identifier)
@@ -198,13 +203,12 @@ def get_formatted_football_data(
             if not aggregated_outcomes:
                 markets_count = len(markets_list)
                 if markets_count == 0:
-                    logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) has NO active markets in database")
+                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - NO active markets in database")
                 else:
-                    # Check if markets have outcomes
-                    total_outcomes = sum(len(list(m.outcomes.all())) for m in markets_list)
-                    logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) has {markets_count} active markets but {total_outcomes} total active outcomes - no odds could be aggregated")
+                    logger.warning(f"SKIPPING Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - has {markets_count} active markets but {total_outcomes_processed} total active outcomes could not be aggregated properly")
             else:
-                logger.debug(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with odds: {list(aggregated_outcomes.keys())}")
+                total_odds_count = sum(len(outcomes) for outcomes in aggregated_outcomes.values())
+                logger.info(f"Fixture {fixture.id} has {len(aggregated_outcomes)} market types with {total_odds_count} total odds: {list(aggregated_outcomes.keys())}")
 
             market_lines: List[str] = []
 
@@ -418,11 +422,13 @@ def get_formatted_football_data(
                         # (No truncation - WhatsApp can handle messages up to 4096 characters)
                         market_lines.append(f"\n*{market_name}:*\n" + "\n".join(other_parts))
             
+            # ONLY include fixtures that have at least one market with odds
             if market_lines:
                 line += "\n" + "\n".join(market_lines)
+                individual_item_strings.append(line.strip())
+                logger.debug(f"Added fixture {fixture.id} with {len(market_lines)} market sections to output")
             else:
-                line += "\n\n_No odds available_"
-            individual_item_strings.append(line.strip())
+                logger.info(f"SKIPPING fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - no odds available")
 
     elif data_type == "finished_results":
         data_type_label = "Recent Results"
@@ -467,8 +473,10 @@ def get_formatted_football_data(
         return None
 
     if not individual_item_strings:
-        logger.info(f"No items to format for {data_type_label}. Returning None.")
+        logger.warning(f"No items to format for {data_type_label}. All fixtures were skipped (no odds available). Returning None.")
         return None
+
+    logger.info(f"Successfully formatted {len(individual_item_strings)} fixtures with odds for {data_type_label}.")
 
     # Assemble message parts
     all_message_parts: List[str] = []
