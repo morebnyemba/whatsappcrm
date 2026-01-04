@@ -830,7 +830,7 @@ def generate_fixtures_pdf(
         Absolute path to generated PDF file, or None if no data
     """
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, letter
+    from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
@@ -1050,4 +1050,3 @@ def generate_fixtures_pdf(
     except Exception as e:
         logger.error(f"Error generating PDF: {e}", exc_info=True)
         return None
-        raise

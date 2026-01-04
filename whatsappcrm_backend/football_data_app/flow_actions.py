@@ -96,7 +96,7 @@ def handle_football_betting_action(
             else:
                 result = {
                     "success": False,
-                    "message": "No upcoming matches found for the next 7 days.",
+                    "message": f"No upcoming matches found for the next {days_ahead} days.",
                     "data": {}
                 }
         elif action_type == 'view_results':
