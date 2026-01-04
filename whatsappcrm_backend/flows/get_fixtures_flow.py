@@ -31,7 +31,7 @@ def create_get_fixtures_flow():
                         "priority": 1,
                         "condition_config": {
                             "type": "variable_exists",
-                            "variable_name": "flow_context.fixtures_display_parts"
+                            "variable_name": "flow_context.pdf_url"
                         }
                     },
                     {
@@ -45,10 +45,11 @@ def create_get_fixtures_flow():
                 "name": "send_all_fixtures",
                 "step_type": "send_message",
                 "config": {
-                    "message_type": "text",
-                    "text": {
-                        # The service layer will handle sending each item in the list as a separate message
-                        "body": "{{ flow_context.fixtures_display_parts }}"
+                    "message_type": "document",
+                    "document": {
+                        "link": "{{ flow_context.pdf_url }}",
+                        "filename": "{{ flow_context.pdf_filename }}",
+                        "caption": "⚽ Here are the upcoming football fixtures with odds. Tap to view the PDF."
                     }
                 },
                 "transitions": [

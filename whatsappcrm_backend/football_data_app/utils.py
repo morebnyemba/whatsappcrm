@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Message formatting constants
 MAX_CHARS_PER_MESSAGE_PART = 4000
 MESSAGE_PART_SEPARATOR = "\n\n---\n"
+MAX_SINGLE_FIXTURE_LENGTH = 3500  # Max length for individual fixture (leaves room for headers/separators)
 
 # Display limits for betting options (configurable)
 MAX_TOTALS_LINES_TO_DISPLAY = 3  # Maximum Over/Under lines to show per fixture
@@ -423,9 +424,28 @@ def get_formatted_football_data(
             
             # ONLY include fixtures that have at least one market with odds
             if market_lines:
-                line += "\n" + "\n".join(market_lines)
-                individual_item_strings.append(line.strip())
-                logger.debug(f"Added fixture {fixture.id} with {len(market_lines)} market sections to output")
+                # Store base fixture info separately for potential reuse
+                base_fixture_info = line.strip()
+                fixture_text = line + "\n" + "\n".join(market_lines)
+                fixture_text = fixture_text.strip()
+                
+                # Check if single fixture exceeds safe limit (leaving room for header/footer)
+                # WhatsApp limit is 4096, we use 4000 for parts, but a single fixture should be max 3500
+                # to allow room for header and separator
+                if len(fixture_text) > MAX_SINGLE_FIXTURE_LENGTH:
+                    logger.warning(f"Fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) "
+                                 f"exceeds safe length ({len(fixture_text)} > {MAX_SINGLE_FIXTURE_LENGTH} chars). "
+                                 f"Truncating market display...")
+                    # Truncate by reducing the number of market lines shown
+                    # Keep essential markets: Match Winner, Totals, BTTS (first 3 market sections)
+                    essential_markets = market_lines[:3]
+                    truncated_line = base_fixture_info + "\n" + "\n".join(essential_markets)
+                    truncated_line += "\n\n_(...additional markets not shown due to length)_"
+                    fixture_text = truncated_line.strip()
+                    logger.info(f"Truncated fixture {fixture.id} to {len(fixture_text)} chars (kept {len(essential_markets)}/{len(market_lines)} market sections)")
+                
+                individual_item_strings.append(fixture_text)
+                logger.debug(f"Added fixture {fixture.id} with {len(market_lines)} market sections to output (length: {len(fixture_text)} chars)")
             else:
                 logger.info(f"SKIPPING fixture {fixture.id} ({fixture.home_team.name} vs {fixture.away_team.name}) - no odds available")
 
@@ -508,6 +528,25 @@ def get_formatted_football_data(
         final_part_str = MESSAGE_PART_SEPARATOR.join(current_part_items)
         if not all_message_parts:
             final_part_str = main_header + "\n\n" + final_part_str
+        
+        # Final safety check: ensure this part doesn't exceed WhatsApp's limit (4096)
+        if len(final_part_str) > 4096:
+            logger.error(f"CRITICAL: Final message part exceeds WhatsApp limit! Length: {len(final_part_str)}. "
+                        f"This should not happen after fixture truncation. Splitting further...")
+            # Emergency split - this shouldn't happen if our MAX_SINGLE_FIXTURE_LENGTH is correct
+            # but provides a failsafe
+            while len(final_part_str) > MAX_CHARS_PER_MESSAGE_PART and current_part_items:
+                # Remove last item and save it for next part
+                removed_item = current_part_items.pop()
+                temp_part = MESSAGE_PART_SEPARATOR.join(current_part_items)
+                if not all_message_parts:
+                    temp_part = main_header + "\n\n" + temp_part
+                if len(temp_part) <= MAX_CHARS_PER_MESSAGE_PART:
+                    all_message_parts.append(temp_part)
+                    current_part_items = [removed_item]
+                    final_part_str = removed_item
+                    break
+        
         all_message_parts.append(final_part_str)
 
     if all_message_parts:
@@ -770,3 +809,244 @@ def settle_ticket(ticket_id: int):
         logger.error(f"{log_prefix} Error during ticket settlement: {str(e)}", exc_info=True)
         # Re-raise to ensure transaction is rolled back
         raise
+
+
+def generate_fixtures_pdf(
+    data_type: str,
+    league_code: Optional[str] = None,
+    days_ahead: int = 10,
+    days_past: int = 4
+) -> Optional[str]:
+    """
+    Generates a PDF document containing football fixtures with odds.
+    
+    Args:
+        data_type: Type of data ('scheduled_fixtures' or 'finished_results')
+        league_code: Optional league filter
+        days_ahead: Days ahead for scheduled fixtures
+        days_past: Days past for finished results
+    
+    Returns:
+        Absolute path to generated PDF file, or None if no data
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from django.conf import settings
+    import os
+    
+    # Local imports
+    from football_data_app.models import FootballFixture, MarketOutcome, Market
+    
+    logger.info(f"Generating PDF for data_type='{data_type}', league_code='{league_code}'")
+    
+    # Query fixtures
+    now = timezone.now()
+    
+    if data_type == "scheduled_fixtures":
+        start_date = now
+        end_date = now + timedelta(days=days_ahead)
+        fixtures_qs = FootballFixture.objects.filter(
+            Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
+            Q(status=FootballFixture.FixtureStatus.LIVE)
+        ).select_related('home_team', 'away_team', 'league').prefetch_related(
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
+        ).order_by('match_date')
+        title = "Upcoming Football Fixtures"
+    elif data_type == "finished_results":
+        end_date = now
+        start_date = now - timedelta(days=days_past)
+        fixtures_qs = FootballFixture.objects.filter(
+            status=FootballFixture.FixtureStatus.FINISHED,
+            match_date__gte=start_date,
+            match_date__lte=end_date
+        ).select_related('home_team', 'away_team', 'league').order_by('-match_date')
+        title = "Recent Football Results"
+    else:
+        logger.error(f"Invalid data_type: {data_type}")
+        return None
+    
+    if league_code:
+        fixtures_qs = fixtures_qs.filter(league__api_id=league_code)
+    
+    if not fixtures_qs.exists():
+        logger.info("No fixtures found for PDF generation")
+        return None
+    
+    # Create PDF
+    media_root = settings.MEDIA_ROOT
+    pdf_dir = os.path.join(media_root, 'fixtures_pdfs')
+    os.makedirs(pdf_dir, exist_ok=True)
+    
+    timestamp = now.strftime('%Y%m%d_%H%M%S')
+    filename = f"fixtures_{timestamp}.pdf"
+    filepath = os.path.join(pdf_dir, filename)
+    
+    doc = SimpleDocTemplate(filepath, pagesize=letter,
+                          rightMargin=0.5*inch, leftMargin=0.5*inch,
+                          topMargin=0.75*inch, bottomMargin=0.75*inch)
+    
+    # Container for PDF elements
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Title style
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        textColor=colors.HexColor('#1a472a'),
+        spaceAfter=20,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold'
+    )
+    
+    # Add title
+    elements.append(Paragraph(title, title_style))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Add timestamp
+    now_harare = timezone.localtime(now)
+    datetime_str = now_harare.strftime('%B %d, %Y at %I:%M %p %Z')
+    timestamp_style = ParagraphStyle('Timestamp', parent=styles['Normal'], 
+                                     fontSize=10, textColor=colors.grey, 
+                                     alignment=TA_CENTER)
+    elements.append(Paragraph(f"Generated on {datetime_str}", timestamp_style))
+    elements.append(Spacer(1, 0.4*inch))
+    
+    # Process fixtures
+    fixtures_added = 0
+    for fixture in fixtures_qs[:40]:  # Limit to 40 fixtures
+        if fixtures_added > 0 and fixtures_added % 5 == 0:
+            elements.append(PageBreak())
+        
+        # Fixture header
+        match_time_local = timezone.localtime(fixture.match_date)
+        time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
+        
+        fixture_header_style = ParagraphStyle('FixtureHeader', parent=styles['Heading2'],
+                                             fontSize=12, textColor=colors.HexColor('#2c5f2d'),
+                                             spaceAfter=6, fontName='Helvetica-Bold')
+        
+        league_text = f"<b>{fixture.league.name}</b>"
+        elements.append(Paragraph(league_text, fixture_header_style))
+        
+        match_text = f"<b>{fixture.home_team.name}</b> vs <b>{fixture.away_team.name}</b>"
+        if fixture.status == FootballFixture.FixtureStatus.LIVE and fixture.home_team_score is not None:
+            match_text = f"<b>{fixture.home_team.name} {fixture.home_team_score} - {fixture.away_team_score} {fixture.away_team.name}</b> (LIVE)"
+        elif fixture.status == FootballFixture.FixtureStatus.FINISHED and fixture.home_team_score is not None:
+            match_text = f"<b>{fixture.home_team.name} {fixture.home_team_score} - {fixture.away_team_score} {fixture.away_team.name}</b>"
+        
+        match_style = ParagraphStyle('Match', parent=styles['Normal'], fontSize=11, 
+                                     spaceAfter=4)
+        elements.append(Paragraph(match_text, match_style))
+        elements.append(Paragraph(f"<i>{time_str}</i> | Fixture ID: {fixture.id}", 
+                                 ParagraphStyle('Time', parent=styles['Normal'], 
+                                              fontSize=9, textColor=colors.grey)))
+        elements.append(Spacer(1, 0.15*inch))
+        
+        # Get odds data for scheduled fixtures
+        if data_type == "scheduled_fixtures":
+            # Aggregate outcomes
+            aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
+            for market in fixture.markets.all():
+                market_key = market.api_market_key
+                if market_key not in aggregated_outcomes:
+                    aggregated_outcomes[market_key] = {}
+                for outcome in market.outcomes.all():
+                    outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
+                    current_best = aggregated_outcomes[market_key].get(outcome_identifier)
+                    if current_best is None or outcome.odds > current_best.odds:
+                        aggregated_outcomes[market_key][outcome_identifier] = outcome
+            
+            if aggregated_outcomes:
+                # Create odds table
+                odds_data = [['Market', 'Selection', 'Odds', 'ID']]
+                
+                # Add Match Winner
+                if 'h2h' in aggregated_outcomes or '1x2' in aggregated_outcomes:
+                    h2h_outcomes = aggregated_outcomes.get('h2h') or aggregated_outcomes.get('1x2') or {}
+                    home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-") or h2h_outcomes.get('Home-')
+                    draw_odds = h2h_outcomes.get('Draw-')
+                    away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-") or h2h_outcomes.get('Away-')
+                    
+                    if home_odds: odds_data.append(['Match Winner', fixture.home_team.name, f"{home_odds.odds:.2f}", str(home_odds.id)])
+                    if draw_odds: odds_data.append(['', 'Draw', f"{draw_odds.odds:.2f}", str(draw_odds.id)])
+                    if away_odds: odds_data.append(['', fixture.away_team.name, f"{away_odds.odds:.2f}", str(away_odds.id)])
+                
+                # Add BTTS
+                if 'btts' in aggregated_outcomes:
+                    btts_outcomes = aggregated_outcomes.get('btts', {})
+                    yes_odds = btts_outcomes.get('Yes-')
+                    no_odds = btts_outcomes.get('No-')
+                    if yes_odds: odds_data.append(['Both Teams Score', 'Yes', f"{yes_odds.odds:.2f}", str(yes_odds.id)])
+                    if no_odds: odds_data.append(['', 'No', f"{no_odds.odds:.2f}", str(no_odds.id)])
+                
+                # Add Totals (limited)
+                all_totals = {**aggregated_outcomes.get('totals', {}), **aggregated_outcomes.get('goals_over_under', {})}
+                if all_totals:
+                    totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+                    for outcome in all_totals.values():
+                        if outcome.point_value is not None:
+                            if outcome.point_value not in totals_by_point:
+                                totals_by_point[outcome.point_value] = {}
+                            if 'over' in outcome.outcome_name.lower():
+                                totals_by_point[outcome.point_value]['over'] = outcome
+                            elif 'under' in outcome.outcome_name.lower():
+                                totals_by_point[outcome.point_value]['under'] = outcome
+                    
+                    for point in sorted(totals_by_point.keys())[:2]:  # Show top 2 lines
+                        over_outcome = totals_by_point[point].get('over')
+                        under_outcome = totals_by_point[point].get('under')
+                        if over_outcome:
+                            odds_data.append(['Total Goals', f'Over {point:.1f}', f"{over_outcome.odds:.2f}", str(over_outcome.id)])
+                        if under_outcome:
+                            odds_data.append(['', f'Under {point:.1f}', f"{under_outcome.odds:.2f}", str(under_outcome.id)])
+                
+                if len(odds_data) > 1:  # Has data beyond header
+                    table = Table(odds_data, colWidths=[1.8*inch, 1.8*inch, 0.7*inch, 0.7*inch])
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c5f2d')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('ALIGN', (2, 0), (3, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('FONTSIZE', (0, 1), (-1, -1), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('TOPPADDING', (0, 1), (-1, -1), 4),
+                        ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')])
+                    ]))
+                    elements.append(table)
+                else:
+                    elements.append(Paragraph("<i>No odds available</i>", 
+                                            ParagraphStyle('NoOdds', parent=styles['Normal'], 
+                                                         fontSize=9, textColor=colors.grey)))
+            else:
+                elements.append(Paragraph("<i>No odds available</i>", 
+                                        ParagraphStyle('NoOdds', parent=styles['Normal'], 
+                                                     fontSize=9, textColor=colors.grey)))
+        
+        elements.append(Spacer(1, 0.3*inch))
+        fixtures_added += 1
+    
+    # Add footer
+    elements.append(Spacer(1, 0.2*inch))
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, 
+                                 textColor=colors.grey, alignment=TA_CENTER)
+    elements.append(Paragraph("Generated by BetBlitz - Your Football Betting Platform", footer_style))
+    
+    # Build PDF
+    try:
+        doc.build(elements)
+        logger.info(f"PDF generated successfully: {filepath}")
+        return filepath
+    except Exception as e:
+        logger.error(f"Error generating PDF: {e}", exc_info=True)
+        return None
