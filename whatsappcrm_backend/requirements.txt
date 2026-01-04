@@ -44,3 +44,6 @@ djoser>=2.3.0
 
 # Async support - Updated
 gevent>=24.11.1
+
+# PDF generation
+reportlab>=4.2.5

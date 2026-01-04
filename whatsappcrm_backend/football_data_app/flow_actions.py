@@ -10,9 +10,11 @@ from customer_data.utils import create_or_get_customer_account, get_customer_wal
 # IMPORTANT: Using 'FootballFixture' as the main fixture model name
 from .models import FootballFixture, MarketOutcome # Import FootballFixture directly
 from .football_engine import FootballEngine # Retained for other specific engine operations if any
-from .utils import get_formatted_football_data, parse_betting_string
+from .utils import get_formatted_football_data, parse_betting_string, generate_fixtures_pdf
 from typing import Optional, List
 from django.utils import timezone # For footer timestamp in view_my_tickets
+from django.conf import settings
+import os
 
 
 logger = logging.getLogger(__name__)
@@ -69,16 +71,34 @@ def handle_football_betting_action(
         user_wallet = account_info.get('wallet')
 
         if action_type == 'view_matches':
-            formatted_matches_parts = get_formatted_football_data(
+            # Generate PDF instead of text
+            pdf_path = generate_fixtures_pdf(
                 data_type="scheduled_fixtures",
                 league_code=league_code,
                 days_ahead=days_ahead
             )
-            result = {
-                "success": True,
-                "message": formatted_matches_parts, # List of strings
-                "data": {"matches_display_parts": formatted_matches_parts}
-            }
+            
+            if pdf_path:
+                # Get relative URL for the PDF
+                media_url = settings.MEDIA_URL
+                relative_path = os.path.relpath(pdf_path, settings.MEDIA_ROOT)
+                pdf_url = f"{media_url}{relative_path}".replace('\\', '/')  # Ensure forward slashes
+                
+                result = {
+                    "success": True,
+                    "message": "Fixtures PDF generated successfully.",
+                    "data": {
+                        "pdf_path": pdf_path,
+                        "pdf_url": pdf_url,
+                        "pdf_filename": os.path.basename(pdf_path)
+                    }
+                }
+            else:
+                result = {
+                    "success": False,
+                    "message": "No upcoming matches found for the next 7 days.",
+                    "data": {}
+                }
         elif action_type == 'view_results':
              formatted_results_parts = get_formatted_football_data(
                 data_type="finished_results",
