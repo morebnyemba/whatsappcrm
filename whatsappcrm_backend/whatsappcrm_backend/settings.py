@@ -139,6 +139,9 @@ STATIC_ROOT = BASE_DIR / 'staticfiles' # For production `collectstatic`
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Site URL for generating absolute URLs (required for WhatsApp media links)
+SITE_URL = os.getenv('SITE_URL', 'https://popular-real-squirrel.ngrok-free.app')
+
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {
     "default": {

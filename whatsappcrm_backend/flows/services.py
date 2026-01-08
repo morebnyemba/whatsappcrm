@@ -1197,11 +1197,12 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         )
                         
                         if pdf_path:
-                            # Get relative URL for the PDF
+                            # Get absolute URL for the PDF (WhatsApp requires absolute URLs)
                             media_url = settings.MEDIA_URL
+                            site_url = getattr(settings, 'SITE_URL', 'https://popular-real-squirrel.ngrok-free.app')
                             relative_path = os.path.relpath(pdf_path, settings.MEDIA_ROOT)
-                            # Use forward slashes for URL (cross-platform compatible)
-                            pdf_url = os.path.join(media_url, relative_path).replace(os.sep, '/')
+                            # Construct absolute URL with site domain
+                            pdf_url = f"{site_url.rstrip('/')}{media_url}{relative_path}".replace('\\', '/')
                             pdf_filename = os.path.basename(pdf_path)
                             
                             # Set PDF-related context variables
