@@ -4,12 +4,14 @@ from enum import Enum
 import logging
 import json
 import re
+import os
 from typing import List, Dict, Any, Optional, Union, Literal, Tuple
 from django.db import models
 from django.utils import timezone
 from django.db import transaction
 from django.template import Template, Context
 from django.template.exceptions import TemplateSyntaxError, TemplateDoesNotExist
+from django.conf import settings
 
 from pydantic import BaseModel, ValidationError, field_validator, root_validator, Field
 from decimal import Decimal # Ensure Decimal is imported for type hints if used by Pydantic validators
@@ -1195,14 +1197,11 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         )
                         
                         if pdf_path:
-                            # Import settings to construct PDF URL
-                            from django.conf import settings
-                            import os
-                            
                             # Get relative URL for the PDF
                             media_url = settings.MEDIA_URL
                             relative_path = os.path.relpath(pdf_path, settings.MEDIA_ROOT)
-                            pdf_url = f"{media_url}{relative_path}".replace('\\', '/')  # Ensure forward slashes
+                            # Use forward slashes for URL (cross-platform compatible)
+                            pdf_url = os.path.join(media_url, relative_path).replace(os.sep, '/')
                             pdf_filename = os.path.basename(pdf_path)
                             
                             # Set PDF-related context variables
