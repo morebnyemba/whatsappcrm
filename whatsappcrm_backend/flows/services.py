@@ -43,7 +43,7 @@ FOOTBALL_APP_ENABLED = False
 try:
     # These imports assume 'football_data_app' is directly on Python path or known to Django
     from football_data_app.flow_actions import handle_football_betting_action # Assuming renamed to handle_football_betting_action
-    from football_data_app.utils import get_formatted_football_data # Assuming this is in utils.py
+    from football_data_app.utils import get_formatted_football_data, generate_fixtures_pdf # Assuming this is in utils.py
     FOOTBALL_APP_ENABLED = True
 except ImportError as e:
     logger.warning(f"football_data_app.flow_actions or utils could not be imported. Football-related actions will not work. Error: {e}")
@@ -1184,19 +1184,53 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     days_past = action_item_root.days_past_for_results
                     days_ahead = action_item_root.days_ahead_for_fixtures
 
-                    logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code from context ('{action_item_root.league_code_variable}'): '{selected_league_code}', Data type: '{action_item_root.data_type}'.")
-
-                    display_text = get_formatted_football_data(
-                        league_code=selected_league_code,
-                        data_type=action_item_root.data_type,
-                        days_ahead=days_ahead,
-                        days_past=days_past
-                    )
-                    current_step_context[action_item_root.output_variable_name] = display_text
-                    if display_text is not None:
-                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Parts: {len(display_text)}")
+                    # For scheduled fixtures, generate PDF instead of text
+                    if action_item_root.data_type == "scheduled_fixtures":
+                        logger.info(f"Step '{step.name}': Generating PDF for scheduled fixtures. League code: '{selected_league_code}'.")
+                        
+                        pdf_path = generate_fixtures_pdf(
+                            data_type="scheduled_fixtures",
+                            league_code=selected_league_code,
+                            days_ahead=days_ahead
+                        )
+                        
+                        if pdf_path:
+                            # Import settings to construct PDF URL
+                            from django.conf import settings
+                            import os
+                            
+                            # Get relative URL for the PDF
+                            media_url = settings.MEDIA_URL
+                            relative_path = os.path.relpath(pdf_path, settings.MEDIA_ROOT)
+                            pdf_url = f"{media_url}{relative_path}".replace('\\', '/')  # Ensure forward slashes
+                            pdf_filename = os.path.basename(pdf_path)
+                            
+                            # Set PDF-related context variables
+                            current_step_context['pdf_path'] = pdf_path
+                            current_step_context['pdf_url'] = pdf_url
+                            current_step_context['pdf_filename'] = pdf_filename
+                            current_step_context[action_item_root.output_variable_name] = ["PDF generated successfully"]
+                            
+                            logger.info(f"Step '{step.name}': PDF generated successfully. URL: {pdf_url}, Filename: {pdf_filename}")
+                        else:
+                            # No fixtures found
+                            current_step_context[action_item_root.output_variable_name] = None
+                            logger.info(f"Step '{step.name}': No fixtures found for PDF generation.")
                     else:
-                        logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set to None (no data found).")
+                        # For other data types (like finished_results), use text format
+                        logger.info(f"Step '{step.name}': Calling get_formatted_football_data. League code: '{selected_league_code}', Data type: '{action_item_root.data_type}'.")
+                        
+                        display_text = get_formatted_football_data(
+                            league_code=selected_league_code,
+                            data_type=action_item_root.data_type,
+                            days_ahead=days_ahead,
+                            days_past=days_past
+                        )
+                        current_step_context[action_item_root.output_variable_name] = display_text
+                        if display_text is not None:
+                            logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set after fetching football data. Parts: {len(display_text)}")
+                        else:
+                            logger.info(f"Step '{step.name}': Context variable '{action_item_root.output_variable_name}' set to None (no data found).")
                 
                 # --- NEW ACTION DISPATCHES ---
                 elif action_type == ActionType.CREATE_ACCOUNT:
