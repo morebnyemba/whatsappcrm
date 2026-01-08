@@ -140,7 +140,8 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for generating absolute URLs (required for WhatsApp media links)
-SITE_URL = os.getenv('SITE_URL', 'https://popular-real-squirrel.ngrok-free.app')
+# This MUST be set to your actual domain in production (e.g., 'https://yourdomain.com')
+SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000')
 
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {
