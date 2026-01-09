@@ -540,7 +540,7 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
             return None
             
     resolved_val_str = str(current_value)
-    logger.debug(f"Resolved path '{variable_path}' to value: '{resolved_val_str[:100]}{'...' if len(resolved_val_str) > 100 else ''}' (Type: {type(current_value)})")
+    logger.debug(f"Resolved path '{variable_path}' to value: '{resolved_val_str[:100]}{'...' if len(resolved_val_str) > 100 else ''}' (Type: {type(current_value).__name__})")
 
     # Ensure that 'type' objects are converted to their string representation
     # This prevents TypeError: Object of type type is not JSON serializable when saving to JSONField.

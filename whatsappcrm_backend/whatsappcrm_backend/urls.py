@@ -55,9 +55,14 @@ path('crm-api/auth/', include('djoser.urls')),
 # (e.g., using reverse('meta_integration_api:meta_webhook_receiver') in Python code).
 # It helps avoid URL name collisions between apps.
 
-# Serve static and media files during development only
+# Serve static and media files during development
 # In production, WhiteNoise middleware handles static files automatically
-# Media files in production should be served by the web server (Nginx) or cloud storage
+# Media files should be served in all environments for WhatsApp/Meta to access them
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Media files are served through Django to ensure WhatsApp/Meta can access them
+# IMPORTANT: In production, use Nginx or a CDN to serve /media/ directly for better performance
+# and security. This Django fallback ensures functionality but is not optimal for high-traffic production.
+# Example Nginx config: location /media/ { alias /path/to/media/; }
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

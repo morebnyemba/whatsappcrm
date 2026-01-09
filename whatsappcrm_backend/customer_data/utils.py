@@ -578,7 +578,7 @@ def _json_serializable_value(obj: Any) -> Any:
         # If it's not natively JSON serializable, convert it to a string.
         return str(obj)
     except Exception as e:
-        logger.warning(f"Unexpected error during _json_serializable_value for object {obj} (type {type(obj)}): {e}", exc_info=True)
+        logger.warning(f"Unexpected error during _json_serializable_value for object {obj} (type {type(obj).__name__}): {e}", exc_info=True)
         return str(obj) # Fallback to string representation on other errors
 
 def _recursively_clean_json_data(data: Any) -> Any:
