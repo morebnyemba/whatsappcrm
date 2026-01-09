@@ -533,7 +533,7 @@ def _get_value_from_context_or_contact(variable_path: str, flow_context: dict, c
                 else:
                     current_value = attr_or_method # It's a non-callable attribute
             else:
-                logger.debug(f"Part '{part}' not found in current object for path '{variable_path}'. Current object type: {type(current_value)}, value: {str(current_value)[:100]}")
+                logger.debug(f"Part '{part}' not found in current object for path '{variable_path}'. Current object type: {type(current_value).__name__}, value: {str(current_value)[:100]}")
                 return None
         except Exception as e:
             logger.warning(f"Unexpected error accessing part '{part}' of path '{variable_path}': {e}", exc_info=True)
@@ -712,7 +712,7 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
         if not hasattr(contact, 'custom_fields') or contact.custom_fields is None:
             contact.custom_fields = {}
         elif not isinstance(contact.custom_fields, dict):
-            logger.error(f"Contact {contact.whatsapp_id} custom_fields is not a dict ({type(contact.custom_fields)}). Cannot update path '{field_path}'. Re-initializing.")
+            logger.error(f"Contact {contact.whatsapp_id} custom_fields is not a dict ({type(contact.custom_fields).__name__}). Cannot update path '{field_path}'. Re-initializing.")
             contact.custom_fields = {}
 
         current_level = contact.custom_fields
