@@ -61,6 +61,8 @@ path('crm-api/auth/', include('djoser.urls')),
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
-# Always serve media files so Meta/WhatsApp can access media assets
-# In production with Nginx, configure Nginx to serve /media/ directly for better performance
+# Media files are served through Django to ensure WhatsApp/Meta can access them
+# IMPORTANT: In production, use Nginx or a CDN to serve /media/ directly for better performance
+# and security. This Django fallback ensures functionality but is not optimal for high-traffic production.
+# Example Nginx config: location /media/ { alias /path/to/media/; }
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

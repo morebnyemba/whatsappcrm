@@ -66,17 +66,55 @@ Both fixes have been validated:
 
 ## Production Deployment Notes
 
-While media files are now served by Django in all environments, for optimal performance in production, consider configuring Nginx to serve media files directly:
+### Media File Serving
+
+While media files are now served by Django in all environments to ensure WhatsApp/Meta can access them, this approach has performance and security considerations:
+
+**Performance**: Django is not optimized for serving static files. For production deployments, configure Nginx or your web server to serve media files directly:
 
 ```nginx
 location /media/ {
     alias /path/to/your/media/;
     expires 1y;
     add_header Cache-Control "public, immutable";
+    # Optional: Add authentication checks if needed
+    # auth_request /api/check-media-access;
 }
 ```
 
-This allows Nginx to handle static media serving more efficiently than Django, while still ensuring the files are accessible when Django serves them as a fallback.
+**Security Considerations**:
+- The current implementation serves all media files without authentication
+- If you have sensitive user-uploaded content, consider:
+  1. Using a custom view with authentication checks instead of Django's static file serving
+  2. Implementing signed URLs with expiration times for media files
+  3. Using a CDN with access controls
+  4. Separating public (WhatsApp assets) from private (user documents) media directories
+
+**Alternative for High-Security Environments**:
+For applications requiring strict media access controls, consider implementing a custom view:
+
+```python
+from django.views.static import serve as django_serve
+from django.contrib.auth.decorators import login_required
+from django.conf import settings
+
+@login_required  # Or custom permission check
+def protected_media(request, path):
+    # Add custom validation logic here
+    return django_serve(request, path, document_root=settings.MEDIA_ROOT)
+```
+
+Then update URLs:
+```python
+path('media/<path:path>', protected_media, name='protected_media'),
+```
+
+For the current WhatsApp CRM use case where Meta needs to access media files, the implemented solution is appropriate as:
+- WhatsApp/Meta servers need public access to download media files
+- Most media is intended for sharing (fixtures, results, bet slips)
+- Django serving acts as a reliable fallback ensuring functionality
+
+The Django fallback ensures the application works correctly while you can optimize with Nginx in production.
 
 ## Security Considerations
 
