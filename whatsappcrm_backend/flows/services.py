@@ -1962,6 +1962,9 @@ def _evaluate_transition_condition(
 
     elif condition_type == 'interactive_reply_id_equals':
         if interactive_reply_id is None: return False
+        if value_for_condition_comparison is None:
+            logger.warning(f"T_ID {transition.id}: 'interactive_reply_id_equals' missing 'value' in condition_config.")
+            return False
         expected_id = str(value_for_condition_comparison)
         is_match = interactive_reply_id == expected_id
         logger.debug(f"T_ID {transition.id} ('interactive_reply_id_equals'): Received ID '{interactive_reply_id}' vs Expected ID '{expected_id}'. Match: {is_match}")
@@ -1969,6 +1972,9 @@ def _evaluate_transition_condition(
 
     elif condition_type == 'message_type_is':
         if not message_data or not message_data.get('type'): return False
+        if value_for_condition_comparison is None:
+            logger.warning(f"T_ID {transition.id}: 'message_type_is' missing 'value' in condition_config.")
+            return False
         is_match = message_data.get('type') == str(value_for_condition_comparison)
         logger.debug(f"T_ID {transition.id} ('message_type_is'): Received Type '{message_data.get('type')}' vs Expected Type '{value_for_condition_comparison}'. Match: {is_match}")
         return is_match
@@ -1988,6 +1994,9 @@ def _evaluate_transition_condition(
     elif condition_type == 'variable_equals':
         variable_name = config.get('variable_name')
         if variable_name is None: logger.warning(f"T_ID {transition.id}: 'variable_equals' missing variable_name."); return False
+        if value_for_condition_comparison is None:
+            logger.warning(f"T_ID {transition.id}: 'variable_equals' missing 'value' in condition_config. Cannot compare.")
+            return False
         actual_value = _get_value_from_context_or_contact(variable_name, flow_context, contact)
         expected_value_str = str(value_for_condition_comparison)
         actual_value_str = str(actual_value)
@@ -2008,6 +2017,9 @@ def _evaluate_transition_condition(
     elif condition_type == 'variable_contains':
         variable_name = config.get('variable_name')
         if variable_name is None: logger.warning(f"T_ID {transition.id}: 'variable_contains' missing variable_name."); return False
+        if value_for_condition_comparison is None:
+            logger.warning(f"T_ID {transition.id}: 'variable_contains' missing 'value' in condition_config.")
+            return False
         actual_value = _get_value_from_context_or_contact(variable_name, flow_context, contact)
         expected_item_to_contain = value_for_condition_comparison
         contains = False
