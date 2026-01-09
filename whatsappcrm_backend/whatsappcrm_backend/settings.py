@@ -137,7 +137,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles' # For production `collectstatic`
 
 # Media files (User-uploaded content)
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = BASE_DIR / 'mediafiles'  # Changed from 'media' to match docker volume mount
 
 # Site URL for generating absolute URLs (required for WhatsApp media links)
 # This MUST be set to your actual domain in production (e.g., 'https://yourdomain.com')
