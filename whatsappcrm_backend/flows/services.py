@@ -740,7 +740,7 @@ def _update_contact_data(contact: Contact, field_path: str, value_to_set: Any):
                 contact.save(update_fields=['custom_fields'])
                 logger.info(f"Replaced entire Contact {contact.whatsapp_id} custom_fields with: {str(value_to_set)[:200]}")
             else:
-                logger.warning(f"Cannot replace Contact.custom_fields for {contact.whatsapp_id} with a non-dictionary value for path '{field_path}'. Value type: {type(value_to_set)}")
+                logger.warning(f"Cannot replace Contact.custom_fields for {contact.whatsapp_id} with a non-dictionary value for path '{field_path}'. Value type: {type(value_to_set).__name__}")
     else:
         logger.warning(f"Unsupported field path structure '{field_path}' for updating Contact model for contact {contact.whatsapp_id}.")
 
@@ -827,7 +827,7 @@ def _update_customer_profile_data(contact: Contact, fields_to_update_config: Dic
                         changed_fields.append(field_name)
                     logger.debug(f"CustomerProfile JSON field '{field_name}' set to '{str(resolved_value)[:100]}'.")
             else:
-                logger.warning(f"CustomerProfile JSON field '{field_name}' expected dict or None, got '{type(resolved_value)}'. Skipping update.")
+                logger.warning(f"CustomerProfile JSON field '{field_name}' expected dict or None, got '{type(resolved_value).__name__}'. Skipping update.")
         else: # Direct model fields (non-JSONFields)
             try:
                 protected_fields = ['id', 'pk', 'contact', 'contact_id', 'created_at', 'updated_at', 'last_updated_from_conversation', 'user']
@@ -925,7 +925,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     variable_path = single_var_match.group(1).strip()
                     # Directly get the value of the variable from context/contact
                     potential_list_value = _get_value_from_context_or_contact(variable_path, current_step_context, contact)
-                    logger.debug(f"Step '{step.name}': Single variable template detected: '{variable_path}'. Value type: {type(potential_list_value)}, Is list: {isinstance(potential_list_value, list)}")
+                    logger.debug(f"Step '{step.name}': Single variable template detected: '{variable_path}'. Value type: {type(potential_list_value).__name__}, Is list: {isinstance(potential_list_value, list)}")
                     if potential_list_value is not None and isinstance(potential_list_value, list):
                         logger.debug(f"Step '{step.name}': List has {len(potential_list_value)} items. First item preview: {str(potential_list_value[0])[:200] if potential_list_value else 'N/A'}")
                 else:
@@ -1475,10 +1475,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         current_step_context[action_item_root.output_variable_name] = {}
                         continue
                     
-                    settings = ReferralSettings.load()
+                    referral_settings = ReferralSettings.load()
                     settings_data = {
-                        'bonus_percentage_each': settings.bonus_percentage_each,
-                        'bonus_percentage_display': f"{settings.bonus_percentage_each:.2%}"
+                        'bonus_percentage_each': referral_settings.bonus_percentage_each,
+                        'bonus_percentage_display': f"{referral_settings.bonus_percentage_each:.2%}"
                     }
                     current_step_context[action_item_root.output_variable_name] = settings_data
                     logger.info(f"Loaded referral settings into context variable '{action_item_root.output_variable_name}'.")
@@ -1737,10 +1737,10 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
         if reply_was_valid_for_question:
             if variable_to_save_name:
                 flow_context[variable_to_save_name] = value_to_save
-                logger.info(f"Saved valid reply for var '{variable_to_save_name}' in Q-step '{current_step.name}'. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
+                logger.info(f"Saved valid reply for var '{variable_to_save_name}' in Q-step '{current_step.name}'. Value (type {type(value_to_save).__name__}): '{str(value_to_save)[:100]}'.")
                 flow_context.pop('_general_invalid_action_count', None) # Reset general invalid counter on valid question reply
             else:
-                logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save)}): '{str(value_to_save)[:100]}'.")
+                logger.info(f"Valid reply received for Q-step '{current_step.name}', but no 'save_to_variable' defined. Value (type {type(value_to_save).__name__}): '{str(value_to_save)[:100]}'.")
             flow_context.pop('_fallback_count', None) # Clear fallback count on valid reply
             
             contact_flow_state.flow_context_data = flow_context
