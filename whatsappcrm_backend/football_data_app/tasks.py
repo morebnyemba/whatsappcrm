@@ -58,11 +58,11 @@ logger = logging.getLogger(__name__)
 run_the_odds_api_full_update = run_apifootball_full_update_task
 run_the_odds_api_full_update_task = run_apifootball_full_update_task
 
-# Log the transition
-logger.info("Football data tasks: API-Football v3 (api-football.com) is now the recommended provider.")
-logger.info("Legacy provider (apifootball.com without dash) tasks are still available for backward compatibility.")
+# Log the transition at debug level to avoid noise during imports
+logger.debug("Football data tasks: API-Football v3 (api-football.com) is now the recommended provider.")
+logger.debug("Legacy provider (apifootball.com without dash) tasks are still available for backward compatibility.")
 if HAS_V3_TASKS:
-    logger.info("API-Football v3 tasks successfully loaded and available.")
+    logger.debug("API-Football v3 tasks successfully loaded and available.")
 
 # Make all tasks available for import
 __all__ = [
