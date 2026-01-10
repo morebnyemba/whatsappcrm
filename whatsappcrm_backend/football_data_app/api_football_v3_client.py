@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 try:
     from .rate_limiter import rate_limit, check_rate_limit_status
     RATE_LIMITER_AVAILABLE = True
-    logger.info("Rate limiter imported successfully")
+    logger.debug("Rate limiter imported successfully")
 except ImportError as e:
     logger.warning(f"Rate limiter not available: {e}. API calls will not be rate limited.")
     RATE_LIMITER_AVAILABLE = False
