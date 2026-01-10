@@ -1,5 +1,7 @@
 # Django Migration Issue Fix: Stale __pycache__ Files
 
+> **Latest Update (2026-01-10):** The `entrypoint.sh` script now automatically cleans migration `__pycache__` directories on container startup, preventing import errors. No manual intervention required!
+
 ## Problem Description
 
 When running `docker-compose up` or deploying the application, migrations were failing with the error:
@@ -34,7 +36,27 @@ Python prioritizes `.pyc` files over `.py` files when both exist. When outdated 
 
 ## Solution
 
-### 1. Remove __pycache__ Files from Version Control
+### 1. Automatic Cleanup on Container Startup (Latest Fix - 2026-01-10)
+
+The `entrypoint.sh` script now automatically cleans migration `__pycache__` directories on every container startup:
+
+```bash
+cleanup_migration_cache() {
+    echo "Cleaning up migration __pycache__ directories..."
+    find /app -type d -name "__pycache__" -path "*/migrations/*" -exec rm -rf {} + 2>/dev/null || true
+    echo "Migration cache cleanup complete."
+}
+```
+
+This prevents stale bytecode issues when using Docker volume mounts (common in development) where host `__pycache__` directories get mounted into the container.
+
+**Benefits:**
+- ✅ Automatically prevents migration import errors on container startup
+- ✅ No manual intervention required
+- ✅ Works for all services (web, celeryworker, celerybeat)
+- ✅ Safe to run on every startup with no side effects
+
+### 2. Remove __pycache__ Files from Version Control
 
 All `migrations/__pycache__/` directories and `.pyc` files were removed from git tracking:
 
@@ -44,7 +66,7 @@ git rm -r --cached **/migrations/__pycache__/
 
 This ensures Python will always use the actual `.py` migration files, not cached bytecode.
 
-### 2. Verify .gitignore
+### 3. Verify .gitignore
 
 The `.gitignore` file already includes these patterns to prevent future issues:
 
@@ -54,9 +76,9 @@ __pycache__/
 **/migrations/__pycache__/
 ```
 
-### 3. Clean Local Development Environments
+### 4. Clean Local Development Environments (If Needed)
 
-If you encounter migration issues locally, clean your `__pycache__` directories:
+**Note:** With the automatic cleanup in `entrypoint.sh`, this is typically no longer necessary. However, if you encounter migration issues locally outside of Docker, you can manually clean `__pycache__` directories:
 
 ```bash
 # From the project root
@@ -189,8 +211,8 @@ Before committing migrations:
 
 ## Related Files
 
-- `whatsappcrm_backend/meta_integration/migrations/0003_add_app_secret_field.py` - The idempotent migration
-- `whatsappcrm_backend/entrypoint.sh` - Runs migrations on container startup
+- `whatsappcrm_backend/entrypoint.sh` - Automatically cleans migration cache and runs migrations on container startup
+- `whatsappcrm_backend/meta_integration/migrations/0003_add_app_secret_field.py` - Example idempotent migration
 - `.gitignore` - Excludes `__pycache__` directories
 
 ## Verification
@@ -198,10 +220,11 @@ Before committing migrations:
 After this fix is deployed, verify:
 
 1. ✅ No `.pyc` files in the git repository
-2. ✅ Migrations run successfully on fresh databases
-3. ✅ Migrations run successfully on existing databases
-4. ✅ Docker containers start without migration errors
-5. ✅ CI/CD pipelines pass
+2. ✅ Automatic cleanup runs on container startup (check logs for "Cleaning up migration __pycache__ directories...")
+3. ✅ Migrations run successfully on fresh databases
+4. ✅ Migrations run successfully on existing databases
+5. ✅ Docker containers start without migration errors
+6. ✅ CI/CD pipelines pass
 
 ## References
 

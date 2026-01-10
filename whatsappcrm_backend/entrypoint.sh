@@ -3,6 +3,14 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Clean up stale Python bytecode in migrations to prevent import errors
+# This is critical when using volume mounts in development
+cleanup_migration_cache() {
+    echo "Cleaning up migration __pycache__ directories..."
+    find /app -type d -name "__pycache__" -path "*/migrations/*" -exec rm -rf {} + 2>/dev/null || true
+    echo "Migration cache cleanup complete."
+}
+
 # Function to wait for PostgreSQL to be available
 wait_for_db() {
     echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
@@ -52,6 +60,9 @@ shift
 # Migrations should ideally be run by one service instance, or as a separate step/job in CI/CD.
 # For simplicity here, 'web' service will handle migrations and collectstatic.
 # Celery beat also needs migrations for django_celery_beat tables.
+
+# Always clean migration cache before starting any service to prevent stale bytecode issues
+cleanup_migration_cache
 
 if [ "$COMMAND" = "web" ] || [ "$COMMAND" = "celerybeat" ]; then
     wait_for_db
