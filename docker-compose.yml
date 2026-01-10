@@ -144,15 +144,12 @@ services:
       - npm_letsencrypt:/etc/nginx/ssl:ro  # Mount SSL certificates from Let's Encrypt
       - staticfiles_volume:/srv/www/static/:ro
       - media_volume:/srv/www/media/:ro
-    environment:
-      - NGINX_HOST=betblitz.co.zw
-      - NGINX_PORT=80
     depends_on:
       - backend
       - frontend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
