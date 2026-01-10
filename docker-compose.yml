@@ -133,29 +133,26 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  nginx_proxy_manager:
-    image: 'jc21/nginx-proxy-manager:2.12.1'
-    container_name: whatsappcrm_nginx_proxy_manager
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: whatsappcrm_nginx_proxy
     ports:
       - "80:80"      # HTTP
       - "443:443"    # HTTPS
-      - "81:81"      # Admin UI
     volumes:
-      - npm_data:/data
-      - npm_letsencrypt:/etc/letsencrypt
+      - ./nginx_proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - npm_letsencrypt:/etc/nginx/ssl:ro  # Mount SSL certificates from Let's Encrypt
       - staticfiles_volume:/srv/www/static/:ro
       - media_volume:/srv/www/media/:ro
     environment:
-      # Optional: Set a custom database location
-      # DB_SQLITE_FILE: "/data/database.sqlite"
-      # Disable IPV6 if not needed
-      DISABLE_IPV6: 'true'
+      - NGINX_HOST=betblitz.co.zw
+      - NGINX_PORT=80
     depends_on:
       - backend
       - frontend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:81"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -164,6 +161,5 @@ volumes:
   postgres_data:
   redis_data:
   staticfiles_volume:
-  media_volume: # This volume is shared between 'backend' and 'nginx_proxy_manager'
-  npm_data: # Nginx Proxy Manager data (including SQLite database)
-  npm_letsencrypt: # Nginx Proxy Manager SSL certificates
+  media_volume: # This volume is shared between 'backend' and 'nginx_proxy'
+  npm_letsencrypt: # SSL certificates from Let's Encrypt (previously managed by NPM, now used by nginx)
