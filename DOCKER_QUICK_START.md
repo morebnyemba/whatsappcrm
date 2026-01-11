@@ -173,8 +173,11 @@ docker compose restart backend
 # Check Redis is running
 docker compose ps redis
 
-# Test Redis connection
-docker compose exec redis redis-cli -a ${REDIS_PASSWORD} ping
+# Test Redis connection (replace YOUR_PASSWORD with actual Redis password)
+docker compose exec redis redis-cli -a YOUR_PASSWORD ping
+
+# Or read password from .env
+docker compose exec redis redis-cli -a $(grep REDIS_PASSWORD .env | cut -d '=' -f2) ping
 
 # Should return "PONG"
 
@@ -215,7 +218,7 @@ docker compose restart
 | **Create superuser** | `docker compose exec backend python manage.py createsuperuser` |
 | **Django shell** | `docker compose exec backend python manage.py shell` |
 | **Database shell** | `docker compose exec db psql -U crm_user -d whatsapp_crm_dev` |
-| **Redis CLI** | `docker compose exec redis redis-cli -a ${REDIS_PASSWORD}` |
+| **Redis CLI** | `docker compose exec redis redis-cli -a YOUR_PASSWORD` |
 
 ## 🔄 Complete Rebuild
 

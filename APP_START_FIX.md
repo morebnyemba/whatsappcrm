@@ -67,12 +67,7 @@ docker compose exec backend python manage.py createsuperuser
 docker compose stop backend celery_io_worker celery_cpu_worker celery_beat
 
 # 2. Clear database tables
-docker compose exec db psql -U crm_user -d whatsapp_crm_dev << EOF
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-GRANT ALL ON SCHEMA public TO crm_user;
-GRANT ALL ON SCHEMA public TO public;
-EOF
+docker compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
 
 # 3. Remove migration files (from your local machine)
 find whatsappcrm_backend/*/migrations -type f -name "*.py" ! -name "__init__.py" -delete

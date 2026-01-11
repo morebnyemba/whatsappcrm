@@ -67,29 +67,31 @@ If you want to keep your data but reset migrations:
 # 1. Stop backend services
 docker compose stop backend celery_io_worker celery_cpu_worker celery_beat
 
-# 2. Access the database container
-docker compose exec db psql -U crm_user -d whatsapp_crm_dev
+# 2. Clear database tables in one command
+docker compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
 
-# 3. In the PostgreSQL prompt, drop all tables
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-GRANT ALL ON SCHEMA public TO crm_user;
-GRANT ALL ON SCHEMA public TO public;
-\q
+# Alternatively, access the database shell interactively:
+# docker compose exec db psql -U crm_user -d whatsapp_crm_dev
+# Then run the following SQL commands:
+#   DROP SCHEMA public CASCADE;
+#   CREATE SCHEMA public;
+#   GRANT ALL ON SCHEMA public TO crm_user;
+#   GRANT ALL ON SCHEMA public TO public;
+#   \q
 
-# 4. Remove migration files from your local machine
+# 3. Remove migration files from your local machine
 find whatsappcrm_backend/*/migrations -type f -name "*.py" ! -name "__init__.py" -delete
 
-# 5. Start backend to create fresh migrations
+# 4. Start backend to create fresh migrations
 docker compose up -d backend
 
-# 6. Create fresh migrations
+# 5. Create fresh migrations
 docker compose exec backend python manage.py makemigrations
 
-# 7. Apply migrations
+# 6. Apply migrations
 docker compose exec backend python manage.py migrate
 
-# 8. Create superuser
+# 7. Create superuser
 docker compose exec backend python manage.py createsuperuser
 ```
 
@@ -135,8 +137,11 @@ docker compose exec backend python manage.py shell
 # Access database shell
 docker compose exec db psql -U crm_user -d whatsapp_crm_dev
 
-# Access Redis CLI
-docker compose exec redis redis-cli -a ${REDIS_PASSWORD}
+# Access Redis CLI (replace YOUR_PASSWORD with actual Redis password)
+docker compose exec redis redis-cli -a YOUR_PASSWORD
+
+# Or read password from .env and use it
+docker compose exec redis redis-cli -a $(grep REDIS_PASSWORD .env | cut -d '=' -f2)
 ```
 
 ### Restart Services
@@ -259,9 +264,11 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 
 # Celery Configuration
-CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+CELERY_BROKER_URL=redis://:your_redis_password_here@redis:6379/0
+CELERY_RESULT_BACKEND=redis://:your_redis_password_here@redis:6379/0
 ```
+
+**Note:** Replace `your_redis_password_here` with your actual Redis password in all occurrences.
 
 ## Step-by-Step: Complete Fresh Start
 
