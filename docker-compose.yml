@@ -141,7 +141,7 @@ services:
       - "443:443"    # HTTPS
     volumes:
       - ./nginx_proxy/nginx.conf:/etc/nginx/nginx.conf:ro
-      - npm_letsencrypt:/etc/nginx/ssl:ro  # Mount SSL certificates from Let's Encrypt
+      - /etc/letsencrypt:/etc/nginx/ssl:ro  # Mount SSL certificates from Let's Encrypt (host path)
       - staticfiles_volume:/srv/www/static/:ro
       - media_volume:/srv/www/media/:ro
     depends_on:
@@ -159,4 +159,3 @@ volumes:
   redis_data:
   staticfiles_volume:
   media_volume: # This volume is shared between 'backend' and 'nginx_proxy'
-  npm_letsencrypt: # SSL certificates from Let's Encrypt (previously managed by NPM, now used by nginx)
