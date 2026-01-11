@@ -67,12 +67,14 @@ If you want to keep your data but reset migrations:
 # 1. Stop backend services
 docker compose stop backend celery_io_worker celery_cpu_worker celery_beat
 
-# 2. Clear database tables in one command
-docker compose exec db psql -U crm_user -d whatsapp_crm_dev -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
+# 2. Clear database tables
+# Option A: Single command (all in one line)
+docker compose exec db psql -U crm_user -d whatsapp_crm_dev -c \
+  "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO crm_user; GRANT ALL ON SCHEMA public TO public;"
 
-# Alternatively, access the database shell interactively:
+# Option B: Interactive shell (recommended if you prefer step-by-step)
 # docker compose exec db psql -U crm_user -d whatsapp_crm_dev
-# Then run the following SQL commands:
+# Then run these SQL commands:
 #   DROP SCHEMA public CASCADE;
 #   CREATE SCHEMA public;
 #   GRANT ALL ON SCHEMA public TO crm_user;
@@ -137,10 +139,11 @@ docker compose exec backend python manage.py shell
 # Access database shell
 docker compose exec db psql -U crm_user -d whatsapp_crm_dev
 
-# Access Redis CLI (replace YOUR_PASSWORD with actual Redis password)
+# Access Redis CLI
+# Option 1: Replace YOUR_PASSWORD with actual password from your .env file
 docker compose exec redis redis-cli -a YOUR_PASSWORD
 
-# Or read password from .env and use it
+# Option 2: Automatically read password from .env (Linux/Mac only)
 docker compose exec redis redis-cli -a $(grep REDIS_PASSWORD .env | cut -d '=' -f2)
 ```
 

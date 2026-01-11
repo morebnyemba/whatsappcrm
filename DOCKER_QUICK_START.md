@@ -173,10 +173,11 @@ docker compose restart backend
 # Check Redis is running
 docker compose ps redis
 
-# Test Redis connection (replace YOUR_PASSWORD with actual Redis password)
+# Test Redis connection
+# Option 1: Replace YOUR_PASSWORD with actual password from your .env file
 docker compose exec redis redis-cli -a YOUR_PASSWORD ping
 
-# Or read password from .env
+# Option 2: Automatically read password from .env (Linux/Mac only)
 docker compose exec redis redis-cli -a $(grep REDIS_PASSWORD .env | cut -d '=' -f2) ping
 
 # Should return "PONG"
