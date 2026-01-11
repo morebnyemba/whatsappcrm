@@ -2,6 +2,8 @@
 
 A comprehensive WhatsApp Business CRM solution with automated conversational flows, customer management, and betting/payment integrations. Built with Django REST Framework backend and React (Vite) frontend, containerized with Docker for easy deployment.
 
+> **🆘 App Not Starting?** See [APP_START_FIX.md](APP_START_FIX.md) for quick database reset commands and troubleshooting steps.
+
 ## 🏗️ Architecture Overview
 
 ```
@@ -178,22 +180,24 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
 
 3. **Start all services**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
+   
+   > **Note**: This guide uses `docker compose` (Docker Compose V2). If using V1, replace with `docker-compose`.
 
 4. **Run database migrations**
    ```bash
-   docker-compose exec backend python manage.py migrate
+   docker compose exec backend python manage.py migrate
    ```
 
 5. **Create superuser**
    ```bash
-   docker-compose exec backend python manage.py createsuperuser
+   docker compose exec backend python manage.py createsuperuser
    ```
 
 6. **Initialize Football Leagues** (Required for betting features)
    ```bash
-   docker-compose exec backend python manage.py football_league_setup
+   docker compose exec backend python manage.py football_league_setup
    ```
    
    This command fetches available football leagues from APIFootball.com and populates the database. 
@@ -262,13 +266,13 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
    Check that leagues are initialized and scheduled tasks are running:
    ```bash
    # Run comprehensive setup check (recommended)
-   docker-compose exec backend python manage.py check_football_setup
+   docker compose exec backend python manage.py check_football_setup
    
    # Or manually check league count
-   docker-compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
+   docker compose exec backend python manage.py shell -c "from football_data_app.models import League; print(f'Active leagues: {League.objects.filter(active=True).count()}')"
    
    # View Celery worker logs to monitor scheduled tasks
-   docker-compose logs -f celery_worker_football
+   docker compose logs -f celery_worker_football
    ```
    
    You should see log messages indicating leagues are being processed, not "Found 0 active leagues".
@@ -450,7 +454,7 @@ npm run dev
 ### Running Tests
 ```bash
 # Backend tests
-docker-compose exec backend python manage.py test
+docker compose exec backend python manage.py test
 
 # Frontend linting
 cd whatsapp-crm-frontend && npm run lint
@@ -499,6 +503,36 @@ python reset_migrations.py
 - Troubleshooting common issues
 - Backup and restore procedures
 
+### Database and Migration Reset Commands
+
+For quick access to Docker Compose commands to clear the database and migrations, see **[DATABASE_RESET_COMMANDS.md](DATABASE_RESET_COMMANDS.md)**.
+
+This guide includes:
+- Quick backup and reset commands
+- Manual Docker Compose commands for database operations
+- Step-by-step fresh start procedures
+- Common troubleshooting solutions
+- Docker Compose command reference
+
+**Quick Commands:**
+
+```bash
+# Complete database reset (removes all data and volumes)
+docker compose down -v
+docker compose up -d
+
+# Reset migrations only (using the script)
+./reset_migrations.sh
+
+# View logs to troubleshoot
+docker compose logs -f backend
+
+# Run migrations manually
+docker compose exec backend python manage.py migrate
+```
+
+> **Note**: Always backup before clearing database or resetting migrations!
+
 ### Common Issues
 
 - **Database connection errors**: Ensure PostgreSQL is running and credentials are correct
@@ -509,7 +543,7 @@ python reset_migrations.py
 ## 📦 Production Deployment
 
 1. Update `.env` with production values
-2. Run `docker-compose up -d --build`
+2. Run `docker compose up -d --build`
 3. Access Nginx Proxy Manager UI at http://your-server-ip:81
 4. Change default admin credentials immediately
 5. Configure proxy hosts for your domain(s) in NPM
