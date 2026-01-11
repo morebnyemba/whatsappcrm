@@ -2,6 +2,8 @@
 
 A comprehensive WhatsApp Business CRM solution with automated conversational flows, customer management, and betting/payment integrations. Built with Django REST Framework backend and React (Vite) frontend, containerized with Docker for easy deployment.
 
+> **🆘 App Not Starting?** See [APP_START_FIX.md](APP_START_FIX.md) for quick database reset commands and troubleshooting steps.
+
 ## 🏗️ Architecture Overview
 
 ```
