@@ -142,6 +142,7 @@ services:
     volumes:
       - ./nginx_proxy/nginx.conf:/etc/nginx/nginx.conf:ro
       - /etc/letsencrypt:/etc/nginx/ssl:ro  # Mount SSL certificates from Let's Encrypt (host path)
+      - /var/www/letsencrypt:/var/www/letsencrypt:ro  # ACME challenge files for certificate renewal
       - staticfiles_volume:/srv/www/static/:ro
       - media_volume:/srv/www/media/:ro
     depends_on:
