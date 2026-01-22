@@ -36,7 +36,7 @@ COPY . /app/
 # Create directories that might be needed for volumes or collectstatic
 # and change ownership to the new user
 RUN mkdir -p /app/staticfiles
-RUN mkdir -p /app/whatsapp_media_assets # Assuming this is your MEDIA_ROOT
+RUN mkdir -p /app/mediafiles  # This must match MEDIA_ROOT in settings.py and docker-compose.yml
 
 # Expose port (ensure this matches what Gunicorn/Daphne will run on)
 EXPOSE 8000
