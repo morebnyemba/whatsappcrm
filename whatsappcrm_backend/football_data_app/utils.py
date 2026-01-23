@@ -629,6 +629,26 @@ def parse_betting_string(betting_string: str) -> dict:
         fixture = outcome.market.fixture
         if fixture.status not in valid_statuses:
             return {"success": False, "message": f"Outcome ID {outcome.id} is from a match that is no longer accepting bets (status: {fixture.status})."}
+    
+    # --- Validate no conflicting outcomes from the same market ---
+    # Users cannot select multiple outcomes from the same market (e.g., BTTS Yes AND BTTS No)
+    market_outcomes_map = {}  # market_id -> list of outcome names
+    for outcome in outcomes:
+        market_id = outcome.market.id
+        if market_id not in market_outcomes_map:
+            market_outcomes_map[market_id] = []
+        market_outcomes_map[market_id].append(outcome)
+    
+    # Check for conflicts (multiple outcomes from same market)
+    for market_id, market_outcomes in market_outcomes_map.items():
+        if len(market_outcomes) > 1:
+            outcome_names = [o.outcome_name for o in market_outcomes]
+            market = market_outcomes[0].market
+            fixture = market.fixture
+            return {
+                "success": False, 
+                "message": f"Conflicting selections: You selected multiple outcomes ({', '.join(outcome_names)}) from the same market '{market.category.name}' for {fixture.home_team.name} vs {fixture.away_team.name}. Please select only one outcome per market."
+            }
 
     return {
         "success": True,
