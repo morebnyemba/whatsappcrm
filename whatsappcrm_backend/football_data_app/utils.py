@@ -641,7 +641,7 @@ def parse_betting_string(betting_string: str) -> dict:
                 found_outcome = outcome
                 break
         
-        # 2. Totals (Over/Under) matching
+        # 2. Totals (Over/Under) matching - e.g., "Over 2.5", "Under 1.5", "O2.5", "U1.5"
         if not found_outcome:
             totals_match = re.match(r"(over|under|o|u)\s*(\d+\.?\d*)", option_text, re.IGNORECASE)
             if totals_match:
@@ -649,25 +649,25 @@ def parse_betting_string(betting_string: str) -> dict:
                 point_val = Decimal(point_val_str)
                 outcome_name_to_find = 'over' if bet_type.lower().startswith('o') else 'under'
                 for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['totals', 'alternate_totals'] and \
+                    if outcome.market.api_market_key in ['totals', 'alternate_totals', 'goals_over_under'] and \
                        outcome.point_value is not None and Decimal(str(outcome.point_value)) == point_val and \
                        outcome_name_to_find in outcome.outcome_name.lower():
                         found_outcome = outcome
                         break
         
-        # 3. BTTS (Both Teams To Score) matching
+        # 3. BTTS (Both Teams To Score) matching - e.g., "BTTS Yes", "GG", "BTTS No", "NG", "Yes", "No"
         if not found_outcome:
             btts_text = option_text.lower().replace(" ", "")
             outcome_name_to_find = None
-            if btts_text in ['bttsyes', 'gg']: outcome_name_to_find = 'Yes'
-            elif btts_text in ['bttsno', 'ng']: outcome_name_to_find = 'No'
+            if btts_text in ['bttsyes', 'gg', 'yes']: outcome_name_to_find = 'Yes'
+            elif btts_text in ['bttsno', 'ng', 'no']: outcome_name_to_find = 'No'
             if outcome_name_to_find:
                 for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key == 'btts' and outcome.outcome_name == outcome_name_to_find:
+                    if outcome.market.api_market_key in ['btts', 'both_teams_score'] and outcome.outcome_name == outcome_name_to_find:
                         found_outcome = outcome
                         break
         
-        # 4. H2H (Home/Away/Draw) matching
+        # 4. H2H (Home/Away/Draw) matching - e.g., "Home", "1", "Away", "2", "Draw", "X"
         if not found_outcome:
             h2h_text = option_text.lower()
             outcome_name_to_find = None
@@ -679,7 +679,88 @@ def parse_betting_string(betting_string: str) -> dict:
                 outcome_name_to_find = 'Draw'
             if outcome_name_to_find:
                 for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key == 'h2h' and outcome.outcome_name == outcome_name_to_find:
+                    if outcome.market.api_market_key in ['h2h', '1x2', 'match_winner'] and outcome.outcome_name == outcome_name_to_find:
+                        found_outcome = outcome
+                        break
+        
+        # 5. Double Chance matching - e.g., "1X", "Home/Draw", "12", "Home/Away", "X2", "Draw/Away"
+        if not found_outcome:
+            dc_text = option_text.lower().replace(" ", "").replace("/", "")
+            outcome_name_to_find = None
+            if dc_text in ['1x', 'homedraw']:
+                outcome_name_to_find = 'Home/Draw'
+            elif dc_text in ['12', 'homeaway']:
+                outcome_name_to_find = 'Home/Away'
+            elif dc_text in ['x2', 'drawaway']:
+                outcome_name_to_find = 'Draw/Away'
+            if outcome_name_to_find:
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key in ['double_chance', 'doublechance'] and outcome.outcome_name == outcome_name_to_find:
+                        found_outcome = outcome
+                        break
+        
+        # 6. Draw No Bet matching - e.g., "DNB Home", "DNB Away", "DNB [team name]"
+        if not found_outcome:
+            dnb_match = re.match(r"(?:dnb|draw\s*no\s*bet)\s*(.+)", option_text, re.IGNORECASE)
+            if dnb_match:
+                team_text = dnb_match.group(1).strip().lower()
+                outcome_name_to_find = None
+                if team_text in ['home', matched_fixture.home_team.name.lower()]:
+                    outcome_name_to_find = matched_fixture.home_team.name
+                elif team_text in ['away', matched_fixture.away_team.name.lower()]:
+                    outcome_name_to_find = matched_fixture.away_team.name
+                if outcome_name_to_find:
+                    for outcome in outcomes_for_fixture:
+                        if outcome.market.api_market_key in ['draw_no_bet', 'drawnob'] and outcome.outcome_name == outcome_name_to_find:
+                            found_outcome = outcome
+                            break
+        
+        # 7. Asian Handicap matching - e.g., "Home -0.5", "Away +1.5", "[Team Name] -0.5"
+        if not found_outcome:
+            handicap_match = re.match(r"(.+?)\s*([+-]?\d+\.?\d*)", option_text, re.IGNORECASE)
+            if handicap_match:
+                team_text = handicap_match.group(1).strip().lower()
+                try:
+                    point_val = float(handicap_match.group(2))
+                    outcome_name_to_find = None
+                    if team_text in ['home', matched_fixture.home_team.name.lower()]:
+                        outcome_name_to_find = matched_fixture.home_team.name
+                    elif team_text in ['away', matched_fixture.away_team.name.lower()]:
+                        outcome_name_to_find = matched_fixture.away_team.name
+                    if outcome_name_to_find:
+                        for outcome in outcomes_for_fixture:
+                            if outcome.market.api_market_key in ['handicap', 'asian_handicap', 'spreads'] and \
+                               outcome.point_value is not None and abs(float(outcome.point_value) - point_val) < 0.01 and \
+                               outcome_name_to_find in outcome.outcome_name:
+                                found_outcome = outcome
+                                break
+                except (ValueError, TypeError):
+                    pass
+        
+        # 8. Correct Score matching - e.g., "1-0", "2-1", "0-0"
+        if not found_outcome:
+            score_match = re.match(r"^(\d+)\s*[-:]\s*(\d+)$", option_text.strip())
+            if score_match:
+                score_text = f"{score_match.group(1)}-{score_match.group(2)}"
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key in ['correct_score', 'correctscore']:
+                        # Match various score formats: "1-0", "1:0", etc.
+                        normalized_outcome = outcome.outcome_name.replace(":", "-").strip()
+                        if normalized_outcome == score_text:
+                            found_outcome = outcome
+                            break
+        
+        # 9. Odd/Even Goals matching - e.g., "Odd", "Even"
+        if not found_outcome:
+            oe_text = option_text.lower().strip()
+            if oe_text in ['odd', 'odd goals']:
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == 'Odd':
+                        found_outcome = outcome
+                        break
+            elif oe_text in ['even', 'even goals']:
+                for outcome in outcomes_for_fixture:
+                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == 'Even':
                         found_outcome = outcome
                         break
 
@@ -964,30 +1045,47 @@ def generate_fixtures_pdf(
                         aggregated_outcomes[market_key][outcome_identifier] = outcome
             
             if aggregated_outcomes:
-                # Create odds table
+                # Create odds table with improved design
                 odds_data = [['Market', 'Selection', 'Odds', 'ID']]
                 
-                # Add Match Winner
-                if 'h2h' in aggregated_outcomes or '1x2' in aggregated_outcomes:
-                    h2h_outcomes = aggregated_outcomes.get('h2h') or aggregated_outcomes.get('1x2') or {}
-                    home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-") or h2h_outcomes.get('Home-')
-                    draw_odds = h2h_outcomes.get('Draw-')
-                    away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-") or h2h_outcomes.get('Away-')
+                # 1. Add Match Winner (1X2)
+                if 'h2h' in aggregated_outcomes or '1x2' in aggregated_outcomes or 'match_winner' in aggregated_outcomes:
+                    h2h_outcomes = (aggregated_outcomes.get('h2h') or 
+                                   aggregated_outcomes.get('1x2') or 
+                                   aggregated_outcomes.get('match_winner') or {})
+                    home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-") or h2h_outcomes.get('Home-') or h2h_outcomes.get('1-')
+                    draw_odds = h2h_outcomes.get('Draw-') or h2h_outcomes.get('X-')
+                    away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-") or h2h_outcomes.get('Away-') or h2h_outcomes.get('2-')
                     
                     if home_odds: odds_data.append(['Match Winner', fixture.home_team.name, f"{home_odds.odds:.2f}", str(home_odds.id)])
                     if draw_odds: odds_data.append(['', 'Draw', f"{draw_odds.odds:.2f}", str(draw_odds.id)])
                     if away_odds: odds_data.append(['', fixture.away_team.name, f"{away_odds.odds:.2f}", str(away_odds.id)])
                 
-                # Add BTTS
-                if 'btts' in aggregated_outcomes:
-                    btts_outcomes = aggregated_outcomes.get('btts', {})
-                    yes_odds = btts_outcomes.get('Yes-')
-                    no_odds = btts_outcomes.get('No-')
+                # 2. Add Double Chance
+                if 'double_chance' in aggregated_outcomes or 'doublechance' in aggregated_outcomes:
+                    dc_outcomes = aggregated_outcomes.get('double_chance') or aggregated_outcomes.get('doublechance') or {}
+                    home_draw = dc_outcomes.get('Home/Draw-') or dc_outcomes.get('1X-')
+                    home_away = dc_outcomes.get('Home/Away-') or dc_outcomes.get('12-')
+                    draw_away = dc_outcomes.get('Draw/Away-') or dc_outcomes.get('X2-')
+                    
+                    if home_draw: odds_data.append(['Double Chance', 'Home/Draw (1X)', f"{home_draw.odds:.2f}", str(home_draw.id)])
+                    if home_away: odds_data.append(['', 'Home/Away (12)', f"{home_away.odds:.2f}", str(home_away.id)])
+                    if draw_away: odds_data.append(['', 'Draw/Away (X2)', f"{draw_away.odds:.2f}", str(draw_away.id)])
+                
+                # 3. Add BTTS
+                if 'btts' in aggregated_outcomes or 'both_teams_score' in aggregated_outcomes:
+                    btts_outcomes = aggregated_outcomes.get('btts') or aggregated_outcomes.get('both_teams_score') or {}
+                    yes_odds = btts_outcomes.get('Yes-') or btts_outcomes.get('Both Teams Score-')
+                    no_odds = btts_outcomes.get('No-') or btts_outcomes.get('Not Both Teams Score-')
                     if yes_odds: odds_data.append(['Both Teams Score', 'Yes', f"{yes_odds.odds:.2f}", str(yes_odds.id)])
                     if no_odds: odds_data.append(['', 'No', f"{no_odds.odds:.2f}", str(no_odds.id)])
                 
-                # Add Totals (limited)
-                all_totals = {**aggregated_outcomes.get('totals', {}), **aggregated_outcomes.get('goals_over_under', {})}
+                # 4. Add Totals (Over/Under) - show top 3 lines
+                all_totals = {
+                    **aggregated_outcomes.get('totals', {}), 
+                    **aggregated_outcomes.get('alternate_totals', {}),
+                    **aggregated_outcomes.get('goals_over_under', {})
+                }
                 if all_totals:
                     totals_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
                     for outcome in all_totals.values():
@@ -999,7 +1097,8 @@ def generate_fixtures_pdf(
                             elif 'under' in outcome.outcome_name.lower():
                                 totals_by_point[outcome.point_value]['under'] = outcome
                     
-                    for point in sorted(totals_by_point.keys())[:2]:  # Show top 2 lines
+                    # Show top 3 lines (matching WhatsApp display)
+                    for point in sorted(totals_by_point.keys())[:3]:
                         over_outcome = totals_by_point[point].get('over')
                         under_outcome = totals_by_point[point].get('under')
                         if over_outcome:
@@ -1007,21 +1106,94 @@ def generate_fixtures_pdf(
                         if under_outcome:
                             odds_data.append(['', f'Under {point:.1f}', f"{under_outcome.odds:.2f}", str(under_outcome.id)])
                 
+                # 5. Add Draw No Bet
+                if 'draw_no_bet' in aggregated_outcomes or 'drawnob' in aggregated_outcomes:
+                    dnb_outcomes = aggregated_outcomes.get('draw_no_bet') or aggregated_outcomes.get('drawnob') or {}
+                    home_dnb = dnb_outcomes.get(f"{fixture.home_team.name}-") or dnb_outcomes.get('Home-')
+                    away_dnb = dnb_outcomes.get(f"{fixture.away_team.name}-") or dnb_outcomes.get('Away-')
+                    
+                    if home_dnb: odds_data.append(['Draw No Bet', fixture.home_team.name, f"{home_dnb.odds:.2f}", str(home_dnb.id)])
+                    if away_dnb: odds_data.append(['', fixture.away_team.name, f"{away_dnb.odds:.2f}", str(away_dnb.id)])
+                
+                # 6. Add Asian Handicap (show all lines sorted by point value)
+                if 'handicap' in aggregated_outcomes or 'asian_handicap' in aggregated_outcomes or 'spreads' in aggregated_outcomes:
+                    handicap_outcomes = (aggregated_outcomes.get('handicap') or 
+                                        aggregated_outcomes.get('asian_handicap') or 
+                                        aggregated_outcomes.get('spreads') or {})
+                    
+                    handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
+                    for outcome in handicap_outcomes.values():
+                        if outcome.point_value is not None:
+                            if outcome.point_value not in handicap_by_point:
+                                handicap_by_point[outcome.point_value] = {}
+                            if fixture.home_team.name in outcome.outcome_name or 'Home' in outcome.outcome_name:
+                                handicap_by_point[outcome.point_value]['home'] = outcome
+                            elif fixture.away_team.name in outcome.outcome_name or 'Away' in outcome.outcome_name:
+                                handicap_by_point[outcome.point_value]['away'] = outcome
+                    
+                    sorted_points = sorted(handicap_by_point.keys(), key=lambda x: abs(x))[:3]  # Show top 3 lines
+                    first_hcp = True
+                    for point in sorted_points:
+                        home_hcp = handicap_by_point[point].get('home')
+                        away_hcp = handicap_by_point[point].get('away')
+                        
+                        if home_hcp:
+                            sign = '+' if point >= 0 else ''
+                            market_name = 'Asian Handicap' if first_hcp else ''
+                            odds_data.append([market_name, f"{fixture.home_team.name} ({sign}{point})", f"{home_hcp.odds:.2f}", str(home_hcp.id)])
+                            first_hcp = False
+                        if away_hcp:
+                            opposite_line = -point
+                            sign = '+' if opposite_line >= 0 else ''
+                            odds_data.append(['', f"{fixture.away_team.name} ({sign}{opposite_line})", f"{away_hcp.odds:.2f}", str(away_hcp.id)])
+                
+                # 7. Add Correct Score (top 4 most likely)
+                if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
+                    cs_outcomes = aggregated_outcomes.get('correct_score') or aggregated_outcomes.get('correctscore') or {}
+                    sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:4]
+                    
+                    first_cs = True
+                    for score_key, outcome in sorted_scores:
+                        market_name = 'Correct Score' if first_cs else ''
+                        odds_data.append([market_name, outcome.outcome_name, f"{outcome.odds:.2f}", str(outcome.id)])
+                        first_cs = False
+                
+                # 8. Add Odd/Even Goals
+                if 'odd_even' in aggregated_outcomes or 'oddeven' in aggregated_outcomes or 'goals_odd_even' in aggregated_outcomes:
+                    oe_outcomes = (aggregated_outcomes.get('odd_even') or 
+                                  aggregated_outcomes.get('oddeven') or 
+                                  aggregated_outcomes.get('goals_odd_even') or {})
+                    odd_outcome = oe_outcomes.get('Odd-')
+                    even_outcome = oe_outcomes.get('Even-')
+                    
+                    if odd_outcome: odds_data.append(['Odd/Even Goals', 'Odd', f"{odd_outcome.odds:.2f}", str(odd_outcome.id)])
+                    if even_outcome: odds_data.append(['', 'Even', f"{even_outcome.odds:.2f}", str(even_outcome.id)])
+                
                 if len(odds_data) > 1:  # Has data beyond header
-                    table = Table(odds_data, colWidths=[1.8*inch, 1.8*inch, 0.7*inch, 0.7*inch])
+                    # Improved table design with better column widths
+                    table = Table(odds_data, colWidths=[1.5*inch, 2.0*inch, 0.7*inch, 0.8*inch])
                     table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c5f2d')),
+                        # Header styling
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a472a')),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('TOPPADDING', (0, 0), (-1, 0), 8),
+                        # Body styling
                         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                         ('ALIGN', (2, 0), (3, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),
-                        ('FONTSIZE', (0, 1), (-1, -1), 9),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 8),
                         ('TOPPADDING', (0, 1), (-1, -1), 4),
                         ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
-                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')])
+                        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                        # Grid and alternating row colors
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+                        # Bold market names
+                        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
                     ]))
                     elements.append(table)
                 else:
