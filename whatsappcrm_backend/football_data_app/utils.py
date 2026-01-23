@@ -753,14 +753,14 @@ def parse_betting_string(betting_string: str) -> dict:
         # 9. Odd/Even Goals matching - e.g., "Odd", "Even"
         if not found_outcome:
             oe_text = option_text.lower().strip()
+            outcome_name_to_find = None
             if oe_text in ['odd', 'odd goals']:
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == 'Odd':
-                        found_outcome = outcome
-                        break
+                outcome_name_to_find = 'Odd'
             elif oe_text in ['even', 'even goals']:
+                outcome_name_to_find = 'Even'
+            if outcome_name_to_find:
                 for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == 'Even':
+                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == outcome_name_to_find:
                         found_outcome = outcome
                         break
 
@@ -890,6 +890,18 @@ def settle_ticket(ticket_id: int):
         logger.error(f"{log_prefix} Error during ticket settlement: {str(e)}", exc_info=True)
         # Re-raise to ensure transaction is rolled back
         raise
+
+
+def _get_outcome_from_keys(outcomes_dict: Dict, *keys) -> Optional[Any]:
+    """
+    Helper function to get an outcome from a dictionary using multiple possible keys.
+    Returns the first match found, or None if no key matches.
+    """
+    for key in keys:
+        result = outcomes_dict.get(key)
+        if result is not None:
+            return result
+    return None
 
 
 def generate_fixtures_pdf(
@@ -1050,12 +1062,10 @@ def generate_fixtures_pdf(
                 
                 # 1. Add Match Winner (1X2)
                 if 'h2h' in aggregated_outcomes or '1x2' in aggregated_outcomes or 'match_winner' in aggregated_outcomes:
-                    h2h_outcomes = (aggregated_outcomes.get('h2h') or 
-                                   aggregated_outcomes.get('1x2') or 
-                                   aggregated_outcomes.get('match_winner') or {})
-                    home_odds = h2h_outcomes.get(f"{fixture.home_team.name}-") or h2h_outcomes.get('Home-') or h2h_outcomes.get('1-')
-                    draw_odds = h2h_outcomes.get('Draw-') or h2h_outcomes.get('X-')
-                    away_odds = h2h_outcomes.get(f"{fixture.away_team.name}-") or h2h_outcomes.get('Away-') or h2h_outcomes.get('2-')
+                    h2h_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'h2h', '1x2', 'match_winner') or {}
+                    home_odds = _get_outcome_from_keys(h2h_outcomes, f"{fixture.home_team.name}-", 'Home-', '1-')
+                    draw_odds = _get_outcome_from_keys(h2h_outcomes, 'Draw-', 'X-')
+                    away_odds = _get_outcome_from_keys(h2h_outcomes, f"{fixture.away_team.name}-", 'Away-', '2-')
                     
                     if home_odds: odds_data.append(['Match Winner', fixture.home_team.name, f"{home_odds.odds:.2f}", str(home_odds.id)])
                     if draw_odds: odds_data.append(['', 'Draw', f"{draw_odds.odds:.2f}", str(draw_odds.id)])
@@ -1063,10 +1073,10 @@ def generate_fixtures_pdf(
                 
                 # 2. Add Double Chance
                 if 'double_chance' in aggregated_outcomes or 'doublechance' in aggregated_outcomes:
-                    dc_outcomes = aggregated_outcomes.get('double_chance') or aggregated_outcomes.get('doublechance') or {}
-                    home_draw = dc_outcomes.get('Home/Draw-') or dc_outcomes.get('1X-')
-                    home_away = dc_outcomes.get('Home/Away-') or dc_outcomes.get('12-')
-                    draw_away = dc_outcomes.get('Draw/Away-') or dc_outcomes.get('X2-')
+                    dc_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'double_chance', 'doublechance') or {}
+                    home_draw = _get_outcome_from_keys(dc_outcomes, 'Home/Draw-', '1X-')
+                    home_away = _get_outcome_from_keys(dc_outcomes, 'Home/Away-', '12-')
+                    draw_away = _get_outcome_from_keys(dc_outcomes, 'Draw/Away-', 'X2-')
                     
                     if home_draw: odds_data.append(['Double Chance', 'Home/Draw (1X)', f"{home_draw.odds:.2f}", str(home_draw.id)])
                     if home_away: odds_data.append(['', 'Home/Away (12)', f"{home_away.odds:.2f}", str(home_away.id)])
@@ -1074,9 +1084,9 @@ def generate_fixtures_pdf(
                 
                 # 3. Add BTTS
                 if 'btts' in aggregated_outcomes or 'both_teams_score' in aggregated_outcomes:
-                    btts_outcomes = aggregated_outcomes.get('btts') or aggregated_outcomes.get('both_teams_score') or {}
-                    yes_odds = btts_outcomes.get('Yes-') or btts_outcomes.get('Both Teams Score-')
-                    no_odds = btts_outcomes.get('No-') or btts_outcomes.get('Not Both Teams Score-')
+                    btts_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'btts', 'both_teams_score') or {}
+                    yes_odds = _get_outcome_from_keys(btts_outcomes, 'Yes-', 'Both Teams Score-')
+                    no_odds = _get_outcome_from_keys(btts_outcomes, 'No-', 'Not Both Teams Score-')
                     if yes_odds: odds_data.append(['Both Teams Score', 'Yes', f"{yes_odds.odds:.2f}", str(yes_odds.id)])
                     if no_odds: odds_data.append(['', 'No', f"{no_odds.odds:.2f}", str(no_odds.id)])
                 
@@ -1108,18 +1118,16 @@ def generate_fixtures_pdf(
                 
                 # 5. Add Draw No Bet
                 if 'draw_no_bet' in aggregated_outcomes or 'drawnob' in aggregated_outcomes:
-                    dnb_outcomes = aggregated_outcomes.get('draw_no_bet') or aggregated_outcomes.get('drawnob') or {}
-                    home_dnb = dnb_outcomes.get(f"{fixture.home_team.name}-") or dnb_outcomes.get('Home-')
-                    away_dnb = dnb_outcomes.get(f"{fixture.away_team.name}-") or dnb_outcomes.get('Away-')
+                    dnb_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'draw_no_bet', 'drawnob') or {}
+                    home_dnb = _get_outcome_from_keys(dnb_outcomes, f"{fixture.home_team.name}-", 'Home-')
+                    away_dnb = _get_outcome_from_keys(dnb_outcomes, f"{fixture.away_team.name}-", 'Away-')
                     
                     if home_dnb: odds_data.append(['Draw No Bet', fixture.home_team.name, f"{home_dnb.odds:.2f}", str(home_dnb.id)])
                     if away_dnb: odds_data.append(['', fixture.away_team.name, f"{away_dnb.odds:.2f}", str(away_dnb.id)])
                 
                 # 6. Add Asian Handicap (show all lines sorted by point value)
                 if 'handicap' in aggregated_outcomes or 'asian_handicap' in aggregated_outcomes or 'spreads' in aggregated_outcomes:
-                    handicap_outcomes = (aggregated_outcomes.get('handicap') or 
-                                        aggregated_outcomes.get('asian_handicap') or 
-                                        aggregated_outcomes.get('spreads') or {})
+                    handicap_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'handicap', 'asian_handicap', 'spreads') or {}
                     
                     handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
                     for outcome in handicap_outcomes.values():
@@ -1149,7 +1157,7 @@ def generate_fixtures_pdf(
                 
                 # 7. Add Correct Score (top 4 most likely)
                 if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
-                    cs_outcomes = aggregated_outcomes.get('correct_score') or aggregated_outcomes.get('correctscore') or {}
+                    cs_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'correct_score', 'correctscore') or {}
                     sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:4]
                     
                     first_cs = True
@@ -1160,9 +1168,7 @@ def generate_fixtures_pdf(
                 
                 # 8. Add Odd/Even Goals
                 if 'odd_even' in aggregated_outcomes or 'oddeven' in aggregated_outcomes or 'goals_odd_even' in aggregated_outcomes:
-                    oe_outcomes = (aggregated_outcomes.get('odd_even') or 
-                                  aggregated_outcomes.get('oddeven') or 
-                                  aggregated_outcomes.get('goals_odd_even') or {})
+                    oe_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'odd_even', 'oddeven', 'goals_odd_even') or {}
                     odd_outcome = oe_outcomes.get('Odd-')
                     even_outcome = oe_outcomes.get('Even-')
                     
