@@ -576,7 +576,7 @@ def parse_betting_string(betting_string: str) -> dict:
         Stake $50
     """
     # --- Local Import to Prevent Circular Dependency ---
-    from football_data_app.models import MarketOutcome
+    from football_data_app.models import MarketOutcome, FootballFixture
 
     lines = [line.strip() for line in betting_string.split('\n') if line.strip()]
     outcome_ids = []
@@ -600,7 +600,7 @@ def parse_betting_string(betting_string: str) -> dict:
         # Check for outcome ID (just a number)
         id_match = outcome_id_pattern.match(line)
         if id_match:
-            outcome_ids.append(id_match.group(1))
+            outcome_ids.append(int(id_match.group(1)))
             continue
         
         # Unrecognized line format
@@ -617,21 +617,22 @@ def parse_betting_string(betting_string: str) -> dict:
         is_active=True
     ).select_related('market', 'market__fixture')
     
-    found_ids = {str(o.id) for o in outcomes}
-    missing_ids = [oid for oid in outcome_ids if oid not in found_ids]
+    found_ids = {o.id for o in outcomes}
+    missing_ids = [str(oid) for oid in outcome_ids if oid not in found_ids]
     
     if missing_ids:
         return {"success": False, "message": f"Invalid or inactive outcome ID(s): {', '.join(missing_ids)}. Please check the PDF for valid IDs."}
     
-    # Check that all outcomes are from scheduled/live fixtures
+    # Check that all outcomes are from scheduled/live fixtures (using enum constants)
+    valid_statuses = [FootballFixture.FixtureStatus.SCHEDULED, FootballFixture.FixtureStatus.LIVE]
     for outcome in outcomes:
         fixture = outcome.market.fixture
-        if fixture.status not in ['SCHEDULED', 'LIVE']:
+        if fixture.status not in valid_statuses:
             return {"success": False, "message": f"Outcome ID {outcome.id} is from a match that is no longer accepting bets (status: {fixture.status})."}
 
     return {
         "success": True,
-        "market_outcome_ids": outcome_ids,
+        "market_outcome_ids": [str(oid) for oid in outcome_ids],  # Return as strings for API compatibility
         "stake": float(stake_amount),
         "message": "Betting slip parsed successfully."
     }
@@ -890,7 +891,7 @@ def generate_fixtures_pdf(
         spaceAfter=6
     )
     
-    elements.append(Paragraph("📋 HOW TO PLACE A BET", instruction_title_style))
+    elements.append(Paragraph("HOW TO PLACE A BET", instruction_title_style))
     elements.append(Paragraph(
         "Use the <b>ID</b> column to place your bets. Send a message with the Outcome IDs and stake amount.",
         instruction_box_style
