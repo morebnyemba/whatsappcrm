@@ -24,6 +24,9 @@ def process_flow_for_message_task(message_id: int):
     Args:
         message_id: ID of the incoming Message object to process
     """
+    # List to collect messages that need to be sent after transaction commits
+    messages_to_send = []
+    
     try:
         with transaction.atomic():
             incoming_message = Message.objects.select_related('contact').get(pk=message_id)
@@ -79,13 +82,25 @@ def process_flow_for_message_task(message_id: int):
                         triggered_by_flow_step_id=getattr(getattr(contact, 'flow_state', None), 'current_step_id', None)
                     )
 
-                    # Queue the send task with a countdown to ensure sequential delivery
-                    send_whatsapp_message_task.apply_async(
-                        args=[outgoing_msg.id, config_to_use.id],
-                        countdown=dispatch_countdown
-                    )
-                    logger.info(f"Queued message {outgoing_msg.id} for sending to {recipient_wa_id} with {dispatch_countdown}s delay")
+                    # Collect message info to queue after transaction commits
+                    messages_to_send.append({
+                        'msg_id': outgoing_msg.id,
+                        'config_id': config_to_use.id,
+                        'countdown': dispatch_countdown,
+                        'recipient_wa_id': recipient_wa_id
+                    })
                     dispatch_countdown += 2  # Add 2 seconds between messages
+
+            # Queue send tasks after transaction commits to ensure messages exist in DB
+            def queue_messages():
+                for msg_info in messages_to_send:
+                    send_whatsapp_message_task.apply_async(
+                        args=[msg_info['msg_id'], msg_info['config_id']],
+                        countdown=msg_info['countdown']
+                    )
+                    logger.info(f"Queued message {msg_info['msg_id']} for sending to {msg_info['recipient_wa_id']} with {msg_info['countdown']}s delay")
+            
+            transaction.on_commit(queue_messages)
 
     except Message.DoesNotExist:
         logger.error(f"process_flow_for_message_task: Message with ID {message_id} not found.")
