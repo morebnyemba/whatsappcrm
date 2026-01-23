@@ -561,22 +561,33 @@ def get_formatted_football_data(
 
 def parse_betting_string(betting_string: str) -> dict:
     """
-    Parses a free-form betting string into a list of market outcome IDs and a stake.
-    This version is optimized to reduce database queries for multi-line bet slips.
+    Parses a betting string into a list of market outcome IDs and a stake.
+    
+    Supports ID-only format where users provide outcome IDs directly:
+    
+    Format:
+        [outcome_id]
+        [outcome_id]
+        Stake $[amount]
+    
+    Example:
+        12345
+        67890
+        Stake $50
     """
     # --- Local Import to Prevent Circular Dependency ---
-    from football_data_app.models import FootballFixture, MarketOutcome
+    from football_data_app.models import MarketOutcome
 
     lines = [line.strip() for line in betting_string.split('\n') if line.strip()]
-    parsed_bets = []
+    outcome_ids = []
     stake_amount = Decimal('0.0')
-    fixture_ids_to_fetch = set()
 
     stake_pattern = re.compile(r"Stake\s*\$?\s*([\d\.,]+)", re.IGNORECASE)
-    bet_line_pattern = re.compile(r"(\d+)\s+(.*)", re.IGNORECASE)
+    outcome_id_pattern = re.compile(r"^(\d+)$")  # Just a number (outcome ID)
 
-    # --- First Pass: Parse lines and collect fixture IDs ---
+    # --- Parse lines ---
     for line in lines:
+        # Check for stake line
         stake_match = stake_pattern.match(line)
         if stake_match:
             try:
@@ -586,194 +597,43 @@ def parse_betting_string(betting_string: str) -> dict:
                 return {"success": False, "message": f"Invalid stake amount: {stake_match.group(1)}"}
             continue
 
-        bet_line_match = bet_line_pattern.match(line)
-        if bet_line_match:
-            try:
-                fixture_id = int(bet_line_match.group(1).strip())
-                option_text = bet_line_match.group(2).strip()
-                fixture_ids_to_fetch.add(fixture_id)
-                parsed_bets.append({'fixture_id': fixture_id, 'option_text': option_text, 'original_line': line})
-            except (ValueError, TypeError):
-                return {"success": False, "message": f"Invalid fixture ID in line: '{line}'"}
-        else:
-            return {"success": False, "message": f"Unrecognized betting line format: '{line}'"}
+        # Check for outcome ID (just a number)
+        id_match = outcome_id_pattern.match(line)
+        if id_match:
+            outcome_ids.append(id_match.group(1))
+            continue
+        
+        # Unrecognized line format
+        return {"success": False, "message": f"Unrecognized betting line format: '{line}'. Use outcome IDs from the PDF (e.g., 12345)."}
 
-    if not parsed_bets:
-        return {"success": False, "message": "No valid betting options found in the message."}
+    if not outcome_ids:
+        return {"success": False, "message": "No outcome IDs found. Use the ID column from the PDF to place bets."}
     if stake_amount <= 0:
         return {"success": False, "message": "Stake amount not found or is invalid. Please specify 'Stake $AMOUNT'."}
 
-    # --- Bulk Fetch Data ---
-    fixtures_map = {f.id: f for f in FootballFixture.objects.filter(id__in=fixture_ids_to_fetch).select_related('home_team', 'away_team')}
-    
-    outcomes_qs = MarketOutcome.objects.filter(
-        market__fixture_id__in=fixture_ids_to_fetch,
+    # --- Validate outcome IDs exist and are active ---
+    outcomes = MarketOutcome.objects.filter(
+        id__in=outcome_ids,
         is_active=True
-    ).select_related('market')
-
-    outcomes_by_fixture = {}
-    for outcome in outcomes_qs:
-        fid = outcome.market.fixture_id
-        if fid not in outcomes_by_fixture:
-            outcomes_by_fixture[fid] = []
-        outcomes_by_fixture[fid].append(outcome)
-
-    # --- Second Pass: Match outcomes using in-memory data ---
-    market_outcome_ids = []
-    for bet in parsed_bets:
-        fixture_id = bet['fixture_id']
-        option_text = bet['option_text']
-        
-        matched_fixture = fixtures_map.get(fixture_id)
-        if not matched_fixture:
-            return {"success": False, "message": f"Could not find a fixture for ID '{fixture_id}'."}
-
-        outcomes_for_fixture = outcomes_by_fixture.get(fixture_id, [])
-        if not outcomes_for_fixture:
-            return {"success": False, "message": f"No active betting markets found for fixture ID '{fixture_id}'."}
-
-        found_outcome = None
-        
-        # --- Enhanced Outcome Matching Logic (applied to in-memory list) ---
-        # 1. Try exact outcome_name match first
-        for outcome in outcomes_for_fixture:
-            if outcome.outcome_name.lower() == option_text.lower():
-                found_outcome = outcome
-                break
-        
-        # 2. Totals (Over/Under) matching - e.g., "Over 2.5", "Under 1.5", "O2.5", "U1.5"
-        if not found_outcome:
-            totals_match = re.match(r"(over|under|o|u)\s*(\d+\.?\d*)", option_text, re.IGNORECASE)
-            if totals_match:
-                bet_type, point_val_str = totals_match.groups()
-                point_val = Decimal(point_val_str)
-                outcome_name_to_find = 'over' if bet_type.lower().startswith('o') else 'under'
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['totals', 'alternate_totals', 'goals_over_under'] and \
-                       outcome.point_value is not None and Decimal(str(outcome.point_value)) == point_val and \
-                       outcome_name_to_find in outcome.outcome_name.lower():
-                        found_outcome = outcome
-                        break
-        
-        # 3. BTTS (Both Teams To Score) matching - e.g., "BTTS Yes", "GG", "BTTS No", "NG", "Yes", "No"
-        if not found_outcome:
-            btts_text = option_text.lower().replace(" ", "")
-            outcome_name_to_find = None
-            if btts_text in ['bttsyes', 'gg', 'yes']: outcome_name_to_find = 'Yes'
-            elif btts_text in ['bttsno', 'ng', 'no']: outcome_name_to_find = 'No'
-            if outcome_name_to_find:
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['btts', 'both_teams_score'] and outcome.outcome_name == outcome_name_to_find:
-                        found_outcome = outcome
-                        break
-        
-        # 4. H2H (Home/Away/Draw) matching - e.g., "Home", "1", "Away", "2", "Draw", "X"
-        if not found_outcome:
-            h2h_text = option_text.lower()
-            outcome_name_to_find = None
-            if h2h_text in ['home', '1', matched_fixture.home_team.name.lower()]:
-                outcome_name_to_find = matched_fixture.home_team.name
-            elif h2h_text in ['away', '2', matched_fixture.away_team.name.lower()]:
-                outcome_name_to_find = matched_fixture.away_team.name
-            elif h2h_text in ['draw', 'x']:
-                outcome_name_to_find = 'Draw'
-            if outcome_name_to_find:
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['h2h', '1x2', 'match_winner'] and outcome.outcome_name == outcome_name_to_find:
-                        found_outcome = outcome
-                        break
-        
-        # 5. Double Chance matching - e.g., "1X", "Home/Draw", "12", "Home/Away", "X2", "Draw/Away"
-        if not found_outcome:
-            dc_text = option_text.lower().replace(" ", "").replace("/", "")
-            outcome_name_to_find = None
-            if dc_text in ['1x', 'homedraw']:
-                outcome_name_to_find = 'Home/Draw'
-            elif dc_text in ['12', 'homeaway']:
-                outcome_name_to_find = 'Home/Away'
-            elif dc_text in ['x2', 'drawaway']:
-                outcome_name_to_find = 'Draw/Away'
-            if outcome_name_to_find:
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['double_chance', 'doublechance'] and outcome.outcome_name == outcome_name_to_find:
-                        found_outcome = outcome
-                        break
-        
-        # 6. Draw No Bet matching - e.g., "DNB Home", "DNB Away", "DNB [team name]"
-        if not found_outcome:
-            dnb_match = re.match(r"(?:dnb|draw\s*no\s*bet)\s*(.+)", option_text, re.IGNORECASE)
-            if dnb_match:
-                team_text = dnb_match.group(1).strip().lower()
-                outcome_name_to_find = None
-                if team_text in ['home', matched_fixture.home_team.name.lower()]:
-                    outcome_name_to_find = matched_fixture.home_team.name
-                elif team_text in ['away', matched_fixture.away_team.name.lower()]:
-                    outcome_name_to_find = matched_fixture.away_team.name
-                if outcome_name_to_find:
-                    for outcome in outcomes_for_fixture:
-                        if outcome.market.api_market_key in ['draw_no_bet', 'drawnob'] and outcome.outcome_name == outcome_name_to_find:
-                            found_outcome = outcome
-                            break
-        
-        # 7. Asian Handicap matching - e.g., "Home -0.5", "Away +1.5", "[Team Name] -0.5"
-        if not found_outcome:
-            handicap_match = re.match(r"(.+?)\s*([+-]?\d+\.?\d*)", option_text, re.IGNORECASE)
-            if handicap_match:
-                team_text = handicap_match.group(1).strip().lower()
-                try:
-                    point_val = float(handicap_match.group(2))
-                    outcome_name_to_find = None
-                    if team_text in ['home', matched_fixture.home_team.name.lower()]:
-                        outcome_name_to_find = matched_fixture.home_team.name
-                    elif team_text in ['away', matched_fixture.away_team.name.lower()]:
-                        outcome_name_to_find = matched_fixture.away_team.name
-                    if outcome_name_to_find:
-                        for outcome in outcomes_for_fixture:
-                            if outcome.market.api_market_key in ['handicap', 'asian_handicap', 'spreads'] and \
-                               outcome.point_value is not None and abs(float(outcome.point_value) - point_val) < 0.01 and \
-                               outcome_name_to_find in outcome.outcome_name:
-                                found_outcome = outcome
-                                break
-                except (ValueError, TypeError):
-                    pass
-        
-        # 8. Correct Score matching - e.g., "1-0", "2-1", "0-0"
-        if not found_outcome:
-            score_match = re.match(r"^(\d+)\s*[-:]\s*(\d+)$", option_text.strip())
-            if score_match:
-                score_text = f"{score_match.group(1)}-{score_match.group(2)}"
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['correct_score', 'correctscore']:
-                        # Match various score formats: "1-0", "1:0", etc.
-                        normalized_outcome = outcome.outcome_name.replace(":", "-").strip()
-                        if normalized_outcome == score_text:
-                            found_outcome = outcome
-                            break
-        
-        # 9. Odd/Even Goals matching - e.g., "Odd", "Even"
-        if not found_outcome:
-            oe_text = option_text.lower().strip()
-            outcome_name_to_find = None
-            if oe_text in ['odd', 'odd goals']:
-                outcome_name_to_find = 'Odd'
-            elif oe_text in ['even', 'even goals']:
-                outcome_name_to_find = 'Even'
-            if outcome_name_to_find:
-                for outcome in outcomes_for_fixture:
-                    if outcome.market.api_market_key in ['odd_even', 'oddeven', 'goals_odd_even'] and outcome.outcome_name == outcome_name_to_find:
-                        found_outcome = outcome
-                        break
-
-        if found_outcome:
-            market_outcome_ids.append(str(found_outcome.id))
-        else:
-            return {"success": False, "message": f"Could not find a valid betting option for '{option_text}' in fixture '{matched_fixture.home_team.name} vs {matched_fixture.away_team.name}' (ID: {matched_fixture.id})."}
+    ).select_related('market', 'market__fixture')
+    
+    found_ids = {str(o.id) for o in outcomes}
+    missing_ids = [oid for oid in outcome_ids if oid not in found_ids]
+    
+    if missing_ids:
+        return {"success": False, "message": f"Invalid or inactive outcome ID(s): {', '.join(missing_ids)}. Please check the PDF for valid IDs."}
+    
+    # Check that all outcomes are from scheduled/live fixtures
+    for outcome in outcomes:
+        fixture = outcome.market.fixture
+        if fixture.status not in ['SCHEDULED', 'LIVE']:
+            return {"success": False, "message": f"Outcome ID {outcome.id} is from a match that is no longer accepting bets (status: {fixture.status})."}
 
     return {
         "success": True,
-        "market_outcome_ids": market_outcome_ids,
+        "market_outcome_ids": outcome_ids,
         "stake": float(stake_amount),
-        "message": "Betting string parsed successfully."
+        "message": "Betting slip parsed successfully."
     }
 
 
@@ -1009,7 +869,41 @@ def generate_fixtures_pdf(
                                      fontSize=10, textColor=colors.grey, 
                                      alignment=TA_CENTER)
     elements.append(Paragraph(f"Generated on {datetime_str}", timestamp_style))
-    elements.append(Spacer(1, 0.4*inch))
+    elements.append(Spacer(1, 0.25*inch))
+    
+    # Add betting instructions box
+    instruction_box_style = ParagraphStyle(
+        'InstructionBox',
+        parent=styles['Normal'],
+        fontSize=9,
+        textColor=colors.HexColor('#333333'),
+        alignment=TA_CENTER,
+        spaceAfter=10
+    )
+    instruction_title_style = ParagraphStyle(
+        'InstructionTitle',
+        parent=styles['Heading3'],
+        fontSize=11,
+        textColor=colors.HexColor('#1a472a'),
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        spaceAfter=6
+    )
+    
+    elements.append(Paragraph("📋 HOW TO PLACE A BET", instruction_title_style))
+    elements.append(Paragraph(
+        "Use the <b>ID</b> column to place your bets. Send a message with the Outcome IDs and stake amount.",
+        instruction_box_style
+    ))
+    elements.append(Paragraph(
+        "<b>Format:</b>  [ID]<br/>[ID]<br/>Stake $[Amount]",
+        instruction_box_style
+    ))
+    elements.append(Paragraph(
+        "<b>Example:</b>  12345<br/>67890<br/>Stake $50",
+        instruction_box_style
+    ))
+    elements.append(Spacer(1, 0.3*inch))
     
     # Process fixtures
     fixtures_added = 0
