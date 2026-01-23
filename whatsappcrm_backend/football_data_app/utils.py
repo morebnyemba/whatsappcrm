@@ -824,8 +824,9 @@ def generate_fixtures_pdf(
         start_date = now
         end_date = now + timedelta(days=days_ahead)
         fixtures_qs = FootballFixture.objects.filter(
-            Q(status=FootballFixture.FixtureStatus.SCHEDULED, match_date__gte=start_date, match_date__lte=end_date) |
-            Q(status=FootballFixture.FixtureStatus.LIVE)
+            status=FootballFixture.FixtureStatus.SCHEDULED,
+            match_date__gte=start_date,
+            match_date__lte=end_date
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
             Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
             Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
@@ -1005,7 +1006,7 @@ def generate_fixtures_pdf(
                     if yes_odds: odds_data.append(['Both Teams Score', 'Yes', f"{yes_odds.odds:.2f}", str(yes_odds.id)])
                     if no_odds: odds_data.append(['', 'No', f"{no_odds.odds:.2f}", str(no_odds.id)])
                 
-                # 4. Add Totals (Over/Under) - show top 3 lines
+                # 4. Add Totals (Over/Under) - show specific lines: 0.5, 1.5, 2.5, 3.5, 4.5
                 all_totals = {
                     **aggregated_outcomes.get('totals', {}), 
                     **aggregated_outcomes.get('alternate_totals', {}),
@@ -1022,14 +1023,19 @@ def generate_fixtures_pdf(
                             elif 'under' in outcome.outcome_name.lower():
                                 totals_by_point[outcome.point_value]['under'] = outcome
                     
-                    # Show top 3 lines (matching WhatsApp display)
-                    for point in sorted(totals_by_point.keys())[:3]:
-                        over_outcome = totals_by_point[point].get('over')
-                        under_outcome = totals_by_point[point].get('under')
-                        if over_outcome:
-                            odds_data.append(['Total Goals', f'Over {point:.1f}', f"{over_outcome.odds:.2f}", str(over_outcome.id)])
-                        if under_outcome:
-                            odds_data.append(['', f'Under {point:.1f}', f"{under_outcome.odds:.2f}", str(under_outcome.id)])
+                    # Show specific totals lines: 0.5, 1.5, 2.5, 3.5, 4.5
+                    target_totals = [0.5, 1.5, 2.5, 3.5, 4.5]
+                    first_total = True
+                    for point in target_totals:
+                        if point in totals_by_point:
+                            over_outcome = totals_by_point[point].get('over')
+                            under_outcome = totals_by_point[point].get('under')
+                            if over_outcome:
+                                market_name = 'Total Goals' if first_total else ''
+                                odds_data.append([market_name, f'Over {point:.1f}', f"{over_outcome.odds:.2f}", str(over_outcome.id)])
+                                first_total = False
+                            if under_outcome:
+                                odds_data.append(['', f'Under {point:.1f}', f"{under_outcome.odds:.2f}", str(under_outcome.id)])
                 
                 # 5. Add Draw No Bet
                 if 'draw_no_bet' in aggregated_outcomes or 'drawnob' in aggregated_outcomes:
@@ -1040,37 +1046,7 @@ def generate_fixtures_pdf(
                     if home_dnb: odds_data.append(['Draw No Bet', fixture.home_team.name, f"{home_dnb.odds:.2f}", str(home_dnb.id)])
                     if away_dnb: odds_data.append(['', fixture.away_team.name, f"{away_dnb.odds:.2f}", str(away_dnb.id)])
                 
-                # 6. Add Asian Handicap (show all lines sorted by point value)
-                if 'handicap' in aggregated_outcomes or 'asian_handicap' in aggregated_outcomes or 'spreads' in aggregated_outcomes:
-                    handicap_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'handicap', 'asian_handicap', 'spreads') or {}
-                    
-                    handicap_by_point: Dict[float, Dict[str, MarketOutcome]] = {}
-                    for outcome in handicap_outcomes.values():
-                        if outcome.point_value is not None:
-                            if outcome.point_value not in handicap_by_point:
-                                handicap_by_point[outcome.point_value] = {}
-                            if fixture.home_team.name in outcome.outcome_name or 'Home' in outcome.outcome_name:
-                                handicap_by_point[outcome.point_value]['home'] = outcome
-                            elif fixture.away_team.name in outcome.outcome_name or 'Away' in outcome.outcome_name:
-                                handicap_by_point[outcome.point_value]['away'] = outcome
-                    
-                    sorted_points = sorted(handicap_by_point.keys(), key=lambda x: abs(x))[:3]  # Show top 3 lines
-                    first_hcp = True
-                    for point in sorted_points:
-                        home_hcp = handicap_by_point[point].get('home')
-                        away_hcp = handicap_by_point[point].get('away')
-                        
-                        if home_hcp:
-                            sign = '+' if point >= 0 else ''
-                            market_name = 'Asian Handicap' if first_hcp else ''
-                            odds_data.append([market_name, f"{fixture.home_team.name} ({sign}{point})", f"{home_hcp.odds:.2f}", str(home_hcp.id)])
-                            first_hcp = False
-                        if away_hcp:
-                            opposite_line = -point
-                            sign = '+' if opposite_line >= 0 else ''
-                            odds_data.append(['', f"{fixture.away_team.name} ({sign}{opposite_line})", f"{away_hcp.odds:.2f}", str(away_hcp.id)])
-                
-                # 7. Add Correct Score (top 4 most likely)
+                # 6. Add Correct Score (top 4 most likely)
                 if 'correct_score' in aggregated_outcomes or 'correctscore' in aggregated_outcomes:
                     cs_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'correct_score', 'correctscore') or {}
                     sorted_scores = sorted(cs_outcomes.items(), key=lambda x: x[1].odds)[:4]
@@ -1081,7 +1057,7 @@ def generate_fixtures_pdf(
                         odds_data.append([market_name, outcome.outcome_name, f"{outcome.odds:.2f}", str(outcome.id)])
                         first_cs = False
                 
-                # 8. Add Odd/Even Goals
+                # 7. Add Odd/Even Goals
                 if 'odd_even' in aggregated_outcomes or 'oddeven' in aggregated_outcomes or 'goals_odd_even' in aggregated_outcomes:
                     oe_outcomes = _get_outcome_from_keys(aggregated_outcomes, 'odd_even', 'oddeven', 'goals_odd_even') or {}
                     odd_outcome = oe_outcomes.get('Odd-')
