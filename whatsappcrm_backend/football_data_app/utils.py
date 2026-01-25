@@ -27,6 +27,7 @@ MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per f
 # PDF generation constants
 FIXTURES_PER_PAGE = 6  # Number of fixtures per PDF page before page break
 MAX_FIXTURES_IN_PDF = 60  # Maximum number of fixtures to include in a single PDF
+MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
 def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
     """
@@ -792,9 +793,10 @@ def _get_outcome_from_keys(outcomes_dict: Dict, *keys) -> Optional[Any]:
 def generate_fixtures_pdf(
     data_type: str,
     league_code: Optional[str] = None,
-    days_ahead: int = 7,
+    days_ahead: int = 10,
     days_past: int = 4,
-    max_odds: float = 15.0
+    max_odds: float = 15.0,
+    max_bookmakers: int = MAX_BOOKMAKERS
 ) -> Optional[str]:
     """
     Generates a PDF document containing football fixtures with odds.
@@ -803,9 +805,10 @@ def generate_fixtures_pdf(
     Args:
         data_type: Type of data ('scheduled_fixtures' or 'finished_results')
         league_code: Optional league filter
-        days_ahead: Days ahead for scheduled fixtures (default: 7 days)
+        days_ahead: Days ahead for scheduled fixtures (default: 10 days)
         days_past: Days past for finished results
         max_odds: Maximum odds to display (odds higher than this are filtered out)
+        max_bookmakers: Maximum number of bookmakers to include (default: 3)
     
     Returns:
         Absolute path to generated PDF file, or None if no data
@@ -820,9 +823,14 @@ def generate_fixtures_pdf(
     import os
     
     # Local imports
-    from football_data_app.models import FootballFixture, MarketOutcome, Market
+    from football_data_app.models import FootballFixture, MarketOutcome, Market, Bookmaker
     
-    logger.info(f"Generating PDF for data_type='{data_type}', league_code='{league_code}'")
+    logger.info(f"Generating PDF for data_type='{data_type}', league_code='{league_code}', max_bookmakers={max_bookmakers}")
+    
+    # Get list of bookmaker IDs to use (limit to max_bookmakers)
+    # Select the first N bookmakers ordered by name for consistency
+    bookmaker_ids = list(Bookmaker.objects.order_by('name').values_list('id', flat=True)[:max_bookmakers])
+    logger.info(f"Using {len(bookmaker_ids)} bookmaker(s) for PDF generation")
     
     # Query fixtures
     now = timezone.now()
@@ -835,7 +843,7 @@ def generate_fixtures_pdf(
             match_date__gte=start_date,
             match_date__lte=end_date
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
-            Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
+            Prefetch('markets', queryset=Market.objects.filter(is_active=True, bookmaker_id__in=bookmaker_ids) if bookmaker_ids else Market.objects.filter(is_active=True)),
             Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True, odds__lte=max_odds))
         ).order_by('league__name', 'match_date')  # Order by league first, then by date
         title = f"Upcoming Football Fixtures (Next {days_ahead} Days)"
