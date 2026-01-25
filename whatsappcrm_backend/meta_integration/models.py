@@ -71,7 +71,8 @@ class MetaAppConfig(models.Model):
     )
     phone_number_id = models.CharField(
         max_length=50,
-        help_text="The Phone Number ID from which messages will be sent."
+        unique=True,
+        help_text="The Phone Number ID from which messages will be sent. Must be unique across all configurations."
     )
     waba_id = models.CharField(
         max_length=50,
@@ -85,7 +86,7 @@ class MetaAppConfig(models.Model):
     )
     is_active = models.BooleanField(
         default=False,
-        help_text="Set to True if this is the currently active configuration. Only one configuration should be active."
+        help_text="Set to True to enable this configuration. Multiple configurations can be active simultaneously."
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
