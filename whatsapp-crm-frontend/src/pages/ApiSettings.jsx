@@ -291,7 +291,7 @@ export default function ApiSettings() {
             <div className="flex items-center space-x-3 pt-2">
               <Controller name="is_active" control={control} render={({ field }) => (<Switch id="is_active" checked={field.value} onCheckedChange={field.onChange} disabled={isSubmitting} className="data-[state=checked]:bg-green-500"/>)} />
               <Label htmlFor="is_active" className="text-sm font-medium dark:text-slate-300 cursor-pointer">Set as Active Configuration</Label>
-              <TooltipProvider><Tooltip><TooltipTrigger type="button" className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"><FiHelpCircle size={16}/></TooltipTrigger><TooltipContent className="max-w-xs"><p className="text-xs">Only one configuration can be active. The active one is used for sending messages and webhook verification.</p></TooltipContent></Tooltip></TooltipProvider>
+              <TooltipProvider><Tooltip><TooltipTrigger type="button" className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"><FiHelpCircle size={16}/></TooltipTrigger><TooltipContent className="max-w-xs"><p className="text-xs">Multiple configurations can be active simultaneously. Each active configuration will receive webhooks for its phone number. Inactive configurations will not process incoming messages.</p></TooltipContent></Tooltip></TooltipProvider>
             </div>
             
             <div className="pt-2">
@@ -305,7 +305,7 @@ export default function ApiSettings() {
           {/* Informational Box */}
           <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700/50 rounded-lg">
             {/* ... (your existing important notes section) ... */}
-            <div className="flex items-start"><FiInfo className="h-5 w-5 text-blue-600 dark:text-blue-400 mr-3 mt-0.5 flex-shrink-0"/><div><h3 className="text-sm font-semibold text-blue-700 dark:text-blue-300">Important:</h3><ul className="list-disc list-inside text-xs text-blue-600 dark:text-blue-400/80 mt-1 space-y-1"><li>Ensure <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">Verify Token</code> matches Meta App Dashboard.</li><li>Keep <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">Access Token</code> & <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">App Secret</code> secure.</li><li>IDs can be found in Meta Business Manager.</li></ul></div></div>
+            <div className="flex items-start"><FiInfo className="h-5 w-5 text-blue-600 dark:text-blue-400 mr-3 mt-0.5 flex-shrink-0"/><div><h3 className="text-sm font-semibold text-blue-700 dark:text-blue-300">Important:</h3><ul className="list-disc list-inside text-xs text-blue-600 dark:text-blue-400/80 mt-1 space-y-1"><li>Ensure <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">Verify Token</code> matches Meta App Dashboard.</li><li>Keep <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">Access Token</code> & <code className="bg-blue-100 dark:bg-blue-800/50 px-1 py-0.5 rounded text-xs">App Secret</code> secure.</li><li>IDs can be found in Meta Business Manager.</li><li>Multiple phone numbers are supported: each active configuration handles its own phone number.</li><li>Contacts are automatically associated with the configuration they first message.</li></ul></div></div>
           </div>
         </CardContent>
       </Card>

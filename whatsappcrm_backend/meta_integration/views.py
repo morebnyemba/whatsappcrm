@@ -36,17 +36,26 @@ logger = logging.getLogger('meta_integration')
 SENSITIVE_HEADER_NAMES = ['authorization', 'cookie', 'x-access-token', 'x-api-key']
 
 def get_active_meta_config():
-    """Helper function to get the active MetaAppConfig."""
+    """Helper function to get the first active MetaAppConfig."""
     try:
         return MetaAppConfig.objects.get_active_config()
     except MetaAppConfig.DoesNotExist:
         logger.critical("CRITICAL: No active Meta App Configuration found. Webhook and message sending will fail.")
         return None
-    except MetaAppConfig.MultipleObjectsReturned:
-        logger.critical("CRITICAL: Multiple active Meta App Configurations found. Please fix in Django Admin.")
-        return None
     except Exception as e:
         logger.critical(f"CRITICAL: Error retrieving active MetaAppConfig: {e}", exc_info=True)
+        return None
+
+
+def get_meta_config_by_phone_number_id(phone_number_id: str):
+    """
+    Helper function to get MetaAppConfig by phone_number_id.
+    Falls back to any active config if no match is found.
+    """
+    try:
+        return MetaAppConfig.objects.get_config_by_phone_number_id(phone_number_id)
+    except Exception as e:
+        logger.error(f"Error retrieving MetaAppConfig by phone_number_id {phone_number_id}: {e}", exc_info=True)
         return None
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -118,10 +127,31 @@ class MetaWebhookAPIView(View):
 
 
     def post(self, request, *args, **kwargs):
-        active_config = get_active_meta_config()
-
+        # For multi-config support, we need to first parse the payload to get phone_number_id,
+        # then find the matching config for signature verification.
+        # If no specific config is found, try all active configs.
+        
+        raw_payload_str = request.body.decode('utf-8', errors='ignore')
+        
+        # Parse payload first to extract phone_number_id for config lookup
+        try:
+            payload = json.loads(raw_payload_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in webhook: {e}. Body: {raw_payload_str[:500]}...")
+            return HttpResponse("Invalid JSON payload", status=400)
+        
+        # Extract phone_number_id from payload for config routing
+        phone_number_id_from_payload = None
+        try:
+            phone_number_id_from_payload = payload.get('entry', [{}])[0].get('changes', [{}])[0].get('value', {}).get('metadata', {}).get('phone_number_id')
+        except (IndexError, AttributeError):
+            pass
+        
+        # Try to find the matching config by phone_number_id
+        active_config = get_meta_config_by_phone_number_id(phone_number_id_from_payload)
+        
         if not active_config:
-            logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig. Event ignored.")
+            logger.error("WEBHOOK POST: Processing failed - No active MetaAppConfig found for this phone_number_id or any fallback. Event ignored.")
             return HttpResponse("EVENT_RECEIVED_BUT_UNCONFIGURED", status=200)
 
         # Get app_secret from the database config instead of settings
@@ -148,7 +178,7 @@ class MetaWebhookAPIView(View):
             }
             logger.debug(f"Webhook headers (filtered): {safe_headers}")
             if not self._verify_signature(request.body, signature, app_secret):
-                logger.error("Webhook signature verification FAILED. Discarding request.")
+                logger.error(f"Webhook signature verification FAILED for config '{active_config.name}'. Discarding request.")
                 # Log header keys (not values) for debugging
                 header_keys = list(request.headers.keys())
                 WebhookEventLog.objects.create(
@@ -158,20 +188,8 @@ class MetaWebhookAPIView(View):
                 )
                 return HttpResponse("Invalid signature", status=403)
 
-        raw_payload_str = request.body.decode('utf-8', errors='ignore')
-        logger.info(f"Webhook POST request received (Signature OK if secret configured). Body size: {len(raw_payload_str)}. Config: {active_config.name}")
+        logger.info(f"Webhook POST request received (Signature OK if secret configured). Body size: {len(raw_payload_str)}. Config: {active_config.name}, Phone Number ID: {phone_number_id_from_payload}")
         logger.debug(f"Raw webhook payload: {raw_payload_str}")
-        
-        try:
-            payload = json.loads(raw_payload_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in webhook: {e}. Body: {raw_payload_str[:500]}...")
-            WebhookEventLog.objects.create(
-                app_config=active_config, event_type='error',
-                payload={'error': 'Invalid JSON', 'body_snippet': raw_payload_str[:500], 'exception': str(e)},
-                processing_status='error', processing_notes='Failed to parse JSON.'
-            )
-            return HttpResponse("Invalid JSON payload", status=400)
 
         base_log_defaults = {
             'app_config': active_config,
@@ -280,11 +298,11 @@ class MetaWebhookAPIView(View):
                 contact_wa_id_from_payload = contact_payload.get('wa_id', from_phone)
         
         try:
-            # Use the service to get or create contact
+            # Use the service to get or create contact, associating with the app_config
             contact, created = get_or_create_contact_by_wa_id(
                 wa_id=contact_wa_id_from_payload,
                 name=contact_profile_name,
-                meta_app_config=None
+                meta_app_config=app_config  # Associate contact with the config they messaged
             )
             
             if not contact:
@@ -409,27 +427,29 @@ class MetaAppConfigViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        if serializer.validated_data.get('is_active'):
-            MetaAppConfig.objects.filter(is_active=True).update(is_active=False)
+        # Multiple active configs are now allowed - no need to deactivate others
         serializer.save()
 
     @transaction.atomic
     def perform_update(self, serializer):
-        instance = serializer.instance
-        if serializer.validated_data.get('is_active') and not instance.is_active:
-            MetaAppConfig.objects.filter(is_active=True).exclude(pk=instance.pk).update(is_active=False)
+        # Multiple active configs are now allowed - no need to deactivate others
         serializer.save()
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
     def set_active(self, request, pk=None):
-        config_to_activate = self.get_object()
-        if config_to_activate.is_active:
-            return Response({"message": "Configuration is already active."}, status=status.HTTP_200_OK)
-        with transaction.atomic():
-            MetaAppConfig.objects.filter(is_active=True).exclude(pk=config_to_activate.pk).update(is_active=False)
-            config_to_activate.is_active = True
-            config_to_activate.save(update_fields=['is_active', 'updated_at'])
-        return Response(self.get_serializer(config_to_activate).data, status=status.HTTP_200_OK)
+        """Toggle the active status of a configuration."""
+        config = self.get_object()
+        config.is_active = True
+        config.save(update_fields=['is_active', 'updated_at'])
+        return Response(self.get_serializer(config).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    def set_inactive(self, request, pk=None):
+        """Deactivate a configuration."""
+        config = self.get_object()
+        config.is_active = False
+        config.save(update_fields=['is_active', 'updated_at'])
+        return Response(self.get_serializer(config).data, status=status.HTTP_200_OK)
 
 class WebhookEventLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = WebhookEventLog.objects.all().select_related('app_config').order_by('-received_at')

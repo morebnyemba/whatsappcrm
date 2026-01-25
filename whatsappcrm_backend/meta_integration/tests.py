@@ -20,11 +20,10 @@ class WebhookSignatureVerificationTestCase(TestCase):
         # Create a test MetaAppConfig
         self.meta_config = MetaAppConfig.objects.create(
             name="Test Config",
-            app_id="123456789",
-            app_secret="test_secret",
+            app_secret=self.test_app_secret,
             access_token="test_token",
             phone_number_id="987654321",
-            business_account_id="111222333",
+            waba_id="111222333",
             verify_token="test_verify_token",
             is_active=True
         )
@@ -103,15 +102,24 @@ class WebhookSignatureVerificationTestCase(TestCase):
         result = self.view._verify_signature(body_bytes, valid_signature, self.test_app_secret)
         self.assertTrue(result)
 
-    @patch('meta_integration.views.get_active_meta_config')
-    @patch.object(settings, 'WHATSAPP_APP_SECRET', 'test_app_secret_12345')
+    @patch('meta_integration.views.get_meta_config_by_phone_number_id')
     def test_webhook_post_with_valid_signature(self, mock_get_config):
         """Test complete webhook POST with valid signature"""
         mock_get_config.return_value = self.meta_config
         
         test_payload = {
             "object": "whatsapp_business_account",
-            "entry": []
+            "entry": [{
+                "id": "111222333",
+                "changes": [{
+                    "value": {
+                        "metadata": {
+                            "phone_number_id": "987654321"
+                        }
+                    },
+                    "field": "messages"
+                }]
+            }]
         }
         body_bytes = json.dumps(test_payload).encode('utf-8')
         signature = self._generate_signature(body_bytes, self.test_app_secret)
@@ -129,15 +137,24 @@ class WebhookSignatureVerificationTestCase(TestCase):
         # Should return 200, not 403
         self.assertEqual(response.status_code, 200)
 
-    @patch('meta_integration.views.get_active_meta_config')
-    @patch.object(settings, 'WHATSAPP_APP_SECRET', 'test_app_secret_12345')
+    @patch('meta_integration.views.get_meta_config_by_phone_number_id')
     def test_webhook_post_with_invalid_signature(self, mock_get_config):
         """Test complete webhook POST with invalid signature"""
         mock_get_config.return_value = self.meta_config
         
         test_payload = {
             "object": "whatsapp_business_account",
-            "entry": []
+            "entry": [{
+                "id": "111222333",
+                "changes": [{
+                    "value": {
+                        "metadata": {
+                            "phone_number_id": "987654321"
+                        }
+                    },
+                    "field": "messages"
+                }]
+            }]
         }
         body_bytes = json.dumps(test_payload).encode('utf-8')
         # Use wrong secret to generate signature
@@ -155,3 +172,75 @@ class WebhookSignatureVerificationTestCase(TestCase):
         
         # Should return 403 for invalid signature
         self.assertEqual(response.status_code, 403)
+
+
+class MultiConfigRoutingTestCase(TestCase):
+    """Test cases for multiple configuration routing"""
+
+    def setUp(self):
+        # Create multiple test configs
+        self.config_1 = MetaAppConfig.objects.create(
+            name="Config 1",
+            app_secret="secret_1",
+            access_token="token_1",
+            phone_number_id="111111111",
+            waba_id="waba_1",
+            verify_token="verify_1",
+            is_active=True
+        )
+        self.config_2 = MetaAppConfig.objects.create(
+            name="Config 2",
+            app_secret="secret_2",
+            access_token="token_2",
+            phone_number_id="222222222",
+            waba_id="waba_2",
+            verify_token="verify_2",
+            is_active=True
+        )
+        self.config_3 = MetaAppConfig.objects.create(
+            name="Config 3 (Inactive)",
+            app_secret="secret_3",
+            access_token="token_3",
+            phone_number_id="333333333",
+            waba_id="waba_3",
+            verify_token="verify_3",
+            is_active=False
+        )
+
+    def test_multiple_active_configs_allowed(self):
+        """Test that multiple configs can be active simultaneously"""
+        active_configs = MetaAppConfig.objects.filter(is_active=True)
+        self.assertEqual(active_configs.count(), 2)
+
+    def test_get_config_by_phone_number_id_exact_match(self):
+        """Test getting config by phone number ID with exact match"""
+        config = MetaAppConfig.objects.get_config_by_phone_number_id("111111111")
+        self.assertEqual(config, self.config_1)
+        
+        config = MetaAppConfig.objects.get_config_by_phone_number_id("222222222")
+        self.assertEqual(config, self.config_2)
+
+    def test_get_config_by_phone_number_id_fallback(self):
+        """Test getting config falls back to any active config if no match"""
+        config = MetaAppConfig.objects.get_config_by_phone_number_id("nonexistent")
+        self.assertIsNotNone(config)
+        self.assertTrue(config.is_active)
+
+    def test_get_config_by_phone_number_id_inactive(self):
+        """Test that inactive config can still be found by phone number ID"""
+        config = MetaAppConfig.objects.get_config_by_phone_number_id("333333333")
+        self.assertEqual(config, self.config_3)
+
+    def test_get_all_active_configs(self):
+        """Test getting all active configurations"""
+        active_configs = MetaAppConfig.objects.get_all_active_configs()
+        self.assertEqual(active_configs.count(), 2)
+        self.assertIn(self.config_1, active_configs)
+        self.assertIn(self.config_2, active_configs)
+        self.assertNotIn(self.config_3, active_configs)
+
+    def test_get_active_config_returns_first(self):
+        """Test that get_active_config returns the first active config"""
+        config = MetaAppConfig.objects.get_active_config()
+        self.assertIsNotNone(config)
+        self.assertTrue(config.is_active)
