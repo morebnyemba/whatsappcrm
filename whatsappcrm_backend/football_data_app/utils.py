@@ -24,6 +24,10 @@ MAX_SINGLE_FIXTURE_LENGTH = 3500  # Max length for individual fixture (leaves ro
 MAX_TOTALS_LINES_TO_DISPLAY = 3  # Maximum Over/Under lines to show per fixture
 MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per fixture
 
+# PDF generation constants
+FIXTURES_PER_PAGE = 6  # Number of fixtures per PDF page before page break
+MAX_FIXTURES_IN_PDF = 60  # Maximum number of fixtures to include in a single PDF
+
 def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
     """
     Helper function to format handicap markets (Asian Handicap variants).
@@ -788,17 +792,20 @@ def _get_outcome_from_keys(outcomes_dict: Dict, *keys) -> Optional[Any]:
 def generate_fixtures_pdf(
     data_type: str,
     league_code: Optional[str] = None,
-    days_ahead: int = 10,
-    days_past: int = 4
+    days_ahead: int = 7,
+    days_past: int = 4,
+    max_odds: float = 15.0
 ) -> Optional[str]:
     """
     Generates a PDF document containing football fixtures with odds.
+    Fixtures are grouped by league and ordered chronologically within each league.
     
     Args:
         data_type: Type of data ('scheduled_fixtures' or 'finished_results')
         league_code: Optional league filter
-        days_ahead: Days ahead for scheduled fixtures
+        days_ahead: Days ahead for scheduled fixtures (default: 7 days)
         days_past: Days past for finished results
+        max_odds: Maximum odds to display (odds higher than this are filtered out)
     
     Returns:
         Absolute path to generated PDF file, or None if no data
@@ -829,9 +836,9 @@ def generate_fixtures_pdf(
             match_date__lte=end_date
         ).select_related('home_team', 'away_team', 'league').prefetch_related(
             Prefetch('markets', queryset=Market.objects.filter(is_active=True)),
-            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True))
-        ).order_by('match_date')
-        title = "Upcoming Football Fixtures"
+            Prefetch('markets__outcomes', queryset=MarketOutcome.objects.filter(is_active=True, odds__lte=max_odds))
+        ).order_by('league__name', 'match_date')  # Order by league first, then by date
+        title = f"Upcoming Football Fixtures (Next {days_ahead} Days)"
     elif data_type == "finished_results":
         end_date = now
         start_date = now - timedelta(days=days_past)
@@ -839,7 +846,7 @@ def generate_fixtures_pdf(
             status=FootballFixture.FixtureStatus.FINISHED,
             match_date__gte=start_date,
             match_date__lte=end_date
-        ).select_related('home_team', 'away_team', 'league').order_by('-match_date')
+        ).select_related('home_team', 'away_team', 'league').order_by('league__name', '-match_date')
         title = "Recent Football Results"
     else:
         logger.error(f"Invalid data_type: {data_type}")
@@ -927,10 +934,49 @@ def generate_fixtures_pdf(
     ))
     elements.append(Spacer(1, 0.3*inch))
     
-    # Process fixtures
+    # League header style for grouping
+    league_section_style = ParagraphStyle(
+        'LeagueSection',
+        parent=styles['Heading1'],
+        fontSize=14,
+        textColor=colors.white,
+        spaceAfter=12,
+        spaceBefore=20,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        backColor=colors.HexColor('#1a472a'),
+        leftIndent=0,
+        rightIndent=0,
+    )
+    
+    # Process fixtures grouped by league
     fixtures_added = 0
-    for fixture in fixtures_qs[:40]:  # Limit to 40 fixtures
-        if fixtures_added > 0 and fixtures_added % 5 == 0:
+    current_league = None
+    
+    for fixture in fixtures_qs[:MAX_FIXTURES_IN_PDF]:  # Limit fixtures for 7 days coverage
+        # Add league header when league changes
+        if fixture.league.name != current_league:
+            if fixtures_added > 0:
+                elements.append(Spacer(1, 0.3*inch))
+            
+            # Create a table for league header with background color
+            league_header_data = [[fixture.league.name]]
+            league_header_table = Table(league_header_data, colWidths=[5.5*inch])
+            league_header_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#1a472a')),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.white),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 12),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('TOPPADDING', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ]))
+            elements.append(league_header_table)
+            elements.append(Spacer(1, 0.15*inch))
+            current_league = fixture.league.name
+        
+        # Page break every FIXTURES_PER_PAGE fixtures
+        if fixtures_added > 0 and fixtures_added % FIXTURES_PER_PAGE == 0:
             elements.append(PageBreak())
         
         # Fixture header
@@ -938,11 +984,8 @@ def generate_fixtures_pdf(
         time_str = match_time_local.strftime('%a, %b %d - %I:%M %p')
         
         fixture_header_style = ParagraphStyle('FixtureHeader', parent=styles['Heading2'],
-                                             fontSize=12, textColor=colors.HexColor('#2c5f2d'),
-                                             spaceAfter=6, fontName='Helvetica-Bold')
-        
-        league_text = f"<b>{fixture.league.name}</b>"
-        elements.append(Paragraph(league_text, fixture_header_style))
+                                             fontSize=11, textColor=colors.HexColor('#2c5f2d'),
+                                             spaceAfter=4, fontName='Helvetica-Bold')
         
         match_text = f"<b>{fixture.home_team.name}</b> vs <b>{fixture.away_team.name}</b>"
         if fixture.status == FootballFixture.FixtureStatus.LIVE and fixture.home_team_score is not None:
@@ -960,13 +1003,17 @@ def generate_fixtures_pdf(
         
         # Get odds data for scheduled fixtures
         if data_type == "scheduled_fixtures":
-            # Aggregate outcomes
+            # Aggregate outcomes (filter out odds that are too high)
+            # Note: Primary filtering done at DB level; this is a safety net for edge cases
             aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
             for market in fixture.markets.all():
                 market_key = market.api_market_key
                 if market_key not in aggregated_outcomes:
                     aggregated_outcomes[market_key] = {}
                 for outcome in market.outcomes.all():
+                    # Skip odds that are too high (safety check)
+                    if float(outcome.odds) > max_odds:
+                        continue
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
                     current_best = aggregated_outcomes[market_key].get(outcome_identifier)
                     if current_best is None or outcome.odds > current_best.odds:
