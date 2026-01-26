@@ -11,6 +11,24 @@ cleanup_migration_cache() {
     echo "Migration cache cleanup complete."
 }
 
+# Remove stale migration files that may cause conflicts
+# This specifically targets known problematic files that don't exist in the repository
+cleanup_stale_migrations() {
+    echo "Checking for stale migration files..."
+    # Remove the known problematic 0002_initial.py in conversations if it exists
+    # This file was never part of the repository but may exist in Docker volumes
+    STALE_FILE="/app/conversations/migrations/0002_initial.py"
+    if [ -f "$STALE_FILE" ]; then
+        echo "Removing stale migration file: $STALE_FILE"
+        rm -f "$STALE_FILE"
+        echo "WARNING: Stale migration 0002_initial was found and removed."
+        echo "If the database has this migration recorded, you may need to run:"
+        echo "  python manage.py migrate conversations 0001_initial --fake"
+        echo "to reset the migration state, then apply migrations again."
+    fi
+    echo "Stale migration check complete."
+}
+
 # Function to wait for PostgreSQL to be available
 wait_for_db() {
     echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
@@ -38,7 +56,35 @@ wait_for_db() {
 # Apply database migrations
 run_migrations() {
     echo "Applying database migrations..."
+    # First, try to apply migrations normally
+    # This handles cases where Docker volumes have stale migration files
+    # Temporarily disable exit on error to check migration result
+    set +e
     python manage.py migrate --noinput
+    MIGRATE_RESULT=$?
+    set -e
+    
+    if [ $MIGRATE_RESULT -ne 0 ]; then
+        echo "Initial migration attempt failed (exit code: $MIGRATE_RESULT). Checking for merge conflicts..."
+        # Try to create a merge migration if there are conflicts
+        set +e
+        python manage.py makemigrations --merge --noinput
+        MERGE_RESULT=$?
+        set -e
+        
+        if [ $MERGE_RESULT -eq 0 ]; then
+            echo "Merge migration created. Retrying migration..."
+            python manage.py migrate --noinput
+        else
+            echo "ERROR: Could not resolve migration conflicts automatically."
+            echo "Please check your migration files for consistency."
+            echo "You may need to run one of the following commands manually:"
+            echo "  docker-compose exec backend python manage.py makemigrations --merge"
+            echo "  OR"
+            echo "  docker-compose down -v  (WARNING: This will delete all data)"
+            exit 1
+        fi
+    fi
 }
 
 # Collect static files
@@ -61,7 +107,8 @@ shift
 # For simplicity here, 'web' service will handle migrations and collectstatic.
 # Celery beat also needs migrations for django_celery_beat tables.
 
-# Always clean migration cache before starting any service to prevent stale bytecode issues
+# Always clean stale migrations and cache before starting any service
+cleanup_stale_migrations
 cleanup_migration_cache
 
 if [ "$COMMAND" = "web" ] || [ "$COMMAND" = "celerybeat" ]; then
