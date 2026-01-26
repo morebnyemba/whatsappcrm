@@ -5,10 +5,43 @@ set -e
 
 # Clean up stale Python bytecode in migrations to prevent import errors
 # This is critical when using volume mounts in development
+# The cleanup is comprehensive to prevent NodeNotFoundError issues where Django
+# can't find migration files due to stale bytecode taking precedence
 cleanup_migration_cache() {
-    echo "Cleaning up migration __pycache__ directories..."
+    echo "Cleaning up migration __pycache__ directories and bytecode files..."
+    
+    # Remove all __pycache__ directories under migrations folders
     find /app -type d -name "__pycache__" -path "*/migrations/*" -exec rm -rf {} + 2>/dev/null || true
+    
+    # Also remove any stray .pyc and .pyo files directly in migrations directories
+    # (in case they exist outside of __pycache__ for some reason)
+    find /app -type f \( -name "*.pyc" -o -name "*.pyo" \) -path "*/migrations/*" -delete 2>/dev/null || true
+    
+    # Ensure Python doesn't write new bytecode during this run
+    # This is already set in Dockerfile but we reinforce it here
+    export PYTHONDONTWRITEBYTECODE=1
+    
     echo "Migration cache cleanup complete."
+}
+
+# Verify that critical migration files exist before running migrations
+# This helps catch deployment issues early with a clear error message
+verify_migrations() {
+    echo "Verifying migration files..."
+    
+    # Check that all migration directories have an __init__.py
+    migration_dirs=$(find /app -type d -name "migrations" 2>/dev/null)
+    for dir in $migration_dirs; do
+        if [ -d "$dir" ] && [ ! -f "$dir/__init__.py" ]; then
+            echo "WARNING: Missing __init__.py in $dir"
+        fi
+    done
+    
+    # List migration files for debugging
+    echo "Found migration files in conversations app:"
+    ls -la /app/conversations/migrations/*.py 2>/dev/null || echo "  (migrations directory not found at expected location)"
+    
+    echo "Migration verification complete."
 }
 
 # Function to wait for PostgreSQL to be available
@@ -66,6 +99,7 @@ cleanup_migration_cache
 
 if [ "$COMMAND" = "web" ] || [ "$COMMAND" = "celerybeat" ]; then
     wait_for_db
+    verify_migrations
     run_migrations
 fi
 
