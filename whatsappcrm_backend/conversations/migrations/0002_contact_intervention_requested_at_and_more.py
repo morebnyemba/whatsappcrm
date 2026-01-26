@@ -11,8 +11,8 @@ def check_and_add_intervention_fields(apps, schema_editor):
     """
     table_name = 'conversations_contact'
     
-    # Check and add intervention_requested_at
     with schema_editor.connection.cursor() as cursor:
+        # Check and add intervention_requested_at
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -24,9 +24,8 @@ def check_and_add_intervention_fields(apps, schema_editor):
                 ALTER TABLE conversations_contact 
                 ADD COLUMN intervention_requested_at TIMESTAMP WITH TIME ZONE NULL
             """)
-    
-    # Check and add needs_human_intervention
-    with schema_editor.connection.cursor() as cursor:
+        
+        # Check and add needs_human_intervention
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -38,9 +37,9 @@ def check_and_add_intervention_fields(apps, schema_editor):
                 ALTER TABLE conversations_contact 
                 ADD COLUMN needs_human_intervention BOOLEAN NOT NULL DEFAULT FALSE
             """)
-            # Create index for needs_human_intervention
+            # Create index for needs_human_intervention using IF NOT EXISTS
             cursor.execute("""
-                CREATE INDEX conversations_contact_needs_human_idx 
+                CREATE INDEX IF NOT EXISTS conversations_contact_needs_human_idx 
                 ON conversations_contact (needs_human_intervention)
             """)
 
@@ -52,8 +51,8 @@ def reverse_intervention_fields(apps, schema_editor):
     """
     table_name = 'conversations_contact'
     
-    # Check and drop needs_human_intervention
     with schema_editor.connection.cursor() as cursor:
+        # Check and drop needs_human_intervention
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
@@ -69,9 +68,8 @@ def reverse_intervention_fields(apps, schema_editor):
                 ALTER TABLE conversations_contact 
                 DROP COLUMN needs_human_intervention
             """)
-    
-    # Check and drop intervention_requested_at
-    with schema_editor.connection.cursor() as cursor:
+        
+        # Check and drop intervention_requested_at
         cursor.execute("""
             SELECT column_name 
             FROM information_schema.columns 
