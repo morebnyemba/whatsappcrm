@@ -32,41 +32,35 @@ class MetaAppConfigSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """
-        Custom validation to ensure only one config is active.
-        This duplicates the model's clean() method logic for the serializer context.
+        Custom validation. Multiple active configs are now allowed.
+        Each config should have a unique phone_number_id.
         """
         instance = self.instance # Existing instance during updates
 
-        is_activating = data.get('is_active', instance.is_active if instance else False)
-
-        if is_activating:
-            active_configs_query = MetaAppConfig.objects.filter(is_active=True)
-            if instance: # If updating an existing instance
-                active_configs_query = active_configs_query.exclude(pk=instance.pk)
-            
-            if active_configs_query.exists():
+        phone_number_id = data.get('phone_number_id', instance.phone_number_id if instance else None)
+        
+        if phone_number_id:
+            # Check for duplicate phone_number_id
+            existing_query = MetaAppConfig.objects.filter(phone_number_id=phone_number_id)
+            if instance:
+                existing_query = existing_query.exclude(pk=instance.pk)
+            if existing_query.exists():
                 raise serializers.ValidationError({
-                    "is_active": "Another configuration is already active. Please deactivate it before activating this one."
+                    "phone_number_id": "Another configuration with this Phone Number ID already exists."
                 })
+        
         return data
 
     def update(self, instance, validated_data):
         """
-        Handle the case where if one config is set to active, others are deactivated.
+        Update the configuration. Multiple active configs are now allowed.
         """
-        if validated_data.get('is_active', False) and not instance.is_active:
-            MetaAppConfig.objects.filter(is_active=True).exclude(pk=instance.pk).update(is_active=False)
-        
-        # If is_active is being set to False, no special handling needed for other instances.
-        
         return super().update(instance, validated_data)
 
     def create(self, validated_data):
         """
-        Handle the case where if a new config is created as active, others are deactivated.
+        Create a new configuration. Multiple active configs are now allowed.
         """
-        if validated_data.get('is_active', False):
-            MetaAppConfig.objects.filter(is_active=True).update(is_active=False)
         return super().create(validated_data)
 
 

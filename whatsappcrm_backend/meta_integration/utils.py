@@ -11,17 +11,35 @@ logger = logging.getLogger(__name__)
 
 def get_active_meta_config_for_sending():
     """
-    Helper function to get the active MetaAppConfig for sending messages.
-    This is similar to the one in views.py but can be used independently here.
+    Helper function to get an active MetaAppConfig for sending messages.
+    This returns the first active config. For specific config selection,
+    pass the config directly to send_whatsapp_message().
     """
     try:
         return MetaAppConfig.objects.get_active_config()
     except ObjectDoesNotExist:
         logger.critical("CRITICAL: No active Meta App Configuration found. Message sending will fail.")
         return None
-    except MetaAppConfig.MultipleObjectsReturned:
-        logger.critical("CRITICAL: Multiple active Meta App Configurations found. Please fix in Django Admin. Message sending may be unpredictable.")
-        return None # Or select the first one, but it's better to enforce a single active config
+    except Exception as e:
+        logger.error(f"Error retrieving active MetaAppConfig: {e}", exc_info=True)
+        return None
+
+
+def get_config_by_phone_number_id(phone_number_id: str):
+    """
+    Get a MetaAppConfig by its phone_number_id.
+    
+    Args:
+        phone_number_id: The phone number ID to look up
+        
+    Returns:
+        MetaAppConfig instance or None
+    """
+    try:
+        return MetaAppConfig.objects.get_config_by_phone_number_id(phone_number_id)
+    except Exception as e:
+        logger.error(f"Error retrieving MetaAppConfig by phone_number_id {phone_number_id}: {e}", exc_info=True)
+        return None
 
 def send_whatsapp_message(to_phone_number: str, message_type: str, data: dict, config: MetaAppConfig = None):
     """

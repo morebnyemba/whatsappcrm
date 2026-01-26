@@ -5,7 +5,7 @@ from django.conf import settings
 from django.utils import timezone
 # It's good practice to link conversations to the MetaAppConfig if you might have multiple,
 # or just to know which configuration handled this conversation.
-# from meta_integration.models import MetaAppConfig # Assuming models are in meta_integration
+
 
 class Contact(models.Model):
     """
@@ -23,15 +23,16 @@ class Contact(models.Model):
         null=True,
         help_text="Name of the contact, as provided by WhatsApp or manually entered."
     )
-    # Link to the MetaAppConfig that this contact is primarily associated with, if applicable
+    # Link to the MetaAppConfig that this contact is primarily associated with.
     # This helps if you manage multiple WhatsApp numbers/businesses through the same CRM.
-    # associated_app_config = models.ForeignKey(
-    #     MetaAppConfig,
-    #     on_delete=models.SET_NULL, # Keep contact even if config is deleted
-    #     null=True,
-    #     blank=True,
-    #     help_text="The Meta App Configuration this contact is associated with."
-    # )
+    associated_app_config = models.ForeignKey(
+        'meta_integration.MetaAppConfig',
+        on_delete=models.SET_NULL,  # Keep contact even if config is deleted
+        null=True,
+        blank=True,
+        related_name='contacts',
+        help_text="The Meta App Configuration this contact is associated with (the phone number they message)."
+    )
     
     needs_human_intervention = models.BooleanField(
         default=False,

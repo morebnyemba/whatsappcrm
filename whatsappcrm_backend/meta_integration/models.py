@@ -8,14 +8,47 @@ logger = logging.getLogger(__name__)
 
 class MetaAppConfigManager(models.Manager):
     def get_active_config(self):
-        try:
-            return self.get(is_active=True)
-        except MetaAppConfig.DoesNotExist:
+        """
+        Returns any active configuration. If multiple are active, returns the first one.
+        For routing by phone_number_id, use get_config_by_phone_number_id() instead.
+        """
+        config = self.filter(is_active=True).first()
+        if not config:
             logger.error("No active Meta App Configuration found in the database.")
-            raise
-        except MetaAppConfig.MultipleObjectsReturned:
-            logger.error("Multiple Meta App Configurations are marked as active. Please ensure only one is active.")
-            raise
+            raise MetaAppConfig.DoesNotExist("No active Meta App Configuration found.")
+        return config
+
+    def get_config_by_phone_number_id(self, phone_number_id: str):
+        """
+        Returns the active configuration matching the given phone_number_id.
+        Falls back to any active config if no match is found.
+        
+        Args:
+            phone_number_id: The phone number ID from the webhook payload
+            
+        Returns:
+            MetaAppConfig instance or None
+        """
+        if phone_number_id:
+            config = self.filter(phone_number_id=phone_number_id, is_active=True).first()
+            if config:
+                return config
+            # Try to find config even if not active (for debugging/special cases)
+            config = self.filter(phone_number_id=phone_number_id).first()
+            if config:
+                logger.warning(f"Found config for phone_number_id {phone_number_id} but it is not active.")
+                return config
+        # Fall back to any active config
+        return self.filter(is_active=True).first()
+
+    def get_all_active_configs(self):
+        """
+        Returns all active configurations.
+        
+        Returns:
+            QuerySet of active MetaAppConfig instances
+        """
+        return self.filter(is_active=True)
 
 class MetaAppConfig(models.Model):
     name = models.CharField(
@@ -38,7 +71,8 @@ class MetaAppConfig(models.Model):
     )
     phone_number_id = models.CharField(
         max_length=50,
-        help_text="The Phone Number ID from which messages will be sent."
+        unique=True,
+        help_text="The Phone Number ID from which messages will be sent. Must be unique across all configurations."
     )
     waba_id = models.CharField(
         max_length=50,
@@ -52,7 +86,7 @@ class MetaAppConfig(models.Model):
     )
     is_active = models.BooleanField(
         default=False,
-        help_text="Set to True if this is the currently active configuration. Only one configuration should be active."
+        help_text="Set to True to enable this configuration. Multiple configurations can be active simultaneously."
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -63,12 +97,8 @@ class MetaAppConfig(models.Model):
         return f"{self.name} ({'Active' if self.is_active else 'Inactive'})"
 
     def clean(self):
-        if self.is_active:
-            active_configs = MetaAppConfig.objects.filter(is_active=True).exclude(pk=self.pk)
-            if active_configs.exists():
-                raise ValidationError(
-                    "Another configuration is already active. Please deactivate it before activating this one."
-                )
+        # Multiple active configurations are now allowed.
+        # Each configuration has a unique phone_number_id for routing.
         super().clean()
 
     def save(self, *args, **kwargs):
