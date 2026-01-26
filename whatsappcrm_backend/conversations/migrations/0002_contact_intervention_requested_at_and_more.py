@@ -3,6 +3,59 @@
 from django.db import migrations, models
 
 
+def check_column_exists(schema_editor, table_name, column_name):
+    """Check if a column exists in a table."""
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s
+        """, [table_name, column_name])
+        return cursor.fetchone() is not None
+
+
+def add_intervention_requested_at(apps, schema_editor):
+    """Add intervention_requested_at field if it doesn't exist."""
+    if not check_column_exists(schema_editor, 'conversations_contact', 'intervention_requested_at'):
+        Contact = apps.get_model('conversations', 'Contact')
+        from django.db import connection
+        with connection.schema_editor() as schema_editor:
+            field = models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was last requested.', null=True)
+            field.set_attributes_from_name('intervention_requested_at')
+            schema_editor.add_field(Contact, field)
+
+
+def add_needs_human_intervention(apps, schema_editor):
+    """Add needs_human_intervention field if it doesn't exist."""
+    if not check_column_exists(schema_editor, 'conversations_contact', 'needs_human_intervention'):
+        Contact = apps.get_model('conversations', 'Contact')
+        from django.db import connection
+        with connection.schema_editor() as schema_editor:
+            field = models.BooleanField(db_index=True, default=False, help_text='Set to true if this contact requires human attention.')
+            field.set_attributes_from_name('needs_human_intervention')
+            schema_editor.add_field(Contact, field)
+
+
+def reverse_intervention_requested_at(apps, schema_editor):
+    """Remove intervention_requested_at field if it exists."""
+    if check_column_exists(schema_editor, 'conversations_contact', 'intervention_requested_at'):
+        Contact = apps.get_model('conversations', 'Contact')
+        from django.db import connection
+        with connection.schema_editor() as schema_editor:
+            field = Contact._meta.get_field('intervention_requested_at')
+            schema_editor.remove_field(Contact, field)
+
+
+def reverse_needs_human_intervention(apps, schema_editor):
+    """Remove needs_human_intervention field if it exists."""
+    if check_column_exists(schema_editor, 'conversations_contact', 'needs_human_intervention'):
+        Contact = apps.get_model('conversations', 'Contact')
+        from django.db import connection
+        with connection.schema_editor() as schema_editor:
+            field = Contact._meta.get_field('needs_human_intervention')
+            schema_editor.remove_field(Contact, field)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,14 +63,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='contact',
-            name='intervention_requested_at',
-            field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was last requested.', null=True),
-        ),
-        migrations.AddField(
-            model_name='contact',
-            name='needs_human_intervention',
-            field=models.BooleanField(db_index=True, default=False, help_text='Set to true if this contact requires human attention.'),
-        ),
+        migrations.RunPython(add_intervention_requested_at, reverse_intervention_requested_at),
+        migrations.RunPython(add_needs_human_intervention, reverse_needs_human_intervention),
     ]
