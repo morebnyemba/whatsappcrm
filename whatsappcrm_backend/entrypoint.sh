@@ -13,19 +13,28 @@ cleanup_migration_cache() {
 
 # Remove stale migration files that may cause conflicts
 # This specifically targets known problematic files that don't exist in the repository
+# NOTE: If new stale files appear, add them to the STALE_MIGRATION_FILES list below
 cleanup_stale_migrations() {
     echo "Checking for stale migration files..."
-    # Remove the known problematic 0002_initial.py in conversations if it exists
-    # This file was never part of the repository but may exist in Docker volumes
-    STALE_FILE="/app/conversations/migrations/0002_initial.py"
-    if [ -f "$STALE_FILE" ]; then
-        echo "Removing stale migration file: $STALE_FILE"
-        rm -f "$STALE_FILE"
-        echo "WARNING: Stale migration 0002_initial was found and removed."
-        echo "If the database has this migration recorded, you may need to run:"
-        echo "  python manage.py migrate conversations 0001_initial --fake"
-        echo "to reset the migration state, then apply migrations again."
-    fi
+    
+    # List of known stale migration files that may cause conflicts
+    # These files were never part of the repository but may exist in Docker volumes or cached layers
+    # Add new stale files here as needed
+    STALE_MIGRATION_FILES="
+        /app/conversations/migrations/0002_initial.py
+    "
+    
+    for STALE_FILE in $STALE_MIGRATION_FILES; do
+        if [ -f "$STALE_FILE" ]; then
+            echo "Removing stale migration file: $STALE_FILE"
+            rm -f "$STALE_FILE"
+            echo "WARNING: Stale migration was found and removed."
+            echo "If the database has this migration recorded, you may need to run:"
+            echo "  python manage.py migrate <app_name> <previous_migration> --fake"
+            echo "to reset the migration state, then apply migrations again."
+        fi
+    done
+    
     echo "Stale migration check complete."
 }
 
@@ -74,7 +83,16 @@ run_migrations() {
         
         if [ $MERGE_RESULT -eq 0 ]; then
             echo "Merge migration created. Retrying migration..."
+            set +e
             python manage.py migrate --noinput
+            RETRY_RESULT=$?
+            set -e
+            
+            if [ $RETRY_RESULT -ne 0 ]; then
+                echo "ERROR: Migration still failed after merge (exit code: $RETRY_RESULT)."
+                echo "Please check your migration files for consistency."
+                exit 1
+            fi
         else
             echo "ERROR: Could not resolve migration conflicts automatically."
             echo "Please check your migration files for consistency."
