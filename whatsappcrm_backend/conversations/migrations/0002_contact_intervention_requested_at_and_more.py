@@ -3,6 +3,86 @@
 from django.db import migrations, models
 
 
+def check_and_add_intervention_fields(apps, schema_editor):
+    """
+    Add intervention_requested_at and needs_human_intervention fields to Contact
+    if they don't already exist. This makes the migration idempotent and handles
+    cases where the columns may have already been added through other means.
+    """
+    table_name = 'conversations_contact'
+    
+    with schema_editor.connection.cursor() as cursor:
+        # Check and add intervention_requested_at
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+        """, [table_name, 'intervention_requested_at'])
+        
+        if cursor.fetchone() is None:
+            cursor.execute("""
+                ALTER TABLE conversations_contact 
+                ADD COLUMN intervention_requested_at TIMESTAMP WITH TIME ZONE NULL
+            """)
+        
+        # Check and add needs_human_intervention
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+        """, [table_name, 'needs_human_intervention'])
+        
+        if cursor.fetchone() is None:
+            cursor.execute("""
+                ALTER TABLE conversations_contact 
+                ADD COLUMN needs_human_intervention BOOLEAN NOT NULL DEFAULT FALSE
+            """)
+            # Create index for needs_human_intervention using IF NOT EXISTS
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS conversations_contact_needs_human_idx 
+                ON conversations_contact (needs_human_intervention)
+            """)
+
+
+def reverse_intervention_fields(apps, schema_editor):
+    """
+    Remove intervention_requested_at and needs_human_intervention fields from
+    Contact if they exist.
+    """
+    table_name = 'conversations_contact'
+    
+    with schema_editor.connection.cursor() as cursor:
+        # Check and drop needs_human_intervention
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+        """, [table_name, 'needs_human_intervention'])
+        
+        if cursor.fetchone() is not None:
+            # Drop index first
+            cursor.execute("""
+                DROP INDEX IF EXISTS conversations_contact_needs_human_idx
+            """)
+            cursor.execute("""
+                ALTER TABLE conversations_contact 
+                DROP COLUMN needs_human_intervention
+            """)
+        
+        # Check and drop intervention_requested_at
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+        """, [table_name, 'intervention_requested_at'])
+        
+        if cursor.fetchone() is not None:
+            cursor.execute("""
+                ALTER TABLE conversations_contact 
+                DROP COLUMN intervention_requested_at
+            """)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,14 +90,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='contact',
-            name='intervention_requested_at',
-            field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was last requested.', null=True),
-        ),
-        migrations.AddField(
-            model_name='contact',
-            name='needs_human_intervention',
-            field=models.BooleanField(db_index=True, default=False, help_text='Set to true if this contact requires human attention.'),
+        # Use SeparateDatabaseAndState to ensure Django's migration state is updated
+        # while still allowing idempotent database operations
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    check_and_add_intervention_fields,
+                    reverse_code=reverse_intervention_fields,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='contact',
+                    name='intervention_requested_at',
+                    field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was last requested.', null=True),
+                ),
+                migrations.AddField(
+                    model_name='contact',
+                    name='needs_human_intervention',
+                    field=models.BooleanField(db_index=True, default=False, help_text='Set to true if this contact requires human attention.'),
+                ),
+            ],
         ),
     ]
