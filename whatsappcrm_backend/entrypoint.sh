@@ -30,8 +30,8 @@ verify_migrations() {
     echo "Verifying migration files..."
     
     # Check that all migration directories have an __init__.py
-    migration_dirs=$(find /app -type d -name "migrations" 2>/dev/null)
-    for dir in $migration_dirs; do
+    # Using a while loop with proper quoting to handle paths with spaces
+    find /app -type d -name "migrations" 2>/dev/null | while read -r dir; do
         if [ -d "$dir" ] && [ ! -f "$dir/__init__.py" ]; then
             echo "WARNING: Missing __init__.py in $dir"
         fi
