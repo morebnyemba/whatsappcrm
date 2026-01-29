@@ -4,6 +4,52 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def _drop_contactflowstate_unique_together(apps, schema_editor):
+    model = apps.get_model('flows', 'ContactFlowState')
+    table = model._meta.db_table
+    columns = ['contact_id', 'current_flow_id']
+
+    with schema_editor.connection.cursor() as cursor:
+        constraints = schema_editor.connection.introspection.get_constraints(cursor, table)
+
+    for name, info in constraints.items():
+        if info.get('unique') and info.get('columns') == columns:
+            vendor = schema_editor.connection.vendor
+            if vendor == 'postgresql':
+                schema_editor.execute(
+                    f'ALTER TABLE "{table}" DROP CONSTRAINT IF EXISTS "{name}"'
+                )
+            elif vendor == 'mysql':
+                schema_editor.execute(
+                    f'ALTER TABLE `{table}` DROP INDEX `{name}`'
+                )
+            else:
+                schema_editor.execute(
+                    f'DROP INDEX IF EXISTS "{name}"'
+                )
+            break
+
+
+def _add_contactflowstate_unique_together(apps, schema_editor):
+    model = apps.get_model('flows', 'ContactFlowState')
+    table = model._meta.db_table
+    columns = ['contact_id', 'current_flow_id']
+
+    with schema_editor.connection.cursor() as cursor:
+        constraints = schema_editor.connection.introspection.get_constraints(cursor, table)
+
+    for info in constraints.values():
+        if info.get('unique') and info.get('columns') == columns:
+            return
+
+    unique_sql = schema_editor._create_unique_sql(
+        model,
+        [model._meta.get_field('contact'), model._meta.get_field('current_flow')],
+    )
+    if unique_sql is not None:
+        schema_editor.execute(unique_sql)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -12,9 +58,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterUniqueTogether(
-            name='contactflowstate',
-            unique_together=set(),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    _drop_contactflowstate_unique_together,
+                    reverse_code=_add_contactflowstate_unique_together,
+                ),
+            ],
+            state_operations=[
+                migrations.AlterUniqueTogether(
+                    name='contactflowstate',
+                    unique_together=set(),
+                ),
+            ],
         ),
         migrations.AlterField(
             model_name='contactflowstate',
