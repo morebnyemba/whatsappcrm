@@ -3,6 +3,36 @@
 from django.db import migrations, models
 
 
+def _add_payment_details_if_missing(apps, schema_editor):
+    WalletTransaction = apps.get_model('customer_data', 'WalletTransaction')
+    table = WalletTransaction._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'payment_details' not in column_names:
+        schema_editor.add_field(
+            WalletTransaction,
+            WalletTransaction._meta.get_field('payment_details'),
+        )
+
+
+def _remove_payment_details_if_present(apps, schema_editor):
+    WalletTransaction = apps.get_model('customer_data', 'WalletTransaction')
+    table = WalletTransaction._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'payment_details' in column_names:
+        schema_editor.remove_field(
+            WalletTransaction,
+            WalletTransaction._meta.get_field('payment_details'),
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,9 +40,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='wallettransaction',
-            name='payment_details',
-            field=models.JSONField(blank=True, default=dict, help_text='Stores details for the payment method, e.g., phone number for mobile money.'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    _add_payment_details_if_missing,
+                    reverse_code=_remove_payment_details_if_present,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='wallettransaction',
+                    name='payment_details',
+                    field=models.JSONField(blank=True, default=dict, help_text='Stores details for the payment method, e.g., phone number for mobile money.'),
+                ),
+            ],
         ),
     ]
