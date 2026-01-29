@@ -3,6 +3,36 @@
 from django.db import migrations, models
 
 
+def _add_flow_execution_disabled_if_missing(apps, schema_editor):
+    Contact = apps.get_model('conversations', 'Contact')
+    table = Contact._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'flow_execution_disabled' not in column_names:
+        schema_editor.add_field(
+            Contact,
+            Contact._meta.get_field('flow_execution_disabled'),
+        )
+
+
+def _remove_flow_execution_disabled_if_present(apps, schema_editor):
+    Contact = apps.get_model('conversations', 'Contact')
+    table = Contact._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'flow_execution_disabled' in column_names:
+        schema_editor.remove_field(
+            Contact,
+            Contact._meta.get_field('flow_execution_disabled'),
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,9 +40,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='contact',
-            name='flow_execution_disabled',
-            field=models.BooleanField(default=False, help_text='If true, automated flow processing is paused for this contact (e.g., during human agent interaction).'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    _add_flow_execution_disabled_if_missing,
+                    reverse_code=_remove_flow_execution_disabled_if_present,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='contact',
+                    name='flow_execution_disabled',
+                    field=models.BooleanField(default=False, help_text='If true, automated flow processing is paused for this contact (e.g., during human agent interaction).'),
+                ),
+            ],
         ),
     ]
