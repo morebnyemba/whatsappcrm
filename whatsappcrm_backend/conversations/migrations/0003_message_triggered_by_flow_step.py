@@ -4,6 +4,40 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def _add_triggered_by_flow_step_field(apps, schema_editor):
+    """Add the triggered_by_flow_step field only if it doesn't exist."""
+    Message = apps.get_model('conversations', 'Message')
+    table = Message._meta.db_table
+    column = 'triggered_by_flow_step_id'
+    
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = [col.name for col in columns]
+    
+    if column not in column_names:
+        schema_editor.add_field(
+            Message,
+            Message._meta.get_field('triggered_by_flow_step'),
+        )
+
+
+def _remove_triggered_by_flow_step_field(apps, schema_editor):
+    """Remove the triggered_by_flow_step field if it exists."""
+    Message = apps.get_model('conversations', 'Message')
+    table = Message._meta.db_table
+    column = 'triggered_by_flow_step_id'
+    
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = [col.name for col in columns]
+    
+    if column in column_names:
+        schema_editor.remove_field(
+            Message,
+            Message._meta.get_field('triggered_by_flow_step'),
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -12,9 +46,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='message',
-            name='triggered_by_flow_step',
-            field=models.ForeignKey(blank=True, help_text='The flow step that triggered the creation of this message, if any.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='triggered_messages', to='flows.flowstep'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    _add_triggered_by_flow_step_field,
+                    reverse_code=_remove_triggered_by_flow_step_field,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='message',
+                    name='triggered_by_flow_step',
+                    field=models.ForeignKey(blank=True, help_text='The flow step that triggered the creation of this message, if any.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='triggered_messages', to='flows.flowstep'),
+                ),
+            ],
         ),
     ]
