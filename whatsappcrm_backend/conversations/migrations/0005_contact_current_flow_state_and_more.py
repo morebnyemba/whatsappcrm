@@ -3,6 +3,48 @@
 from django.db import migrations, models
 
 
+def _add_contact_fields_if_missing(apps, schema_editor):
+    Contact = apps.get_model('conversations', 'Contact')
+    table = Contact._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'current_flow_state' not in column_names:
+        schema_editor.add_field(
+            Contact,
+            Contact._meta.get_field('current_flow_state'),
+        )
+
+    if 'intervention_resolved_at' not in column_names:
+        schema_editor.add_field(
+            Contact,
+            Contact._meta.get_field('intervention_resolved_at'),
+        )
+
+
+def _remove_contact_fields_if_present(apps, schema_editor):
+    Contact = apps.get_model('conversations', 'Contact')
+    table = Contact._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table)
+        column_names = {col.name for col in columns}
+
+    if 'current_flow_state' in column_names:
+        schema_editor.remove_field(
+            Contact,
+            Contact._meta.get_field('current_flow_state'),
+        )
+
+    if 'intervention_resolved_at' in column_names:
+        schema_editor.remove_field(
+            Contact,
+            Contact._meta.get_field('intervention_resolved_at'),
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,14 +52,24 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='contact',
-            name='current_flow_state',
-            field=models.JSONField(blank=True, default=dict, help_text='Stores the current state of the contact within a flow.'),
-        ),
-        migrations.AddField(
-            model_name='contact',
-            name='intervention_resolved_at',
-            field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was resolved.', null=True),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    _add_contact_fields_if_missing,
+                    reverse_code=_remove_contact_fields_if_present,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='contact',
+                    name='current_flow_state',
+                    field=models.JSONField(blank=True, default=dict, help_text='Stores the current state of the contact within a flow.'),
+                ),
+                migrations.AddField(
+                    model_name='contact',
+                    name='intervention_resolved_at',
+                    field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was resolved.', null=True),
+                ),
+            ],
         ),
     ]
