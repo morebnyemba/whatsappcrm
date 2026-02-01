@@ -218,11 +218,7 @@ def get_formatted_football_data(
                         # Calculate median odds from all bookmakers
                         odds_values = [float(outcome.odds) for outcome in outcome_list]
                         median_odds = statistics.median(odds_values)
-                        # Use the first outcome as template but with median odds
-                        representative_outcome = outcome_list[0]
-                        # Create a copy-like behavior by using the same object but we'll reference median_odds
-                        # Note: We can't modify the outcome object directly, so we'll store it and handle in display
-                        # For now, we'll use the outcome closest to median
+                        # Use the outcome closest to median for more realistic odds
                         closest_outcome = min(outcome_list, key=lambda x: abs(float(x.odds) - median_odds))
                         aggregated_outcomes[market_key][outcome_identifier] = closest_outcome
             
