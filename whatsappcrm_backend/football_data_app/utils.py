@@ -26,7 +26,7 @@ MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per f
 
 # PDF generation constants
 FIXTURES_PER_PAGE = 6  # Number of fixtures per PDF page before page break
-MAX_FIXTURES_IN_PDF = 60  # Maximum number of fixtures to include in a single PDF
+MAX_FIXTURES_IN_PDF = 150  # Maximum number of fixtures to include in a single PDF (increased for 10-day coverage)
 MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
 def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
@@ -961,7 +961,7 @@ def generate_fixtures_pdf(
     fixtures_added = 0
     current_league = None
     
-    for fixture in fixtures_qs[:MAX_FIXTURES_IN_PDF]:  # Limit fixtures for 7 days coverage
+    for fixture in fixtures_qs[:MAX_FIXTURES_IN_PDF]:  # Limit fixtures to avoid excessively large PDFs
         # Add league header when league changes
         if fixture.league.name != current_league:
             if fixtures_added > 0:
