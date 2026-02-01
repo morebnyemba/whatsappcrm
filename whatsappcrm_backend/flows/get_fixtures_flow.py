@@ -21,7 +21,7 @@ def create_get_fixtures_flow():
                             "data_type": "scheduled_fixtures",
                             # No league_code_variable, so it fetches for all leagues
                             "output_variable_name": "fixtures_display_parts",
-                            "days_ahead_for_fixtures": 7
+                            "days_ahead_for_fixtures": 10
                         }
                     ]
                 },
@@ -61,7 +61,7 @@ def create_get_fixtures_flow():
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "Sorry, no upcoming matches were found for the next 7 days. Please check back later."}
+                    "text": {"body": "Sorry, no upcoming matches were found for the next 10 days. Please check back later."}
                 },
                 "transitions": [
                     {"to_step": "ask_next_action_after_fixtures", "condition_config": {"type": "always_true"}}

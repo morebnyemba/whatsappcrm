@@ -316,7 +316,7 @@ class FetchFootballDataConfig(BasePydanticConfig):
     league_code_variable: Optional[str] = None # Path to context var holding league code
     output_variable_name: str # Name of context var to save formatted output
     days_past_for_results: Optional[int] = Field(default=2)
-    days_ahead_for_fixtures: Optional[int] = Field(default=7)
+    days_ahead_for_fixtures: Optional[int] = Field(default=10)
 
 class CreateAccountConfig(BasePydanticConfig):
     action_type: Literal["create_account"] = "create_account"
@@ -359,7 +359,7 @@ class HandleBettingActionConfig(BasePydanticConfig):
     # Additional parameters might be needed here if specific betting actions require them, e.g.:
     league_code_template: Optional[str] = None # Template for league code (for view_matches/view_results via betting action)
     days_past: Optional[int] = Field(default=2) # For view_results
-    days_ahead: Optional[int] = Field(default=7) # For view_matches
+    days_ahead: Optional[int] = Field(default=10) # For view_matches
 
 class GenerateReferralCodeConfig(BasePydanticConfig):
     action_type: Literal["generate_referral_code"] = "generate_referral_code"
@@ -1390,7 +1390,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     # Parameters for view_matches/view_results (if the betting_action itself involves fetching data)
                     resolved_league_code = _resolve_value(action_item_root.league_code_template, current_step_context, contact) if hasattr(action_item_root, 'league_code_template') else None
                     days_past = action_item_root.days_past if hasattr(action_item_root, 'days_past') else 2
-                    days_ahead = action_item_root.days_ahead if hasattr(action_item_root, 'days_ahead') else 7
+                    days_ahead = action_item_root.days_ahead if hasattr(action_item_root, 'days_ahead') else 10
 
 
                     result = handle_football_betting_action(

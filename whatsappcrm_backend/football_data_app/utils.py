@@ -2,6 +2,7 @@
 
 import re
 import logging
+import statistics
 from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.apps import apps
@@ -26,7 +27,7 @@ MAX_CORRECT_SCORES_TO_DISPLAY = 4  # Maximum correct score options to show per f
 
 # PDF generation constants
 FIXTURES_PER_PAGE = 6  # Number of fixtures per PDF page before page break
-MAX_FIXTURES_IN_PDF = 60  # Maximum number of fixtures to include in a single PDF
+MAX_FIXTURES_IN_PDF = 150  # Maximum number of fixtures to include in a single PDF (increased for 10-day coverage)
 MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
 def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
@@ -186,7 +187,9 @@ def get_formatted_football_data(
             else:
                 line += f"\n{fixture.home_team.name} vs {fixture.away_team.name}"
 
-            aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
+            # Collect all odds for each outcome across bookmakers
+            # We'll use median odds instead of highest odds for more realistic pricing
+            odds_by_outcome: Dict[str, Dict[str, List[MarketOutcome]]] = {}
             markets_list = list(fixture.markets.all())
             
             # Count total outcomes from all markets (used for diagnostic logging)
@@ -194,16 +197,30 @@ def get_formatted_football_data(
             
             for market in markets_list:
                 market_key = market.api_market_key
-                if market_key not in aggregated_outcomes:
-                    aggregated_outcomes[market_key] = {}
+                if market_key not in odds_by_outcome:
+                    odds_by_outcome[market_key] = {}
                 outcomes_list = list(market.outcomes.all())
                 total_outcome_count += len(outcomes_list)
                 
                 for outcome in outcomes_list:
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
-                    current_best_outcome = aggregated_outcomes[market_key].get(outcome_identifier)
-                    if current_best_outcome is None or outcome.odds > current_best_outcome.odds:
-                        aggregated_outcomes[market_key][outcome_identifier] = outcome
+                    if outcome_identifier not in odds_by_outcome[market_key]:
+                        odds_by_outcome[market_key][outcome_identifier] = []
+                    odds_by_outcome[market_key][outcome_identifier].append(outcome)
+            
+            # Calculate median odds for each outcome
+            aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
+            for market_key, outcomes_dict in odds_by_outcome.items():
+                if market_key not in aggregated_outcomes:
+                    aggregated_outcomes[market_key] = {}
+                for outcome_identifier, outcome_list in outcomes_dict.items():
+                    if outcome_list:
+                        # Calculate median odds from all bookmakers
+                        odds_values = [float(outcome.odds) for outcome in outcome_list]
+                        median_odds = statistics.median(odds_values)
+                        # Use the outcome closest to median for more realistic odds
+                        closest_outcome = min(outcome_list, key=lambda x: abs(float(x.odds) - median_odds))
+                        aggregated_outcomes[market_key][outcome_identifier] = closest_outcome
             
             # Enhanced debug logging
             if not aggregated_outcomes:
@@ -961,7 +978,7 @@ def generate_fixtures_pdf(
     fixtures_added = 0
     current_league = None
     
-    for fixture in fixtures_qs[:MAX_FIXTURES_IN_PDF]:  # Limit fixtures for 7 days coverage
+    for fixture in fixtures_qs[:MAX_FIXTURES_IN_PDF]:  # Limit fixtures to avoid excessively large PDFs
         # Add league header when league changes
         if fixture.league.name != current_league:
             if fixtures_added > 0:
@@ -1011,21 +1028,35 @@ def generate_fixtures_pdf(
         
         # Get odds data for scheduled fixtures
         if data_type == "scheduled_fixtures":
-            # Aggregate outcomes (filter out odds that are too high)
-            # Note: Primary filtering done at DB level; this is a safety net for edge cases
-            aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
+            # Collect all odds for each outcome across bookmakers, then use median
+            # This provides more realistic odds instead of always showing the highest
+            odds_by_outcome: Dict[str, Dict[str, List[MarketOutcome]]] = {}
             for market in fixture.markets.all():
                 market_key = market.api_market_key
-                if market_key not in aggregated_outcomes:
-                    aggregated_outcomes[market_key] = {}
+                if market_key not in odds_by_outcome:
+                    odds_by_outcome[market_key] = {}
                 for outcome in market.outcomes.all():
                     # Skip odds that are too high (safety check)
                     if float(outcome.odds) > max_odds:
                         continue
                     outcome_identifier = f"{outcome.outcome_name}-{outcome.point_value if outcome.point_value is not None else ''}"
-                    current_best = aggregated_outcomes[market_key].get(outcome_identifier)
-                    if current_best is None or outcome.odds > current_best.odds:
-                        aggregated_outcomes[market_key][outcome_identifier] = outcome
+                    if outcome_identifier not in odds_by_outcome[market_key]:
+                        odds_by_outcome[market_key][outcome_identifier] = []
+                    odds_by_outcome[market_key][outcome_identifier].append(outcome)
+            
+            # Calculate median odds for each outcome
+            aggregated_outcomes: Dict[str, Dict[str, MarketOutcome]] = {}
+            for market_key, outcomes_dict in odds_by_outcome.items():
+                if market_key not in aggregated_outcomes:
+                    aggregated_outcomes[market_key] = {}
+                for outcome_identifier, outcome_list in outcomes_dict.items():
+                    if outcome_list:
+                        # Calculate median odds from all bookmakers
+                        odds_values = [float(outcome.odds) for outcome in outcome_list]
+                        median_odds = statistics.median(odds_values)
+                        # Use the outcome closest to median for more realistic odds
+                        closest_outcome = min(outcome_list, key=lambda x: abs(float(x.odds) - median_odds))
+                        aggregated_outcomes[market_key][outcome_identifier] = closest_outcome
             
             if aggregated_outcomes:
                 # Create odds table with improved design
