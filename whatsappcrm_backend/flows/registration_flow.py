@@ -80,7 +80,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "message_type": "interactive",
                         "interactive": {
                             "type": "button",
-                            "body": {"text": "Welcome! It looks like you were referred by agent *{{ flow_context.referrer_details.referrer_name }}*. Is this correct?"},
+                            "body": {"text": "Welcome! It looks like *{{ flow_context.referrer_details.referrer_name }}* is your agent. Is this correct?"},
                             "action": {
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "referrer_confirm_yes", "title": "Yes, that's right"}},
