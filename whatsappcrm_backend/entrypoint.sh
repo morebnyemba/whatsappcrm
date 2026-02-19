@@ -64,6 +64,8 @@ wait_for_db() {
 
 # Apply database migrations
 run_migrations() {
+    echo "Generating any missing migrations..."
+    python manage.py makemigrations --noinput
     echo "Applying database migrations..."
     # First, try to apply migrations normally
     # This handles cases where Docker volumes have stale migration files
