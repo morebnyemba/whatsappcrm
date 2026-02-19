@@ -2,13 +2,13 @@
 
 def create_referral_flow():
     """
-    Defines the flow for a user to get their referral code.
-    This is now an interactive menu for the referral program.
+    Defines the flow for the agent program.
+    Agents can get their code, check referrals, and view commission earnings.
     """
     return {
-        "name": "Refer a Friend",
-        "description": "Interactive menu for users to get their referral code and check referral status.",
-        "trigger_keywords": ["refer", "refer a friend", "referral"],
+        "name": "Agent Program",
+        "description": "Interactive menu for agents to get their code, check referrals, and view earnings.",
+        "trigger_keywords": ["refer", "refer a friend", "referral", "agent", "agent program"],
         "is_active": True,
         "steps": [
             {
@@ -27,7 +27,7 @@ def create_referral_flow():
                 },
                 "transitions": [
                     {
-                        "to_step": "show_referral_options",
+                        "to_step": "show_agent_options",
                         "priority": 1,
                         "condition_config": {
                             "type": "variable_exists",
@@ -42,19 +42,19 @@ def create_referral_flow():
                 ]
             },
             {
-                "name": "show_referral_options",
+                "name": "show_agent_options",
                 "step_type": "question",
                 "config": {
                     "message_config": {
                         "message_type": "interactive",
                         "interactive": {
                             "type": "button",
-                            "body": {"text": "Welcome to the Referral Program! What would you like to do?"},
+                            "body": {"text": "Welcome to the Agent Program! 🤝\nEarn commission when users you refer lose bets.\n\nWhat would you like to do?"},
                             "action": {
                                 "buttons": [
-                                    {"type": "reply", "reply": {"id": "get_referral_code", "title": "Get My Code"}},
-                                    {"type": "reply", "reply": {"id": "check_total_referrals", "title": "Total Referrals"}},
-                                    {"type": "reply", "reply": {"id": "check_pending_referrals", "title": "Pending Referrals"}}
+                                    {"type": "reply", "reply": {"id": "get_referral_code", "title": "Get My Agent Code"}},
+                                    {"type": "reply", "reply": {"id": "check_agent_earnings", "title": "My Earnings"}},
+                                    {"type": "reply", "reply": {"id": "check_total_referrals", "title": "My Referrals"}}
                                 ]
                             }
                         }
@@ -66,8 +66,8 @@ def create_referral_flow():
                 },
                 "transitions": [
                     {"to_step": "generate_code", "condition_config": {"type": "interactive_reply_id_equals", "value": "get_referral_code"}},
-                    {"to_step": "get_total_referrals", "condition_config": {"type": "interactive_reply_id_equals", "value": "check_total_referrals"}},
-                    {"to_step": "get_pending_referrals", "condition_config": {"type": "interactive_reply_id_equals", "value": "check_pending_referrals"}}
+                    {"to_step": "get_agent_earnings", "condition_config": {"type": "interactive_reply_id_equals", "value": "check_agent_earnings"}},
+                    {"to_step": "get_total_referrals", "condition_config": {"type": "interactive_reply_id_equals", "value": "check_total_referrals"}}
                 ]
             },
             {
@@ -102,7 +102,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Your personal referral code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and make their first deposit, you will *each* receive a bonus equal to {{ flow_context.referral_settings.bonus_percentage_display }} of their deposit amount! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
+                        "body": "Your personal agent code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and place bets, you'll earn a *{{ flow_context.referral_settings.agent_commission_display }}* commission on every bet they lose! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
                     }
                 },
                 "transitions": [{"to_step": "send_shareable_referral_message", "condition_config": {"type": "always_true"}}]
@@ -113,7 +113,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my referral code when you sign up, and we will *each* get a bonus equal to *{{ flow_context.referral_settings.bonus_percentage_display }}* of your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20referral%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
+                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my agent code when you sign up and we'll both get a bonus on your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20agent%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
@@ -146,6 +146,30 @@ def create_referral_flow():
                 ]
             },
             {
+                "name": "get_agent_earnings",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "get_agent_earnings",
+                            "output_variable_name": "agent_earnings_data"
+                        }
+                    ]
+                },
+                "transitions": [{"to_step": "send_agent_earnings_message", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "send_agent_earnings_message",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "💰 *Agent Earnings Summary*\n\nTotal Earnings: *${{ flow_context.agent_earnings_data.total_earnings }}*\nTotal Referrals: *{{ flow_context.agent_earnings_data.total_referrals }}*\nCommission Rate: *{{ flow_context.agent_earnings_data.commission_display }}*\n\nKeep sharing your code to earn more! 🚀"
+                    }
+                },
+                "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
+            },
+            {
                 "name": "get_total_referrals",
                 "step_type": "action",
                 "config": {
@@ -164,31 +188,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "You have a total of *{{ flow_context.total_referrals_count }}* successful referral(s). Keep up the great work! 🚀"
-                    }
-                },
-                "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
-            },
-            {
-                "name": "get_pending_referrals",
-                "step_type": "action",
-                "config": {
-                    "actions_to_run": [
-                        {
-                            "action_type": "get_pending_referrals",
-                            "output_variable_name": "pending_referrals_count"
-                        }
-                    ]
-                },
-                "transitions": [{"to_step": "send_pending_referrals_message", "condition_config": {"type": "always_true"}}]
-            },
-            {
-                "name": "send_pending_referrals_message",
-                "step_type": "send_message",
-                "config": {
-                    "message_type": "text",
-                    "text": {
-                        "body": "You have *{{ flow_context.pending_referrals_count }}* pending referral(s). A referral becomes successful once your friend makes their first deposit."
+                        "body": "You have a total of *{{ flow_context.total_referrals_count }}* referred user(s). Keep up the great work! 🚀"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
@@ -206,7 +206,7 @@ def create_referral_flow():
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "You need to have an account to refer friends. Type 'register' to create one!"}
+                    "text": {"body": "You need to have an account to become an agent. Type 'register' to create one!"}
                 },
                 "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
             },

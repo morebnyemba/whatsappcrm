@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from decimal import Decimal
 from django.contrib.auth import get_user_model
-from .models import ReferralProfile, ReferralSettings
+from .models import ReferralProfile, ReferralSettings, AgentEarning
 from customer_data.models import UserWallet, WalletTransaction, CustomerProfile
 from .tasks import send_bonus_notification_task
 
@@ -150,3 +150,88 @@ def check_and_apply_first_deposit_bonus(user: User):
 
     except Exception as e:
         logger.error(f"Error in check_and_apply_first_deposit_bonus for user {user.username}: {e}", exc_info=True)
+
+
+def award_agent_commission(ticket):
+    """
+    Awards a commission to the agent who referred the user that lost a bet.
+    Called during bet ticket settlement when a ticket status is LOST.
+
+    Args:
+        ticket: The BetTicket instance that was lost.
+    """
+    log_prefix = f"[Agent Commission - Ticket #{ticket.id}]"
+
+    if not ticket.user:
+        logger.debug(f"{log_prefix} No user on ticket. Skipping agent commission.")
+        return
+
+    try:
+        # Check if the losing bettor was referred by an agent
+        profile = ReferralProfile.objects.select_related('referred_by').get(user=ticket.user)
+    except ReferralProfile.DoesNotExist:
+        logger.debug(f"{log_prefix} No referral profile for user {ticket.user.username}. Skipping.")
+        return
+
+    if not profile.referred_by:
+        logger.debug(f"{log_prefix} User {ticket.user.username} has no agent. Skipping.")
+        return
+
+    agent_user = profile.referred_by
+
+    # Prevent duplicate commission for the same ticket
+    if AgentEarning.objects.filter(agent_profile__user=agent_user, bet_ticket=ticket).exists():
+        logger.info(f"{log_prefix} Commission already awarded to agent {agent_user.username}. Skipping.")
+        return
+
+    settings = ReferralSettings.load()
+    commission_pct = settings.agent_commission_percentage
+
+    if commission_pct <= 0:
+        logger.debug(f"{log_prefix} Agent commission percentage is 0. Skipping.")
+        return
+
+    commission_amount = Decimal(str(ticket.total_stake)) * Decimal(str(commission_pct))
+
+    if commission_amount <= 0:
+        logger.debug(f"{log_prefix} Commission amount is zero or negative. Skipping.")
+        return
+
+    try:
+        agent_profile = ReferralProfile.objects.get(user=agent_user)
+    except ReferralProfile.DoesNotExist:
+        logger.error(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
+        return
+
+    with transaction.atomic():
+        # Record the earning
+        AgentEarning.objects.create(
+            agent_profile=agent_profile,
+            bet_ticket=ticket,
+            referred_user=ticket.user,
+            bet_stake=ticket.total_stake,
+            commission_percentage=commission_pct,
+            commission_amount=commission_amount,
+        )
+
+        # Credit agent's wallet
+        agent_user.wallet.add_funds(
+            amount=commission_amount,
+            description=f"Agent commission from {ticket.user.username}'s lost ticket #{ticket.id}",
+            transaction_type='AGENT_COMMISSION',
+        )
+
+    logger.info(
+        f"{log_prefix} Awarded ${commission_amount:.2f} ({commission_pct:.2%}) commission "
+        f"to agent {agent_user.username} from {ticket.user.username}'s lost stake of ${ticket.total_stake:.2f}."
+    )
+
+    # Send notification to agent
+    commission_message = (
+        f"💰 Agent Commission Earned!\n\n"
+        f"Your referred user {ticket.user.username} lost a bet (Ticket #{ticket.id}) "
+        f"with a stake of ${ticket.total_stake:.2f}.\n\n"
+        f"You've earned a *${commission_amount:.2f}* ({commission_pct:.2%}) commission! "
+        f"Your wallet has been credited."
+    )
+    send_bonus_notification_task.delay(user_id=agent_user.id, message=commission_message)

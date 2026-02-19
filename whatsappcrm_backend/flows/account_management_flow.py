@@ -31,7 +31,7 @@ def create_account_management_flow():
                                             {"id": "account_deposit", "title": "Deposit Funds", "description": "Add money to your wallet"},
                                             {"id": "account_withdraw", "title": "Withdraw Funds", "description": "Request a withdrawal"},
                                             {"id": "account_check_balance", "title": "Check Balance", "description": "View your current balance"},
-                                            {"id": "account_refer_friend", "title": "Refer a Friend", "description": "Earn bonuses by inviting friends"},
+                                            {"id": "account_agent_program", "title": "Agent Program", "description": "Earn commission on your referrals' lost bets"},
                                         ]
                                     },
                                     {
@@ -53,7 +53,7 @@ def create_account_management_flow():
                     {"to_step": "switch_to_deposit", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_deposit"}},
                     {"to_step": "switch_to_withdrawal", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_withdraw"}},
                     {"to_step": "fetch_wallet_balance", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_check_balance"}},
-                    {"to_step": "switch_to_referral", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_refer_friend"}},
+                    {"to_step": "switch_to_agent_program", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_agent_program"}},
                     {"to_step": "switch_to_welcome", "condition_config": {"type": "interactive_reply_id_equals", "value": "account_back_to_main"}},
                 ]
             },
@@ -77,10 +77,10 @@ def create_account_management_flow():
                 "transitions": []
             },
             {
-                "name": "switch_to_referral",
+                "name": "switch_to_agent_program",
                 "step_type": "action",
                 "config": {
-                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "refer"}]
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "agent"}]
                 },
                 "transitions": []
             },

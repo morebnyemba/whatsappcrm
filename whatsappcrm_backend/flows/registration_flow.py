@@ -34,7 +34,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "priority": 1,
                         "condition_config": {
                             "type": "user_reply_contains_keyword",
-                            "keyword": "referral code",
+                            "keyword": "agent code",
                             "case_sensitive": False
                         }
                     },
@@ -68,7 +68,7 @@ def create_registration_flow() -> Dict[str, Any]:
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "The referral code in your message seems to be invalid. Let's proceed with registration, and you can enter a code manually later if you have one."}
+                    "text": {"body": "The agent code in your message seems to be invalid. Let's proceed with registration, and you can enter a code manually later if you have one."}
                 },
                 "transitions": [{"to_step": "check_if_email_exists", "condition_config": {"type": "always_true"}}]
             },
@@ -80,7 +80,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "message_type": "interactive",
                         "interactive": {
                             "type": "button",
-                            "body": {"text": "Welcome! It looks like you were referred by *{{ flow_context.referrer_details.referrer_name }}*. Is this correct?"},
+                            "body": {"text": "Welcome! It looks like *{{ flow_context.referrer_details.referrer_name }}* is your agent. Is this correct?"},
                             "action": {
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "referrer_confirm_yes", "title": "Yes, that's right"}},
@@ -427,7 +427,7 @@ def create_registration_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # --- Referral Code Path (Manual Entry) ---
+            # --- Agent Code Path (Manual Entry) ---
             {
                 "name": "check_if_code_already_provided",
                 "step_type": "action",
@@ -445,7 +445,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "message_type": "interactive",
                         "interactive": {
                             "type": "button",
-                            "body": {"text": "Do you have a referral code?"},
+                            "body": {"text": "Do you have an agent code?"},
                             "action": {
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "has_referral_yes", "title": "Yes, I have a code"}},
@@ -470,7 +470,7 @@ def create_registration_flow() -> Dict[str, Any]:
                 "config": {
                     "message_config": {
                         "message_type": "text",
-                        "text": {"body": "Great! Please enter the referral code:"}
+                        "text": {"body": "Great! Please enter the agent code:"}
                     },
                     "reply_config": {
                         "save_to_variable": "provided_referral_code",
@@ -480,7 +480,7 @@ def create_registration_flow() -> Dict[str, Any]:
                         "max_retries": 1,
                         "re_prompt_message_text": "Please enter the code you received.",
                         "action_after_max_retries": "end_flow",
-                        "end_flow_message_text": "Let's continue for now. You can contact support later to add a referral code."
+                        "end_flow_message_text": "Let's continue for now. You can contact support later to add an agent code."
                     }
                 },
                 "transitions": [
@@ -491,7 +491,7 @@ def create_registration_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # --- End Referral Code Path ---
+            # --- End Agent Code Path ---
             # 12. Create the account (convergence point for all paths)
             {
                 "name": "create_account_step",
