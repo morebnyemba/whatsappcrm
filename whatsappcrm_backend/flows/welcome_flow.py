@@ -31,6 +31,7 @@ def create_welcome_flow():
                                             {"id": "welcome_register", "title": "Register (New Users)", "description": "Sign up for a new BetBlitz account"},
                                             {"id": "welcome_betting", "title": "Betting", "description": "Explore matches, odds, and place your bets"},
                                             {"id": "welcome_account", "title": "Account Management", "description": "Manage your funds, deposits, and withdrawals"},
+                                            {"id": "welcome_agent_program", "title": "Agent Program", "description": "Earn commission when your referrals lose bets"},
                                         ]
                                     },
                                     {
@@ -54,6 +55,7 @@ def create_welcome_flow():
                     {"to_step": "switch_to_registration", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_register"}},
                     {"to_step": "switch_to_betting", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_betting"}},
                     {"to_step": "switch_to_account_management", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_account"}},
+                    {"to_step": "switch_to_agent_program", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_agent_program"}},
                     {"to_step": "show_about_us", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_about"}},
                     {"to_step": "show_support", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_support"}},
                     {"to_step": "show_developer_contact", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_developer"}},
@@ -80,6 +82,12 @@ def create_welcome_flow():
                 "name": "switch_to_account_management",
                 "step_type": "action",
                 "config": {"actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "account"}]},
+                "transitions": []
+            },
+            {
+                "name": "switch_to_agent_program",
+                "step_type": "action",
+                "config": {"actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "agent"}]},
                 "transitions": []
             },
             # --- Simple Message Steps ---

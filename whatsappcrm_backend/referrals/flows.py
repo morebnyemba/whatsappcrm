@@ -113,7 +113,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my agent code when you sign up and we'll both get a bonus on your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20referral%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
+                        "body": "Hey! 🌟 I'm inviting you to join BetBlitz, the best betting platform on WhatsApp!\n\nUse my agent code when you sign up and we'll both get a bonus on your first deposit! 💰\n\nMy code: *{{ flow_context.referral_code }}*\n\nClick the link below to register with my code automatically:\nhttps://wa.me/263780784537?text=Hi!%20I'd%20like%20to%20register%20with%20agent%20code:%20{{ flow_context.referral_code }}\n\nLet's win together! 🏆"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
