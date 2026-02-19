@@ -101,6 +101,7 @@ class WalletTransaction(models.Model):
         ('BET_WON', 'Bet Won'),
         ('BET_LOST', 'Bet Lost'),
         ('BET_REFUNDED', 'Bet Refunded'),
+        ('AGENT_COMMISSION', 'Agent Commission'),
     ]
 
     TRANSACTION_STATUS = [

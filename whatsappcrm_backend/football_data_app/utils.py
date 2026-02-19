@@ -731,6 +731,13 @@ def settle_ticket(ticket_id: int):
             if 'LOST' in bet_statuses:
                 new_status = 'LOST'
                 logger.info(f"{log_prefix} At least one bet was LOST. Setting ticket status to LOST.")
+
+                # Award agent commission on lost bets
+                try:
+                    from referrals.utils import award_agent_commission
+                    award_agent_commission(ticket)
+                except Exception as commission_err:
+                    logger.error(f"{log_prefix} Error awarding agent commission: {commission_err}", exc_info=True)
             # Check if we have any winning bets (may also have REFUNDED/PUSH bets)
             elif 'WON' in bet_statuses:
                 new_status = 'WON'
