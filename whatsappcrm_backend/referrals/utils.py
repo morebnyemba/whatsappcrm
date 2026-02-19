@@ -191,7 +191,7 @@ def award_agent_commission(ticket):
         logger.debug(f"{log_prefix} Agent commission percentage is 0. Skipping.")
         return
 
-    commission_amount = ticket.total_stake * commission_pct
+    commission_amount = Decimal(str(ticket.total_stake)) * Decimal(str(commission_pct))
 
     if commission_amount <= 0:
         logger.debug(f"{log_prefix} Commission amount is zero or negative. Skipping.")
