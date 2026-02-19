@@ -179,8 +179,8 @@ class Configuration(models.Model):
         help_text="Current season year for API-Football v3 (e.g., 2024). Used when fetching fixtures and standings."
     )
     is_active = models.BooleanField(default=True, help_text="Whether this configuration is currently active")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True)
     
     class Meta:
         verbose_name = _("Configuration")
