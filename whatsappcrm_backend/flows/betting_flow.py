@@ -118,7 +118,7 @@ def create_betting_flow():
                 "name": "display_single_ticket_details",
                 "step_type": "send_message",
                 "config": {"message_type": "text", "text": {"body": "{{ flow_context.single_ticket_message }}"}},
-                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "ask_next_action_after_betting", "condition_config": {"type": "always_true"}}]
             },
             # --- Path 2: Place Bet via Text ---
             {
@@ -200,7 +200,7 @@ def create_betting_flow():
                     "text": {"body": "{{ flow_context.place_ticket_message }}"}
                 },
                 "transitions": [
-                    {"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}
+                    {"to_step": "ask_next_action_after_betting", "condition_config": {"type": "always_true"}}
                 ]
             },
             {
@@ -210,7 +210,7 @@ def create_betting_flow():
                     "message_type": "text",
                     "text": {"body": "Your bet has been cancelled as requested."}
                 },
-                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "ask_next_action_after_betting", "condition_config": {"type": "always_true"}}]
             },
             # --- Path 3 & 4 are handled by handle_betting_action which sets a message in context ---
             {
@@ -223,7 +223,7 @@ def create_betting_flow():
                 "name": "display_betting_action_result",
                 "step_type": "send_message",
                 "config": {"message_type": "text", "text": {"body": "{{ flow_context.view_my_tickets_message | default:'' }}{{ flow_context.check_wallet_balance_message | default:'' }}"}},
-                "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+                "transitions": [{"to_step": "ask_next_action_after_betting", "condition_config": {"type": "always_true"}}]
             },
             # --- Common Failure/End Steps ---
             {
@@ -249,6 +249,42 @@ def create_betting_flow():
                 "step_type": "send_message",
                 "config": {"message_type": "text", "text": {"body": "❌ Sorry, something went wrong. {{ flow_context.view_results_message | default:flow_context.view_matches_message | default:'Please try again.' }}"}},
                 "transitions": [{"to_step": "end_betting_flow", "condition_config": {"type": "always_true"}}]
+            },
+            # --- Navigation Step ---
+            {
+                "name": "ask_next_action_after_betting",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "What would you like to do next?"},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "betting_back_to_menu", "title": "Betting Menu"}},
+                                    {"type": "reply", "reply": {"id": "betting_main_menu", "title": "Main Menu"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "betting_next_action",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "show_betting_menu", "condition_config": {"type": "interactive_reply_id_equals", "value": "betting_back_to_menu"}},
+                    {"to_step": "switch_to_main_menu_from_betting", "condition_config": {"type": "interactive_reply_id_equals", "value": "betting_main_menu"}}
+                ]
+            },
+            {
+                "name": "switch_to_main_menu_from_betting",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "menu"}]
+                },
+                "transitions": []  # Empty because switch_flow clears current flow state and starts a new flow
             },
             {
                 "name": "end_betting_flow",
