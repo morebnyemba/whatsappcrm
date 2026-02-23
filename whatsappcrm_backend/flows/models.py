@@ -34,6 +34,10 @@ class Flow(models.Model):
             "(e.g., [\"hello\", \"start session\"]). Case-insensitive 'contains' match."
         )
     )
+    requires_login = models.BooleanField(
+        default=False,
+        help_text="If true, contacts must be logged in (have an active session) to access this flow."
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,7 +1,7 @@
 # whatsappcrm_backend/conversations/admin.py
 
 from django.contrib import admin
-from .models import Contact, Message
+from .models import Contact, Message, ContactSession
 
 @admin.register(Contact)
 class ContactAdmin(admin.ModelAdmin):
@@ -75,3 +75,12 @@ class MessageAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         # Optimize query by prefetching related Contact
         return super().get_queryset(request).select_related('contact') # 'app_config'
+
+
+@admin.register(ContactSession)
+class ContactSessionAdmin(admin.ModelAdmin):
+    list_display = ('contact', 'is_authenticated', 'authenticated_at', 'expires_at', 'last_activity_at')
+    search_fields = ('contact__whatsapp_id', 'contact__name')
+    list_filter = ('is_authenticated',)
+    readonly_fields = ('contact', 'authenticated_at', 'last_activity_at')
+    list_select_related = ('contact',)

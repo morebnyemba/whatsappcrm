@@ -19,9 +19,9 @@ class FlowStepInline(admin.TabularInline): # Or StackedInline
 
 @admin.register(Flow)
 class FlowAdmin(admin.ModelAdmin):
-    list_display = ('name', 'description', 'is_active', 'created_at', 'updated_at') # 'app_config',
+    list_display = ('name', 'description', 'is_active', 'requires_login', 'created_at', 'updated_at') # 'app_config',
     search_fields = ('name', 'description')
-    list_filter = ('is_active', 'created_at') # 'app_config',
+    list_filter = ('is_active', 'requires_login', 'created_at') # 'app_config',
     inlines = [FlowStepInline]
     actions = ['activate_flows', 'deactivate_flows']
 
