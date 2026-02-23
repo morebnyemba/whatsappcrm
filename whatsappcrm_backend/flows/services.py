@@ -36,6 +36,14 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+LOGIN_REQUIRED_MESSAGE = (
+    "\U0001f512 You need to be logged in to access this feature. "
+    "Please type 'login' to authenticate first."
+)
+SESSION_EXPIRED_MESSAGE = (
+    "\U0001f512 Your session has expired. Please type 'login' to authenticate again."
+)
+
 if not MEDIA_ASSET_ENABLED:
     logger.warning("MediaAsset model not found or could not be imported. MediaAsset functionality (e.g., 'asset_pk') will be disabled in flows.")
 
@@ -1730,10 +1738,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                     'type': 'send_whatsapp_message',
                     'recipient_wa_id': contact.whatsapp_id,
                     'message_type': 'text',
-                    'data': {
-                        'body': '🔒 You need to be logged in to access this feature. '
-                                'Please type \'login\' to authenticate first.'
-                    }
+                    'data': {'body': LOGIN_REQUIRED_MESSAGE}
                 })
                 return actions_to_perform
         # --- End session security check ---
@@ -2402,7 +2407,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                         'type': 'send_whatsapp_message',
                         'recipient_wa_id': contact.whatsapp_id,
                         'message_type': 'text',
-                        'data': {'body': '🔒 Your session has expired. Please type \'login\' to authenticate again.'}
+                        'data': {'body': SESSION_EXPIRED_MESSAGE}
                     }]
             except ContactSession.DoesNotExist:
                 logger.info(f"No session found for contact {contact.whatsapp_id} in protected flow '{flow_name}'. Clearing flow state.")
@@ -2411,7 +2416,7 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                     'type': 'send_whatsapp_message',
                     'recipient_wa_id': contact.whatsapp_id,
                     'message_type': 'text',
-                    'data': {'body': '🔒 Your session has expired. Please type \'login\' to authenticate again.'}
+                    'data': {'body': SESSION_EXPIRED_MESSAGE}
                 }]
 
         actions_to_perform = _handle_active_flow_step(

@@ -215,7 +215,7 @@ class ContactSession(models.Model):
     Contacts must log in (verify their PIN/password) before accessing
     protected flows. Sessions expire after a configurable timeout.
     """
-    SESSION_TIMEOUT_MINUTES = 30
+    DEFAULT_SESSION_TIMEOUT_MINUTES = 30
 
     contact = models.OneToOneField(
         Contact,
@@ -240,6 +240,10 @@ class ContactSession(models.Model):
         help_text="Timestamp when the session expires."
     )
 
+    @property
+    def session_timeout_minutes(self):
+        return getattr(settings, 'SESSION_TIMEOUT_MINUTES', self.DEFAULT_SESSION_TIMEOUT_MINUTES)
+
     def is_valid(self):
         """Return True if the session is authenticated and not expired."""
         if not self.is_authenticated:
@@ -252,7 +256,7 @@ class ContactSession(models.Model):
 
     def refresh(self):
         """Extend the session expiry based on current activity."""
-        self.expires_at = timezone.now() + timedelta(minutes=self.SESSION_TIMEOUT_MINUTES)
+        self.expires_at = timezone.now() + timedelta(minutes=self.session_timeout_minutes)
         self.save(update_fields=['expires_at', 'last_activity_at'])
 
     def start(self):
@@ -260,7 +264,7 @@ class ContactSession(models.Model):
         now = timezone.now()
         self.is_authenticated = True
         self.authenticated_at = now
-        self.expires_at = now + timedelta(minutes=self.SESSION_TIMEOUT_MINUTES)
+        self.expires_at = now + timedelta(minutes=self.session_timeout_minutes)
         self.save(update_fields=['is_authenticated', 'authenticated_at', 'expires_at'])
 
     def end(self):
