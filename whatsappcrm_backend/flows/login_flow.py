@@ -150,8 +150,9 @@ def create_login_flow() -> Dict[str, Any]:
                 ]
             },
             # 6. Process the Flow auth result
-            #    After the WhatsApp Flow completes, the nfm_reply response
-            #    comes back with authenticated status. We extract it from context.
+            #    After the WhatsApp Flow completes, the backend endpoint has
+            #    already authenticated the user and started a ContactSession.
+            #    We use check_session to verify the session was created successfully.
             {
                 "name": "process_flow_auth_result",
                 "step_type": "action",

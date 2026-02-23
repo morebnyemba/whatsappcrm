@@ -493,15 +493,28 @@ class WhatsAppFlowEndpointView(View):
                 # Authentication succeeded.
                 # Start session for the contact associated with this flow_token.
                 # The flow_token is the contact's whatsapp_id, set when sending the flow.
-                contact = None
-                if flow_token:
-                    try:
-                        contact = Contact.objects.get(whatsapp_id=flow_token)
-                        session, _ = ContactSession.objects.get_or_create(contact=contact)
-                        session.start()
-                        logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
-                    except Contact.DoesNotExist:
-                        logger.warning(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found. Auth succeeded but no session created.")
+                if not flow_token:
+                    logger.error("WhatsApp Flow auth: flow_token missing. Cannot create session.")
+                    return JsonResponse({
+                        "screen": "LOGIN",
+                        "data": {
+                            "error_message": "Authentication error. Please try again."
+                        }
+                    })
+
+                try:
+                    contact = Contact.objects.get(whatsapp_id=flow_token)
+                    session, _ = ContactSession.objects.get_or_create(contact=contact)
+                    session.start()
+                    logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
+                except Contact.DoesNotExist:
+                    logger.error(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found.")
+                    return JsonResponse({
+                        "screen": "LOGIN",
+                        "data": {
+                            "error_message": "Authentication error. Please try again."
+                        }
+                    })
 
                 return JsonResponse({
                     "screen": "SUCCESS",
