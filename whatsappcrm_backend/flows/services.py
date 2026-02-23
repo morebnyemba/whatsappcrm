@@ -1583,7 +1583,6 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 elif action_type == ActionType.VERIFY_PIN:
                     from conversations.models import ContactSession
                     from django.contrib.auth import authenticate
-                    from django.contrib.auth.models import User
                     output_var = action_item_root.output_variable_name
                     pin_variable = action_item_root.pin_variable
                     pin_value = _get_value_from_context_or_contact(pin_variable, current_step_context, contact)
@@ -1598,33 +1597,35 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
 
                     verified = False
                     try:
-                        user = None
+                        username_for_auth = None
                         if provided_username:
-                            # Authenticate with the explicitly provided username
-                            try:
-                                user = User.objects.get(username=provided_username)
-                            except User.DoesNotExist:
-                                logger.warning(f"Step '{step.name}': Username '{provided_username}' not found for contact {contact.whatsapp_id}.")
+                            # Use the explicitly provided username for authentication
+                            username_for_auth = provided_username
                         else:
                             # Fall back to the contact's linked profile user
-                            profile = contact.customerprofile
-                            user = profile.user if profile else None
+                            try:
+                                profile = contact.customerprofile
+                                user = profile.user if profile else None
+                                if user:
+                                    username_for_auth = user.username
+                            except CustomerProfile.DoesNotExist:
+                                logger.warning(f"Step '{step.name}': CustomerProfile does not exist for contact {contact.id}.")
 
-                        if user and pin_value:
-                            auth_user = authenticate(username=user.username, password=pin_value)
+                        if username_for_auth and pin_value:
+                            # Always call authenticate() regardless of whether username exists
+                            # to prevent timing-based user enumeration
+                            auth_user = authenticate(username=username_for_auth, password=pin_value)
                             if auth_user is not None:
                                 verified = True
                                 session, _ = ContactSession.objects.get_or_create(contact=contact)
                                 session.start()
-                                logger.info(f"Step '{step.name}': PIN verified and session started for contact {contact.whatsapp_id} (authenticated as user '{user.username}').")
+                                logger.info(f"Step '{step.name}': Credentials verified and session started for contact {contact.whatsapp_id}.")
                             else:
-                                logger.warning(f"Step '{step.name}': PIN verification failed for contact {contact.whatsapp_id}.")
+                                logger.warning(f"Step '{step.name}': Credential verification failed for contact {contact.whatsapp_id}.")
                         else:
-                            logger.warning(f"Step '{step.name}': Cannot verify PIN - no user account or empty PIN for contact {contact.whatsapp_id}.")
-                    except CustomerProfile.DoesNotExist:
-                        logger.error(f"Step '{step.name}': Cannot verify PIN, CustomerProfile does not exist for contact {contact.id}.")
+                            logger.warning(f"Step '{step.name}': Cannot verify credentials - missing username or password for contact {contact.whatsapp_id}.")
                     except Exception as e_pin:
-                        logger.error(f"Step '{step.name}': Error verifying PIN for contact {contact.whatsapp_id}: {e_pin}", exc_info=True)
+                        logger.error(f"Step '{step.name}': Error verifying credentials for contact {contact.whatsapp_id}: {e_pin}", exc_info=True)
                     current_step_context[output_var] = verified
 
                 # --- END NEW ACTION DISPATCHES ---
