@@ -19,6 +19,10 @@ urlpatterns = [
     # This will be accessed via a URL like: /crm-api/meta/webhook/ (defined in project's urls.py)
     path('webhook/', views.MetaWebhookAPIView.as_view(), name='meta_webhook_receiver'),
     
+    # WhatsApp Flows data exchange endpoint
+    # This is the endpoint WhatsApp calls when a user interacts with a Flow screen (e.g., login form)
+    path('flow-endpoint/', views.WhatsAppFlowEndpointView.as_view(), name='whatsapp_flow_endpoint'),
+    
     # Paths for DRF API for managing MetaAppConfig and viewing WebhookEventLog
     # These will be accessible under a prefix like: /crm-api/meta/api/
     # e.g., /crm-api/meta/api/configs/

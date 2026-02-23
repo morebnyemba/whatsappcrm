@@ -5,14 +5,15 @@ from typing import Dict, Any
 
 def create_login_flow() -> Dict[str, Any]:
     """
-    Defines the login flow for session authentication.
-    Starts with Login/Register buttons. Any contact can log in with any
-    valid username and password.
+    Defines the login flow for session authentication using WhatsApp UI Flows.
+    Starts with Login/Register buttons. When "Login" is selected, a WhatsApp
+    UI Flow is launched that presents a native login form. The form data is
+    exchanged with a backend endpoint for authentication.
     This flow does NOT require login itself (it IS the login mechanism).
     """
     return {
         "name": "Login Flow",
-        "description": "Authenticates a contact by verifying their username and password to start a session.",
+        "description": "Authenticates a contact using a WhatsApp UI Flow with a backend data exchange endpoint.",
         "trigger_keywords": ["login", "signin"],
         "is_active": True,
         "requires_login": False,
@@ -54,7 +55,7 @@ def create_login_flow() -> Dict[str, Any]:
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "✅ You are already logged in! Type 'menu' to see available options."
+                        "body": "\u2705 You are already logged in! Type 'menu' to see available options."
                     }
                 },
                 "transitions": [
@@ -86,7 +87,7 @@ def create_login_flow() -> Dict[str, Any]:
                 },
                 "transitions": [
                     {
-                        "to_step": "ask_for_username",
+                        "to_step": "send_login_flow_ui",
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "login_btn_login"}
                     },
                     {
@@ -106,77 +107,59 @@ def create_login_flow() -> Dict[str, Any]:
                 },
                 "transitions": []
             },
-            # 5. Ask for username
+            # 5. Send WhatsApp UI Flow for login
+            #    This sends a native WhatsApp Flow message with a form.
+            #    The flow_id must be configured in the admin or settings to match
+            #    the WhatsApp Flow created in Meta Business Manager.
+            #    The flow_token is set to the contact's whatsapp_id so the endpoint
+            #    can identify which contact is authenticating.
             {
-                "name": "ask_for_username",
+                "name": "send_login_flow_ui",
                 "step_type": "question",
                 "config": {
                     "message_config": {
-                        "message_type": "text",
-                        "text": {
-                            "body": "Please enter your username:"
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "flow",
+                            "header": {"type": "text", "text": "Login"},
+                            "body": {"text": "Tap the button below to enter your credentials securely."},
+                            "footer": {"text": "Your credentials are sent securely."},
+                            "action": {
+                                "name": "flow",
+                                "parameters": {
+                                    "flow_message_version": "3",
+                                    "flow_action": "data_exchange",
+                                    "flow_token": "{{ contact.whatsapp_id }}",
+                                    "flow_id": "{{ flow_context.whatsapp_login_flow_id }}",
+                                    "flow_cta": "Login"
+                                }
+                            }
                         }
                     },
                     "reply_config": {
-                        "save_to_variable": "provided_username",
-                        "expected_type": "text"
-                    },
-                    "fallback_config": {
-                        "max_retries": 2,
-                        "re_prompt_message_text": "Please enter a valid username.",
-                        "action_after_max_retries": "end_flow",
-                        "end_flow_message_text": "Too many failed attempts. Please try again later by typing 'login'."
+                        "save_to_variable": "login_nfm_response",
+                        "expected_type": "any"
                     }
                 },
                 "transitions": [
                     {
-                        "to_step": "ask_for_password",
+                        "to_step": "process_flow_auth_result",
                         "priority": 1,
                         "condition_config": {"type": "always_true"}
                     }
                 ]
             },
-            # 6. Ask for password
+            # 6. Process the Flow auth result
+            #    After the WhatsApp Flow completes, the nfm_reply response
+            #    comes back with authenticated status. We extract it from context.
             {
-                "name": "ask_for_password",
-                "step_type": "question",
-                "config": {
-                    "message_config": {
-                        "message_type": "text",
-                        "text": {
-                            "body": "🔒 Please enter your password:"
-                        }
-                    },
-                    "reply_config": {
-                        "save_to_variable": "provided_pin",
-                        "expected_type": "text"
-                    },
-                    "fallback_config": {
-                        "max_retries": 2,
-                        "re_prompt_message_text": "Invalid password. Please try again.",
-                        "action_after_max_retries": "end_flow",
-                        "end_flow_message_text": "Too many failed attempts. Please try again later by typing 'login'."
-                    }
-                },
-                "transitions": [
-                    {
-                        "to_step": "verify_credentials_step",
-                        "priority": 1,
-                        "condition_config": {"type": "always_true"}
-                    }
-                ]
-            },
-            # 7. Verify credentials (username + password)
-            {
-                "name": "verify_credentials_step",
+                "name": "process_flow_auth_result",
                 "step_type": "action",
                 "config": {
                     "actions_to_run": [
                         {
-                            "action_type": "verify_pin",
-                            "pin_variable": "flow_context.provided_pin",
-                            "username_variable": "flow_context.provided_username",
-                            "output_variable_name": "pin_verified"
+                            "action_type": "check_session",
+                            "output_variable_name": "auth_result"
                         }
                     ]
                 },
@@ -186,7 +169,7 @@ def create_login_flow() -> Dict[str, Any]:
                         "priority": 1,
                         "condition_config": {
                             "type": "variable_equals",
-                            "variable_name": "flow_context.pin_verified",
+                            "variable_name": "flow_context.auth_result",
                             "value": True
                         }
                     },
@@ -197,35 +180,35 @@ def create_login_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 8. Login success
+            # 7. Login success
             {
                 "name": "login_success",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "✅ Login successful! Your session is now active.\n\nType 'menu' to see available options."
+                        "body": "\u2705 Login successful! Your session is now active.\n\nType 'menu' to see available options."
                     }
                 },
                 "transitions": [
                     {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
-            # 9. Login failed
+            # 8. Login failed
             {
                 "name": "login_failed",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "❌ Incorrect username or password. Please type 'login' to try again."
+                        "body": "\u274c Login was not completed. Please type 'login' to try again."
                     }
                 },
                 "transitions": [
                     {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
-            # 10. End flow
+            # 9. End flow
             {
                 "name": "end_login_flow",
                 "step_type": "end_flow",
