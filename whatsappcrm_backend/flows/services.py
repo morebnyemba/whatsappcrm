@@ -400,6 +400,7 @@ class GetAgentEarningsConfig(BasePydanticConfig):
 class VerifyPinConfig(BasePydanticConfig):
     action_type: Literal["verify_pin"] = "verify_pin"
     pin_variable: str  # Path to the context variable holding the PIN (e.g., "flow_context.provided_pin")
+    username_variable: Optional[str] = None  # Optional path to context variable holding username; when provided, authenticates with this username instead of the contact's linked user
     output_variable_name: str  # Name of context variable to save result (True/False)
 
 class CheckSessionConfig(BasePydanticConfig):
@@ -1582,22 +1583,40 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 elif action_type == ActionType.VERIFY_PIN:
                     from conversations.models import ContactSession
                     from django.contrib.auth import authenticate
+                    from django.contrib.auth.models import User
                     output_var = action_item_root.output_variable_name
                     pin_variable = action_item_root.pin_variable
                     pin_value = _get_value_from_context_or_contact(pin_variable, current_step_context, contact)
                     pin_value = str(pin_value).strip() if pin_value else ""
 
+                    # Optionally resolve a username from context (allows any contact to login as any user)
+                    username_variable = getattr(action_item_root, 'username_variable', None)
+                    provided_username = None
+                    if username_variable:
+                        provided_username = _get_value_from_context_or_contact(username_variable, current_step_context, contact)
+                        provided_username = str(provided_username).strip() if provided_username else None
+
                     verified = False
                     try:
-                        profile = contact.customerprofile
-                        user = profile.user if profile else None
+                        user = None
+                        if provided_username:
+                            # Authenticate with the explicitly provided username
+                            try:
+                                user = User.objects.get(username=provided_username)
+                            except User.DoesNotExist:
+                                logger.warning(f"Step '{step.name}': Username '{provided_username}' not found for contact {contact.whatsapp_id}.")
+                        else:
+                            # Fall back to the contact's linked profile user
+                            profile = contact.customerprofile
+                            user = profile.user if profile else None
+
                         if user and pin_value:
                             auth_user = authenticate(username=user.username, password=pin_value)
                             if auth_user is not None:
                                 verified = True
                                 session, _ = ContactSession.objects.get_or_create(contact=contact)
                                 session.start()
-                                logger.info(f"Step '{step.name}': PIN verified and session started for contact {contact.whatsapp_id}.")
+                                logger.info(f"Step '{step.name}': PIN verified and session started for contact {contact.whatsapp_id} (authenticated as user '{user.username}').")
                             else:
                                 logger.warning(f"Step '{step.name}': PIN verification failed for contact {contact.whatsapp_id}.")
                         else:
