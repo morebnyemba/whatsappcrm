@@ -276,3 +276,160 @@ class ContactFlowState(models.Model):
         # If you ever changed 'contact' to a ForeignKey, then the unique_together below
         # might become relevant again to ensure a contact is only in one *active* flow at a time.
         # unique_together = [['contact', 'current_flow']]
+
+
+class WhatsAppFlow(models.Model):
+    """
+    Represents a WhatsApp Interactive Flow that can be synced with Meta's platform.
+    Stores the flow JSON definition (conforming to Meta's Flow JSON schema) and
+    tracks sync status with Meta.
+    """
+    SYNC_STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('syncing', 'Syncing'),
+        ('synced', 'Synced'),
+        ('published', 'Published'),
+        ('error', 'Error'),
+    ]
+
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Unique name for this WhatsApp flow (used as an identifier)."
+    )
+    friendly_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="A user-friendly name for display purposes."
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="A brief description of what this flow does."
+    )
+
+    # Meta Flow Integration
+    flow_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        unique=True,
+        db_index=True,
+        help_text="The flow ID returned by Meta after syncing."
+    )
+    flow_json = models.JSONField(
+        help_text="The WhatsApp Flow JSON definition conforming to Meta's Flow JSON schema."
+    )
+    sync_status = models.CharField(
+        max_length=20,
+        choices=SYNC_STATUS_CHOICES,
+        default='draft',
+        db_index=True,
+        help_text="Current sync status with Meta."
+    )
+    sync_error = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Error message if sync failed."
+    )
+
+    # Metadata
+    version = models.IntegerField(
+        default=1,
+        help_text="Version number of this flow definition."
+    )
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Is this flow currently active and can be triggered?"
+    )
+    meta_app_config = models.ForeignKey(
+        'meta_integration.MetaAppConfig',
+        on_delete=models.CASCADE,
+        related_name='whatsapp_flows',
+        help_text="The Meta app configuration this flow is associated with."
+    )
+
+    # Associated with traditional flow definition
+    flow_definition = models.ForeignKey(
+        Flow,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_flows',
+        help_text="Optional link to the traditional flow definition this replaces."
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of the last successful sync with Meta."
+    )
+
+    def __str__(self) -> str:
+        return f"{self.friendly_name or self.name} ({self.get_sync_status_display()})"
+
+    def save(self, *args, **kwargs) -> None:
+        if not self.friendly_name:
+            self.friendly_name = self.name.replace('_', ' ').replace('-', ' ').title()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        verbose_name = "WhatsApp Flow"
+        verbose_name_plural = "WhatsApp Flows"
+        ordering = ['-updated_at']
+
+
+class WhatsAppFlowResponse(models.Model):
+    """
+    Stores responses from users completing WhatsApp interactive flows.
+    """
+    whatsapp_flow = models.ForeignKey(
+        WhatsAppFlow,
+        on_delete=models.CASCADE,
+        related_name='responses',
+        help_text="The WhatsApp flow this response is for."
+    )
+    contact = models.ForeignKey(
+        'conversations.Contact',
+        on_delete=models.CASCADE,
+        related_name='whatsapp_flow_responses',
+        help_text="The contact who submitted this flow response."
+    )
+
+    # Flow response data from Meta
+    flow_token = models.CharField(
+        max_length=255,
+        help_text="The flow token from Meta that identifies this flow session."
+    )
+    response_data = models.JSONField(
+        help_text="The complete response payload from the user, including all form data."
+    )
+
+    # Processing status
+    is_processed = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Whether this response has been processed by the system."
+    )
+    processing_notes = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Notes or results from processing this response."
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when this response was processed."
+    )
+
+    def __str__(self) -> str:
+        return f"Response from {self.contact} for {self.whatsapp_flow.name}"
+
+    class Meta:
+        verbose_name = "WhatsApp Flow Response"
+        verbose_name_plural = "WhatsApp Flow Responses"
+        ordering = ['-created_at']

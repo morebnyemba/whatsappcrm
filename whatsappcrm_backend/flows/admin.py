@@ -1,7 +1,7 @@
 # whatsappcrm_backend/flows/admin.py
 
 from django.contrib import admin
-from .models import Flow, FlowStep, FlowTransition, ContactFlowState #, MessageTemplate
+from .models import Flow, FlowStep, FlowTransition, ContactFlowState, WhatsAppFlow, WhatsAppFlowResponse
 
 # @admin.register(MessageTemplate)
 # class MessageTemplateAdmin(admin.ModelAdmin):
@@ -99,4 +99,139 @@ class ContactFlowStateAdmin(admin.ModelAdmin):
     def current_step_name(self, obj):
         return obj.current_step.name
     current_step_name.short_description = "Current Step"
+
+
+@admin.register(WhatsAppFlow)
+class WhatsAppFlowAdmin(admin.ModelAdmin):
+    list_display = ('friendly_name', 'name', 'sync_status', 'flow_id', 'is_active', 'version', 'last_synced_at')
+    search_fields = ('name', 'friendly_name', 'flow_id', 'description')
+    list_filter = ('sync_status', 'is_active', 'meta_app_config', 'created_at')
+    readonly_fields = ('flow_id', 'created_at', 'updated_at', 'last_synced_at', 'sync_error')
+    list_select_related = ('meta_app_config', 'flow_definition')
+
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'friendly_name', 'description', 'is_active')
+        }),
+        ('Meta Integration', {
+            'fields': ('meta_app_config', 'flow_id', 'sync_status', 'sync_error', 'last_synced_at')
+        }),
+        ('Flow Configuration', {
+            'fields': ('flow_json', 'version', 'flow_definition'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    actions = ['sync_with_meta', 'publish_flows', 'activate_flows', 'deactivate_flows']
+
+    def sync_with_meta(self, request, queryset):
+        from flows.whatsapp_flow_service import WhatsAppFlowService
+
+        synced = 0
+        errors = []
+
+        for flow in queryset:
+            try:
+                service = WhatsAppFlowService(flow.meta_app_config)
+                if service.sync_flow(flow):
+                    synced += 1
+                else:
+                    errors.append(f"{flow.name}: {flow.sync_error}")
+            except Exception as e:
+                errors.append(f"{flow.name}: {str(e)}")
+
+        if synced:
+            self.message_user(request, f"Successfully synced {synced} flow(s)")
+        if errors:
+            self.message_user(request, f"Errors: {', '.join(errors)}", level='error')
+
+    sync_with_meta.short_description = "Sync selected flows with Meta"
+
+    def publish_flows(self, request, queryset):
+        from flows.whatsapp_flow_service import WhatsAppFlowService
+
+        published = 0
+        errors = []
+
+        for flow in queryset:
+            if not flow.flow_id:
+                errors.append(f"{flow.name}: No flow_id, sync first")
+                continue
+
+            try:
+                service = WhatsAppFlowService(flow.meta_app_config)
+                if service.publish_flow(flow):
+                    published += 1
+                else:
+                    errors.append(f"{flow.name}: {flow.sync_error}")
+            except Exception as e:
+                errors.append(f"{flow.name}: {str(e)}")
+
+        if published:
+            self.message_user(request, f"Successfully published {published} flow(s)")
+        if errors:
+            self.message_user(request, f"Errors: {', '.join(errors)}", level='error')
+
+    publish_flows.short_description = "Publish selected flows"
+
+    def activate_flows(self, request, queryset):
+        queryset.update(is_active=True)
+        self.message_user(request, f"Activated {queryset.count()} flow(s)")
+
+    activate_flows.short_description = "Activate selected flows"
+
+    def deactivate_flows(self, request, queryset):
+        queryset.update(is_active=False)
+        self.message_user(request, f"Deactivated {queryset.count()} flow(s)")
+
+    deactivate_flows.short_description = "Deactivate selected flows"
+
+
+@admin.register(WhatsAppFlowResponse)
+class WhatsAppFlowResponseAdmin(admin.ModelAdmin):
+    list_display = ('id', 'whatsapp_flow_name', 'contact_display', 'is_processed', 'created_at', 'processed_at')
+    search_fields = ('contact__whatsapp_id', 'contact__name', 'whatsapp_flow__name', 'flow_token')
+    list_filter = ('is_processed', 'whatsapp_flow', 'created_at')
+    readonly_fields = ('whatsapp_flow', 'contact', 'flow_token', 'response_data', 'created_at', 'processed_at')
+    list_select_related = ('whatsapp_flow', 'contact')
+
+    fieldsets = (
+        ('Flow Response', {
+            'fields': ('whatsapp_flow', 'contact', 'flow_token', 'response_data')
+        }),
+        ('Processing', {
+            'fields': ('is_processed', 'processing_notes', 'processed_at')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at',),
+            'classes': ('collapse',)
+        }),
+    )
+
+    actions = ['mark_as_processed', 'mark_as_unprocessed']
+
+    def whatsapp_flow_name(self, obj):
+        return obj.whatsapp_flow.friendly_name or obj.whatsapp_flow.name
+    whatsapp_flow_name.short_description = "Flow"
+
+    def contact_display(self, obj):
+        return f"{obj.contact.name or obj.contact.whatsapp_id}"
+    contact_display.short_description = "Contact"
+
+    def mark_as_processed(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(is_processed=True, processed_at=timezone.now())
+        self.message_user(request, f"Marked {queryset.count()} response(s) as processed")
+
+    mark_as_processed.short_description = "Mark as processed"
+
+    def mark_as_unprocessed(self, request, queryset):
+        queryset.update(is_processed=False, processed_at=None)
+        self.message_user(request, f"Marked {queryset.count()} response(s) as unprocessed")
+
+    mark_as_unprocessed.short_description = "Mark as unprocessed"
 

@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import Flow, FlowStep, FlowTransition, ContactFlowState # Ensure all are imported
+from .models import Flow, FlowStep, FlowTransition, ContactFlowState, WhatsAppFlow, WhatsAppFlowResponse
 
 import logging
 logger = logging.getLogger(__name__)
@@ -259,3 +259,61 @@ class ContactFlowStateSerializer(serializers.ModelSerializer):
             'last_updated_at'
         ]
         read_only_fields = fields # Makes all fields read-only by default
+
+
+class WhatsAppFlowSerializer(serializers.ModelSerializer):
+    """
+    Serializer for WhatsAppFlow model.
+    Handles CRUD operations for WhatsApp interactive flow definitions.
+    """
+    sync_status_display = serializers.CharField(source='get_sync_status_display', read_only=True)
+    meta_app_config_name = serializers.CharField(source='meta_app_config.name', read_only=True)
+    flow_definition_name = serializers.CharField(source='flow_definition.name', read_only=True, default=None)
+
+    class Meta:
+        model = WhatsAppFlow
+        fields = [
+            'id', 'name', 'friendly_name', 'description',
+            'flow_id', 'flow_json', 'sync_status', 'sync_status_display',
+            'sync_error', 'version', 'is_active',
+            'meta_app_config', 'meta_app_config_name',
+            'flow_definition', 'flow_definition_name',
+            'created_at', 'updated_at', 'last_synced_at',
+        ]
+        read_only_fields = (
+            'id', 'flow_id', 'sync_status', 'sync_status_display',
+            'sync_error', 'meta_app_config_name', 'flow_definition_name',
+            'created_at', 'updated_at', 'last_synced_at',
+        )
+
+    def validate_flow_json(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Flow JSON must be a JSON object (dictionary).")
+        if 'version' not in value:
+            raise serializers.ValidationError("Flow JSON must include a 'version' field.")
+        if 'screens' not in value or not isinstance(value.get('screens'), list):
+            raise serializers.ValidationError("Flow JSON must include a 'screens' list.")
+        if not value['screens']:
+            raise serializers.ValidationError("Flow JSON must contain at least one screen.")
+        return value
+
+
+class WhatsAppFlowResponseSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for WhatsAppFlowResponse model.
+    """
+    whatsapp_flow_name = serializers.CharField(source='whatsapp_flow.name', read_only=True)
+    contact_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WhatsAppFlowResponse
+        fields = [
+            'id', 'whatsapp_flow', 'whatsapp_flow_name',
+            'contact', 'contact_display', 'flow_token',
+            'response_data', 'is_processed', 'processing_notes',
+            'created_at', 'processed_at',
+        ]
+        read_only_fields = fields
+
+    def get_contact_display(self, obj):
+        return obj.contact.name or obj.contact.whatsapp_id

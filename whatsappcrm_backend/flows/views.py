@@ -1,11 +1,15 @@
 # flows/views.py
 from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
 from django.core.exceptions import ValidationError as DjangoValidationError # For model's full_clean
 from . import serializers
-from .models import Flow, FlowStep, FlowTransition
-from .serializers import FlowSerializer, FlowStepSerializer, FlowTransitionSerializer
+from .models import Flow, FlowStep, FlowTransition, WhatsAppFlow, WhatsAppFlowResponse
+from .serializers import (
+    FlowSerializer, FlowStepSerializer, FlowTransitionSerializer,
+    WhatsAppFlowSerializer, WhatsAppFlowResponseSerializer,
+)
 
 import logging
 
@@ -209,3 +213,111 @@ class FlowTransitionViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Unexpected error during FlowTransition update (PK: {serializer.instance.pk}): {e}", exc_info=True)
             raise
+
+
+class WhatsAppFlowViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing WhatsApp interactive flows.
+    Supports CRUD plus custom actions for syncing and publishing flows with Meta.
+    """
+    queryset = WhatsAppFlow.objects.select_related('meta_app_config', 'flow_definition').all()
+    serializer_class = WhatsAppFlowSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        try:
+            with transaction.atomic():
+                serializer.save()
+                logger.info(f"WhatsAppFlow '{serializer.instance.name}' created successfully.")
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(e.message_dict if hasattr(e, 'message_dict') else list(e))
+
+    def perform_update(self, serializer):
+        try:
+            with transaction.atomic():
+                serializer.save()
+                logger.info(f"WhatsAppFlow '{serializer.instance.name}' (PK: {serializer.instance.pk}) updated successfully.")
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(e.message_dict if hasattr(e, 'message_dict') else list(e))
+
+    @action(detail=True, methods=['post'])
+    def sync(self, request, pk=None):
+        """Sync this flow with Meta's platform (create + upload JSON)."""
+        whatsapp_flow = self.get_object()
+        from .whatsapp_flow_service import WhatsAppFlowService
+
+        try:
+            service = WhatsAppFlowService(whatsapp_flow.meta_app_config)
+            success = service.sync_flow(whatsapp_flow)
+            whatsapp_flow.refresh_from_db()
+
+            if success:
+                return Response(
+                    WhatsAppFlowSerializer(whatsapp_flow).data,
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {"detail": whatsapp_flow.sync_error or "Sync failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            logger.error(f"Error syncing WhatsApp flow {pk}: {e}", exc_info=True)
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['post'])
+    def publish(self, request, pk=None):
+        """Publish this flow on Meta's platform."""
+        whatsapp_flow = self.get_object()
+        from .whatsapp_flow_service import WhatsAppFlowService
+
+        if not whatsapp_flow.flow_id:
+            return Response(
+                {"detail": "Flow must be synced before publishing. Call sync first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = WhatsAppFlowService(whatsapp_flow.meta_app_config)
+            success = service.publish_flow(whatsapp_flow)
+            whatsapp_flow.refresh_from_db()
+
+            if success:
+                return Response(
+                    WhatsAppFlowSerializer(whatsapp_flow).data,
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {"detail": whatsapp_flow.sync_error or "Publish failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            logger.error(f"Error publishing WhatsApp flow {pk}: {e}", exc_info=True)
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class WhatsAppFlowResponseViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only API endpoint for viewing WhatsApp flow responses.
+    Supports filtering by whatsapp_flow_id and is_processed.
+    """
+    queryset = WhatsAppFlowResponse.objects.select_related('whatsapp_flow', 'contact').all()
+    serializer_class = WhatsAppFlowResponseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        flow_id = self.request.query_params.get('whatsapp_flow_id')
+        if flow_id:
+            queryset = queryset.filter(whatsapp_flow_id=flow_id)
+        is_processed = self.request.query_params.get('is_processed')
+        if is_processed is not None:
+            queryset = queryset.filter(is_processed=is_processed.lower() == 'true')
+        return queryset
