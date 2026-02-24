@@ -306,7 +306,8 @@ class WhatsAppFlowService:
                 return False
 
         # Step 2: Upload the flow JSON
-        time.sleep(1)  # Brief delay to avoid rate limiting
+        sync_delay = getattr(settings, 'META_FLOW_SYNC_DELAY_SECONDS', 1)
+        time.sleep(sync_delay)  # Brief delay to avoid rate limiting
         if not self.update_flow_json(whatsapp_flow):
             return False
 

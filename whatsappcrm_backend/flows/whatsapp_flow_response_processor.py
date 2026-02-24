@@ -77,7 +77,11 @@ class WhatsAppFlowResponseProcessor:
             context = flow_state.flow_context_data or {}
             wa_data = response_data.get('data', response_data)
 
-            # Merge at top level for easy access by downstream steps
+            # Merge WhatsApp flow data into the flow context.
+            # Keys from the flow response are set at the top level so downstream
+            # flow steps can reference them directly (e.g., flow_context.full_name).
+            # The original payload is also preserved under 'whatsapp_flow_data'
+            # to avoid ambiguity when response keys overlap with existing context.
             context.update(wa_data)
 
             # Also keep under a subkey for backward compatibility
