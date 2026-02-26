@@ -36,6 +36,14 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+LOGIN_REQUIRED_MESSAGE = (
+    "\U0001f512 You need to be logged in to access this feature. "
+    "Please type 'login' to authenticate first."
+)
+SESSION_EXPIRED_MESSAGE = (
+    "\U0001f512 Your session has expired. Please type 'login' to authenticate again."
+)
+
 if not MEDIA_ASSET_ENABLED:
     logger.warning("MediaAsset model not found or could not be imported. MediaAsset functionality (e.g., 'asset_pk') will be disabled in flows.")
 
@@ -291,6 +299,8 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     GET_REFERRAL_SETTINGS = "get_referral_settings"
     GET_REFERRER_DETAILS = "get_referrer_details"
     GET_AGENT_EARNINGS = "get_agent_earnings"
+    VERIFY_PIN = "verify_pin"
+    CHECK_SESSION = "check_session"
 
 class SetContextVariableConfig(BasePydanticConfig):
     action_type: Literal["set_context_variable"] = "set_context_variable"
@@ -387,6 +397,16 @@ class GetAgentEarningsConfig(BasePydanticConfig):
     action_type: Literal["get_agent_earnings"] = "get_agent_earnings"
     output_variable_name: str
 
+class VerifyPinConfig(BasePydanticConfig):
+    action_type: Literal["verify_pin"] = "verify_pin"
+    pin_variable: str  # Path to the context variable holding the PIN (e.g., "flow_context.provided_pin")
+    username_variable: Optional[str] = None  # Optional path to context variable holding username; when provided, authenticates with this username instead of the contact's linked user
+    output_variable_name: str  # Name of context variable to save result (True/False)
+
+class CheckSessionConfig(BasePydanticConfig):
+    action_type: Literal["check_session"] = "check_session"
+    output_variable_name: str  # Name of context variable to save result (True/False)
+
 
 # This is the Union type that `StepConfigAction` will use in its `actions_to_run` list
 class ActionItem(BaseModel):
@@ -408,7 +428,9 @@ class ActionItem(BaseModel):
         GetPendingReferralsConfig,
         GetReferralSettingsConfig,
         GetReferrerDetailsConfig,
-        GetAgentEarningsConfig
+        GetAgentEarningsConfig,
+        VerifyPinConfig,
+        CheckSessionConfig
     ] = Field(discriminator='action_type')
 
     # Allows direct attribute access to the underlying action configuration object
@@ -1548,6 +1570,64 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         logger.error(f"Step '{step.name}': Cannot get agent earnings, CustomerProfile does not exist for contact {contact.id}.")
                         current_step_context[action_item_root.output_variable_name] = {}
 
+                elif action_type == ActionType.CHECK_SESSION:
+                    from conversations.models import ContactSession
+                    output_var = action_item_root.output_variable_name
+                    try:
+                        session = ContactSession.objects.get(contact=contact)
+                        current_step_context[output_var] = session.is_valid()
+                    except ContactSession.DoesNotExist:
+                        current_step_context[output_var] = False
+                    logger.info(f"Step '{step.name}': Session check for contact {contact.whatsapp_id}: {current_step_context[output_var]}")
+
+                elif action_type == ActionType.VERIFY_PIN:
+                    from conversations.models import ContactSession
+                    from django.contrib.auth import authenticate
+                    output_var = action_item_root.output_variable_name
+                    pin_variable = action_item_root.pin_variable
+                    pin_value = _get_value_from_context_or_contact(pin_variable, current_step_context, contact)
+                    pin_value = str(pin_value).strip() if pin_value else ""
+
+                    # Optionally resolve a username from context (allows any contact to login as any user)
+                    username_variable = getattr(action_item_root, 'username_variable', None)
+                    provided_username = None
+                    if username_variable:
+                        provided_username = _get_value_from_context_or_contact(username_variable, current_step_context, contact)
+                        provided_username = str(provided_username).strip() if provided_username else None
+
+                    verified = False
+                    try:
+                        username_for_auth = None
+                        if provided_username:
+                            # Use the explicitly provided username for authentication
+                            username_for_auth = provided_username
+                        else:
+                            # Fall back to the contact's linked profile user
+                            try:
+                                profile = contact.customerprofile
+                                user = profile.user if profile else None
+                                if user:
+                                    username_for_auth = user.username
+                            except CustomerProfile.DoesNotExist:
+                                logger.warning(f"Step '{step.name}': CustomerProfile does not exist for contact {contact.id}.")
+
+                        if username_for_auth and pin_value:
+                            # Always call authenticate() regardless of whether username exists
+                            # to prevent timing-based user enumeration
+                            auth_user = authenticate(username=username_for_auth, password=pin_value)
+                            if auth_user is not None:
+                                verified = True
+                                session, _ = ContactSession.objects.get_or_create(contact=contact)
+                                session.start()
+                                logger.info(f"Step '{step.name}': Credentials verified and session started for contact {contact.whatsapp_id}.")
+                            else:
+                                logger.warning(f"Step '{step.name}': Credential verification failed for contact {contact.whatsapp_id}.")
+                        else:
+                            logger.warning(f"Step '{step.name}': Cannot verify credentials - missing username or password for contact {contact.whatsapp_id}.")
+                    except Exception as e_pin:
+                        logger.error(f"Step '{step.name}': Error verifying credentials for contact {contact.whatsapp_id}: {e_pin}", exc_info=True)
+                    current_step_context[output_var] = verified
+
                 # --- END NEW ACTION DISPATCHES ---
                 
                 else:
@@ -1657,6 +1737,32 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                 break # A flow was triggered, stop checking others
     
     if triggered_flow:
+        # --- Session security check ---
+        if triggered_flow.requires_login:
+            from conversations.models import ContactSession
+            has_valid_session = False
+            try:
+                session = ContactSession.objects.get(contact=contact)
+                has_valid_session = session.is_valid()
+                if has_valid_session:
+                    session.refresh()
+            except ContactSession.DoesNotExist:
+                pass
+
+            if not has_valid_session:
+                logger.info(
+                    f"Flow '{triggered_flow.name}' requires login but contact {contact.whatsapp_id} "
+                    f"has no valid session. Prompting login."
+                )
+                actions_to_perform.append({
+                    'type': 'send_whatsapp_message',
+                    'recipient_wa_id': contact.whatsapp_id,
+                    'message_type': 'text',
+                    'data': {'body': LOGIN_REQUIRED_MESSAGE}
+                })
+                return actions_to_perform
+        # --- End session security check ---
+
         # Assuming FlowStep has is_entry_point field and a related manager for steps
         entry_point_step = FlowStep.objects.filter(flow=triggered_flow, is_entry_point=True).first()
         if entry_point_step:
@@ -2306,6 +2412,33 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             f"Contact {contact.whatsapp_id} is currently in flow '{flow_name}' (ID: {flow_id}), "
             f"step '{step_name}' (ID: {step_id})."
         )
+
+        # Refresh session if the active flow requires login
+        if contact_flow_state.current_flow and contact_flow_state.current_flow.requires_login:
+            from conversations.models import ContactSession
+            try:
+                session = ContactSession.objects.get(contact=contact)
+                if session.is_valid():
+                    session.refresh()
+                else:
+                    logger.info(f"Session expired for contact {contact.whatsapp_id} while in protected flow '{flow_name}'. Clearing flow state.")
+                    _clear_contact_flow_state(contact, reason="Session expired during protected flow")
+                    return [{
+                        'type': 'send_whatsapp_message',
+                        'recipient_wa_id': contact.whatsapp_id,
+                        'message_type': 'text',
+                        'data': {'body': SESSION_EXPIRED_MESSAGE}
+                    }]
+            except ContactSession.DoesNotExist:
+                logger.info(f"No session found for contact {contact.whatsapp_id} in protected flow '{flow_name}'. Clearing flow state.")
+                _clear_contact_flow_state(contact, reason="No session found for protected flow")
+                return [{
+                    'type': 'send_whatsapp_message',
+                    'recipient_wa_id': contact.whatsapp_id,
+                    'message_type': 'text',
+                    'data': {'body': SESSION_EXPIRED_MESSAGE}
+                }]
+
         actions_to_perform = _handle_active_flow_step(
             contact_flow_state, contact, message_data, incoming_message_obj
         )

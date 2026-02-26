@@ -415,6 +415,132 @@ class MetaWebhookAPIView(View):
         self._save_log(log_entry, 'processed', "Flow (NFM) response logged and passed for processing.")
 
 
+@method_decorator(csrf_exempt, name='dispatch')
+class WhatsAppFlowEndpointView(View):
+    """
+    Handles data exchange requests from WhatsApp UI Flows.
+    WhatsApp calls this endpoint when a user interacts with a Flow screen.
+    Currently supports the login/authentication flow.
+
+    Request format from WhatsApp:
+        POST with JSON body containing:
+        - action: "ping" | "INIT" | "data_exchange"
+        - flow_token: unique token for the flow session
+        - screen: current screen name (for data_exchange)
+        - data: user-submitted form data (for data_exchange)
+
+    Response format:
+        JSON with screen name and data to render.
+    """
+
+    def post(self, request, *args, **kwargs):
+        try:
+            body = json.loads(request.body.decode('utf-8'))
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        action = body.get('action')
+        flow_token = body.get('flow_token')
+
+        logger.info(f"WhatsApp Flow endpoint called. Action: {action}, flow_token: {flow_token}")
+
+        if action == 'ping':
+            return JsonResponse({"data": {"status": "active"}})
+
+        if action == 'INIT':
+            return self._handle_init(body)
+
+        if action == 'data_exchange':
+            return self._handle_data_exchange(body)
+
+        logger.warning(f"WhatsApp Flow endpoint: Unknown action '{action}'")
+        return JsonResponse({"data": {"error": "Unknown action"}}, status=400)
+
+    def _handle_init(self, body):
+        """Handle INIT action - return the login screen."""
+        return JsonResponse({
+            "screen": "LOGIN",
+            "data": {
+                "error_message": ""
+            }
+        })
+
+    def _handle_data_exchange(self, body):
+        """Handle data_exchange action - process form submissions."""
+        from django.contrib.auth import authenticate
+        from conversations.models import Contact, ContactSession
+
+        screen = body.get('screen')
+        data = body.get('data', {})
+        flow_token = body.get('flow_token')
+
+        logger.info(f"WhatsApp Flow data_exchange: screen={screen}, flow_token={flow_token}")
+
+        if screen == 'LOGIN':
+            username = data.get('username', '').strip()
+            password = data.get('password', '').strip()
+
+            if not username or not password:
+                return JsonResponse({
+                    "screen": "LOGIN",
+                    "data": {
+                        "error_message": "Please enter both username and password."
+                    }
+                })
+
+            auth_user = authenticate(username=username, password=password)
+            if auth_user is not None:
+                # Authentication succeeded.
+                # Start session for the contact associated with this flow_token.
+                # The flow_token is the contact's whatsapp_id, set when sending the flow.
+                if not flow_token:
+                    logger.error("WhatsApp Flow auth: flow_token missing. Cannot create session.")
+                    return JsonResponse({
+                        "screen": "LOGIN",
+                        "data": {
+                            "error_message": "Authentication error. Please try again."
+                        }
+                    })
+
+                try:
+                    contact = Contact.objects.get(whatsapp_id=flow_token)
+                    session, _ = ContactSession.objects.get_or_create(contact=contact)
+                    session.start()
+                    logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
+                except Contact.DoesNotExist:
+                    logger.error(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found.")
+                    return JsonResponse({
+                        "screen": "LOGIN",
+                        "data": {
+                            "error_message": "Authentication error. Please try again."
+                        }
+                    })
+
+                return JsonResponse({
+                    "screen": "SUCCESS",
+                    "data": {
+                        "extension_message_response": {
+                            "params": {
+                                "flow_token": flow_token,
+                                "authenticated": "true",
+                                "username": username
+                            }
+                        }
+                    }
+                })
+            else:
+                logger.warning(f"WhatsApp Flow auth: Failed authentication attempt for username '{username}'.")
+                return JsonResponse({
+                    "screen": "LOGIN",
+                    "data": {
+                        "error_message": "Incorrect username or password. Please try again."
+                    }
+                })
+
+        logger.warning(f"WhatsApp Flow data_exchange: Unknown screen '{screen}'")
+        return JsonResponse({"data": {"error": "Unknown screen"}}, status=400)
+
+
 class IsAdminOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
         if request.method in permissions.SAFE_METHODS: return True

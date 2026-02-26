@@ -1,5 +1,7 @@
 # whatsappcrm_backend/conversations/models.py
 
+from datetime import timedelta
+
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -205,3 +207,76 @@ class Message(models.Model):
             models.Index(fields=['message_type']),
             models.Index(fields=['status', 'direction']),
         ]
+
+
+class ContactSession(models.Model):
+    """
+    Tracks authentication sessions for WhatsApp contacts.
+    Contacts must log in (verify their PIN/password) before accessing
+    protected flows. Sessions expire after a configurable timeout.
+    """
+    DEFAULT_SESSION_TIMEOUT_MINUTES = 30
+
+    contact = models.OneToOneField(
+        Contact,
+        on_delete=models.CASCADE,
+        related_name='session',
+        help_text="The contact this session belongs to."
+    )
+    is_authenticated = models.BooleanField(
+        default=False,
+        help_text="Whether the contact is currently authenticated."
+    )
+    authenticated_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp of when the contact last authenticated."
+    )
+    last_activity_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Timestamp of the last activity in this session."
+    )
+    expires_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when the session expires."
+    )
+
+    @property
+    def session_timeout_minutes(self):
+        return getattr(settings, 'SESSION_TIMEOUT_MINUTES', self.DEFAULT_SESSION_TIMEOUT_MINUTES)
+
+    def is_valid(self):
+        """Return True if the session is authenticated and not expired."""
+        if not self.is_authenticated:
+            return False
+        if self.expires_at and timezone.now() > self.expires_at:
+            self.is_authenticated = False
+            self.save(update_fields=['is_authenticated'])
+            return False
+        return True
+
+    def refresh(self):
+        """Extend the session expiry based on current activity."""
+        self.expires_at = timezone.now() + timedelta(minutes=self.session_timeout_minutes)
+        self.save(update_fields=['expires_at', 'last_activity_at'])
+
+    def start(self):
+        """Start an authenticated session."""
+        now = timezone.now()
+        self.is_authenticated = True
+        self.authenticated_at = now
+        self.expires_at = now + timedelta(minutes=self.session_timeout_minutes)
+        self.save(update_fields=['is_authenticated', 'authenticated_at', 'expires_at'])
+
+    def end(self):
+        """End the session."""
+        self.is_authenticated = False
+        self.expires_at = None
+        self.save(update_fields=['is_authenticated', 'expires_at'])
+
+    def __str__(self):
+        status = "Authenticated" if self.is_valid() else "Not Authenticated"
+        return f"Session for {self.contact} ({status})"
+
+    class Meta:
+        verbose_name = "Contact Session"
+        verbose_name_plural = "Contact Sessions"

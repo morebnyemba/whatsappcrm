@@ -7,6 +7,8 @@ app_name = 'flows_api'
 # Top-level router for Flows
 router = routers.DefaultRouter()
 router.register(r'flows', views.FlowViewSet, basename='flow')
+router.register(r'whatsapp-flows', views.WhatsAppFlowViewSet, basename='whatsapp-flow')
+router.register(r'whatsapp-flow-responses', views.WhatsAppFlowResponseViewSet, basename='whatsapp-flow-response')
 
 # Nested router for FlowSteps under a Flow
 # Generates URLs like: /api/v1/automation/flows/{flow_pk}/steps/
