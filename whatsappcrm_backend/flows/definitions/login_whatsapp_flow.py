@@ -69,7 +69,7 @@ LOGIN_WHATSAPP_FLOW = {
             }
         },
         {
-            "id": "SUCCESS",
+            "id": "COMPLETE",
             "title": "Login Successful",
             "terminal": True,
             "success": True,

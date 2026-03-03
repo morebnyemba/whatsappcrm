@@ -21,7 +21,8 @@ class Command(BaseCommand):
                 defaults={
                     "description": flow_config["description"],
                     "trigger_keywords": flow_config["trigger_keywords"],
-                    "is_active": flow_config.get("is_active", True)
+                    "is_active": flow_config.get("is_active", True),
+                    "requires_login": flow_config.get("requires_login", False),
                 }
             )
 

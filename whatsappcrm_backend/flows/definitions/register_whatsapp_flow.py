@@ -9,7 +9,7 @@ via Meta's Flow JSON schema.  The backend data-exchange endpoint at
 
 Screens:
     1. REGISTER  – collects username, email, password, confirm password
-    2. SUCCESS   – terminal screen confirming registration
+    2. COMPLETE  – terminal screen confirming registration
 """
 
 REGISTER_WHATSAPP_FLOW = {
@@ -91,7 +91,7 @@ REGISTER_WHATSAPP_FLOW = {
             }
         },
         {
-            "id": "SUCCESS",
+            "id": "COMPLETE",
             "title": "Registration Complete",
             "terminal": True,
             "success": True,
