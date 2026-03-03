@@ -411,8 +411,48 @@ class MetaWebhookAPIView(View):
         self._save_log(log_entry, 'processed', "System message logged.")
 
     def handle_flow_response(self, flow_response_data, contact_wa_id, app_config, log_entry): 
+        """
+        Handles WhatsApp UI Flow (NFM) responses by persisting them to the
+        database and merging the data into the contact's active flow context.
+        """
+        from flows.whatsapp_flow_response_processor import WhatsAppFlowResponseProcessor
+        from flows.models import WhatsAppFlow
+        from conversations.services import get_or_create_contact_by_wa_id
+
         logger.info(f"Received Flow (NFM) response for {contact_wa_id}: {flow_response_data}")
-        self._save_log(log_entry, 'processed', "Flow (NFM) response logged and passed for processing.")
+        try:
+            contact, _ = get_or_create_contact_by_wa_id(
+                wa_id=contact_wa_id, name='Unknown', meta_app_config=app_config
+            )
+            if not contact:
+                logger.error(f"Could not get/create contact for {contact_wa_id} in handle_flow_response")
+                self._save_log(log_entry, 'error', f"Contact creation failed for {contact_wa_id}")
+                return
+
+            # Attempt to find the WhatsAppFlow matching this config
+            whatsapp_flow = (
+                WhatsAppFlow.objects
+                .filter(meta_app_config=app_config, is_active=True)
+                .order_by('-updated_at')
+                .first()
+            )
+            if whatsapp_flow:
+                result = WhatsAppFlowResponseProcessor.process_response(
+                    whatsapp_flow=whatsapp_flow,
+                    contact=contact,
+                    response_data=flow_response_data,
+                )
+                notes = f"Flow response processed: {result}" if result else "Flow response processing returned None"
+                self._save_log(log_entry, 'processed', notes)
+            else:
+                logger.warning(
+                    f"No active WhatsAppFlow found for config '{app_config.name}'. "
+                    f"Flow response for {contact_wa_id} logged but not persisted to WhatsAppFlowResponse."
+                )
+                self._save_log(log_entry, 'processed', "Flow (NFM) response logged; no matching WhatsAppFlow found.")
+        except Exception as e:
+            logger.error(f"Error in handle_flow_response for {contact_wa_id}: {e}", exc_info=True)
+            self._save_log(log_entry, 'error', f"handle_flow_response error: {str(e)[:200]}")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -457,7 +497,9 @@ class WhatsAppFlowEndpointView(View):
         return JsonResponse({"data": {"error": "Unknown action"}}, status=400)
 
     def _handle_init(self, body):
-        """Handle INIT action - return the login screen."""
+        """Handle INIT action - return the appropriate initial screen."""
+        flow_token = body.get('flow_token', '')
+        # Default to login screen; the flow_action_payload may hint at register
         return JsonResponse({
             "screen": "LOGIN",
             "data": {
@@ -477,68 +519,184 @@ class WhatsAppFlowEndpointView(View):
         logger.info(f"WhatsApp Flow data_exchange: screen={screen}, flow_token={flow_token}")
 
         if screen == 'LOGIN':
-            username = data.get('username', '').strip()
-            password = data.get('password', '').strip()
+            return self._handle_login_screen(data, flow_token)
 
-            if not username or not password:
-                return JsonResponse({
-                    "screen": "LOGIN",
-                    "data": {
-                        "error_message": "Please enter both username and password."
-                    }
-                })
-
-            auth_user = authenticate(username=username, password=password)
-            if auth_user is not None:
-                # Authentication succeeded.
-                # Start session for the contact associated with this flow_token.
-                # The flow_token is the contact's whatsapp_id, set when sending the flow.
-                if not flow_token:
-                    logger.error("WhatsApp Flow auth: flow_token missing. Cannot create session.")
-                    return JsonResponse({
-                        "screen": "LOGIN",
-                        "data": {
-                            "error_message": "Authentication error. Please try again."
-                        }
-                    })
-
-                try:
-                    contact = Contact.objects.get(whatsapp_id=flow_token)
-                    session, _ = ContactSession.objects.get_or_create(contact=contact)
-                    session.start()
-                    logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
-                except Contact.DoesNotExist:
-                    logger.error(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found.")
-                    return JsonResponse({
-                        "screen": "LOGIN",
-                        "data": {
-                            "error_message": "Authentication error. Please try again."
-                        }
-                    })
-
-                return JsonResponse({
-                    "screen": "SUCCESS",
-                    "data": {
-                        "extension_message_response": {
-                            "params": {
-                                "flow_token": flow_token,
-                                "authenticated": "true",
-                                "username": username
-                            }
-                        }
-                    }
-                })
-            else:
-                logger.warning(f"WhatsApp Flow auth: Failed authentication attempt for username '{username}'.")
-                return JsonResponse({
-                    "screen": "LOGIN",
-                    "data": {
-                        "error_message": "Incorrect username or password. Please try again."
-                    }
-                })
+        if screen == 'REGISTER':
+            return self._handle_register_screen(data, flow_token)
 
         logger.warning(f"WhatsApp Flow data_exchange: Unknown screen '{screen}'")
         return JsonResponse({"data": {"error": "Unknown screen"}}, status=400)
+
+    # ------------------------------------------------------------------
+    # Screen handlers
+    # ------------------------------------------------------------------
+
+    def _handle_login_screen(self, data, flow_token):
+        """Process the LOGIN screen form submission."""
+        from django.contrib.auth import authenticate
+        from conversations.models import Contact, ContactSession
+
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+
+        if not username or not password:
+            return JsonResponse({
+                "screen": "LOGIN",
+                "data": {
+                    "error_message": "Please enter both username and password."
+                }
+            })
+
+        auth_user = authenticate(username=username, password=password)
+        if auth_user is not None:
+            if not flow_token:
+                logger.error("WhatsApp Flow auth: flow_token missing. Cannot create session.")
+                return JsonResponse({
+                    "screen": "LOGIN",
+                    "data": {
+                        "error_message": "Authentication error. Please try again."
+                    }
+                })
+
+            try:
+                contact = Contact.objects.get(whatsapp_id=flow_token)
+                session, _ = ContactSession.objects.get_or_create(contact=contact)
+                session.start()
+                logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
+            except Contact.DoesNotExist:
+                logger.error(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found.")
+                return JsonResponse({
+                    "screen": "LOGIN",
+                    "data": {
+                        "error_message": "Authentication error. Please try again."
+                    }
+                })
+
+            return JsonResponse({
+                "screen": "SUCCESS",
+                "data": {
+                    "extension_message_response": {
+                        "params": {
+                            "flow_token": flow_token,
+                            "authenticated": "true",
+                            "username": username
+                        }
+                    }
+                }
+            })
+        else:
+            logger.warning(f"WhatsApp Flow auth: Failed authentication attempt for username '{username}'.")
+            return JsonResponse({
+                "screen": "LOGIN",
+                "data": {
+                    "error_message": "Incorrect username or password. Please try again."
+                }
+            })
+
+    def _handle_register_screen(self, data, flow_token):
+        """Process the REGISTER screen form submission — create a new user account."""
+        from django.contrib.auth.models import User
+        from conversations.models import Contact
+        from customer_data.models import CustomerProfile
+
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
+        confirm_password = data.get('confirm_password', '').strip()
+
+        # --- Validation ---
+        if not username or not password:
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Username and password are required."
+                }
+            })
+
+        if not email or '@' not in email:
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "A valid email address is required."
+                }
+            })
+
+        if password != confirm_password:
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Passwords do not match."
+                }
+            })
+
+        if len(password) < 8:
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Password must be at least 8 characters."
+                }
+            })
+
+        if User.objects.filter(username=username).exists():
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Username already taken. Please choose another."
+                }
+            })
+
+        # --- Create account ---
+        try:
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+            )
+            logger.info(f"WhatsApp Flow register: User '{username}' created.")
+
+            # Link to contact if flow_token is a whatsapp_id
+            if flow_token:
+                try:
+                    contact = Contact.objects.get(whatsapp_id=flow_token)
+                    # Create or update customer profile
+                    profile, created = CustomerProfile.objects.get_or_create(
+                        contact=contact,
+                        defaults={'user': user},
+                    )
+                    if not created and not profile.user:
+                        profile.user = user
+                        profile.save(update_fields=['user'])
+                    if email and not profile.email:
+                        profile.email = email
+                        profile.save(update_fields=['email'])
+                    logger.info(f"WhatsApp Flow register: Linked user '{username}' to contact {flow_token}.")
+                except Contact.DoesNotExist:
+                    logger.warning(
+                        f"WhatsApp Flow register: Contact with whatsapp_id '{flow_token}' not found. "
+                        f"User created but not linked to a contact."
+                    )
+
+            return JsonResponse({
+                "screen": "SUCCESS",
+                "data": {
+                    "extension_message_response": {
+                        "params": {
+                            "flow_token": flow_token or "",
+                            "registered": "true",
+                            "username": username
+                        }
+                    }
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"WhatsApp Flow register: Error creating user '{username}': {e}", exc_info=True)
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Registration failed. Please try again later."
+                }
+            })
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):

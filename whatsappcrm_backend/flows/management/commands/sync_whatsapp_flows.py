@@ -1,6 +1,7 @@
 import logging
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from flows.models import WhatsAppFlow
 from flows.whatsapp_flow_service import WhatsAppFlowService
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 class Command(BaseCommand):
     help = (
         "Sync WhatsApp Flows to Meta's platform for all (or specific) active "
-        "MetaAppConfigs. For every WhatsAppFlow in the database, an equivalent "
-        "WhatsAppFlow record is ensured for each target config and then synced."
+        "MetaAppConfigs. First saves/updates flow definitions from "
+        "flows/definitions/ into the database, then syncs each to Meta."
     )
 
     def add_arguments(self, parser):
@@ -39,12 +40,19 @@ class Command(BaseCommand):
             default=False,
             help='Show what would happen without making changes.',
         )
+        parser.add_argument(
+            '--skip-save',
+            action='store_true',
+            default=False,
+            help='Skip saving definitions to DB (use only what is already there).',
+        )
 
     def handle(self, *args, **options):
         config_id = options['config_id']
         flow_name = options['flow_name']
         publish = options['publish']
         dry_run = options['dry_run']
+        skip_save = options['skip_save']
 
         # Determine target configs
         if config_id:
@@ -63,9 +71,17 @@ class Command(BaseCommand):
             f"--- Syncing WhatsApp Flows to {len(configs)} config(s) ---"
         ))
         for cfg in configs:
-            self.stdout.write(f"  • {cfg.name} (phone_number_id: {cfg.phone_number_id})")
+            self.stdout.write(f"  \u2022 {cfg.name} (phone_number_id: {cfg.phone_number_id})")
 
-        # Determine source flows
+        # ------------------------------------------------------------------
+        # Step 1: Save definitions from flows/definitions/ to database
+        # ------------------------------------------------------------------
+        if not skip_save:
+            self._save_definitions_to_db(configs, dry_run)
+
+        # ------------------------------------------------------------------
+        # Step 2: Determine source flows to sync
+        # ------------------------------------------------------------------
         if flow_name:
             source_flows = list(WhatsAppFlow.objects.filter(name=flow_name))
             if not source_flows:
@@ -79,7 +95,7 @@ class Command(BaseCommand):
 
         self.stdout.write(f"\nFlows to sync ({len(source_flows)}):")
         for flow in source_flows:
-            self.stdout.write(f"  • {flow.name} (config: {flow.meta_app_config.name})")
+            self.stdout.write(f"  \u2022 {flow.name} (config: {flow.meta_app_config.name})")
 
         if dry_run:
             self.stdout.write(self.style.WARNING("\n[DRY RUN] No changes will be made.\n"))
@@ -134,7 +150,7 @@ class Command(BaseCommand):
                         version=source_flow.version,
                     )
                     self.stdout.write(self.style.SUCCESS(
-                        f"  ✅ Created WhatsAppFlow '{target_flow.name}' for config '{config.name}'"
+                        f"  \u2705 Created WhatsAppFlow '{target_flow.name}' for config '{config.name}'"
                     ))
 
                 if dry_run:
@@ -149,7 +165,7 @@ class Command(BaseCommand):
                     success = service.sync_flow(target_flow)
                     if success:
                         self.stdout.write(self.style.SUCCESS(
-                            f"  ✅ Synced '{target_flow.name}' (flow_id: {target_flow.flow_id})"
+                            f"  \u2705 Synced '{target_flow.name}' (flow_id: {target_flow.flow_id})"
                         ))
                         total_synced += 1
 
@@ -157,22 +173,22 @@ class Command(BaseCommand):
                             pub_success = service.publish_flow(target_flow)
                             if pub_success:
                                 self.stdout.write(self.style.SUCCESS(
-                                    f"  ✅ Published '{target_flow.name}'"
+                                    f"  \u2705 Published '{target_flow.name}'"
                                 ))
                                 total_published += 1
                             else:
                                 self.stderr.write(self.style.ERROR(
-                                    f"  ❌ Publish failed for '{target_flow.name}': {target_flow.sync_error}"
+                                    f"  \u274c Publish failed for '{target_flow.name}': {target_flow.sync_error}"
                                 ))
                                 total_errors += 1
                     else:
                         self.stderr.write(self.style.ERROR(
-                            f"  ❌ Sync failed for '{target_flow.name}': {target_flow.sync_error}"
+                            f"  \u274c Sync failed for '{target_flow.name}': {target_flow.sync_error}"
                         ))
                         total_errors += 1
                 except Exception as e:
                     self.stderr.write(self.style.ERROR(
-                        f"  ❌ Error syncing '{target_flow.name}': {e}"
+                        f"  \u274c Error syncing '{target_flow.name}': {e}"
                     ))
                     logger.error(f"Error syncing flow '{target_flow.name}': {e}", exc_info=True)
                     total_errors += 1
@@ -185,5 +201,44 @@ class Command(BaseCommand):
             f"  Errors:    {total_errors}"
         ))
         if dry_run:
-            self.stdout.write(self.style.WARNING("  (Dry run — no actual changes were made)"))
+            self.stdout.write(self.style.WARNING("  (Dry run \u2014 no actual changes were made)"))
         self.stdout.write(self.style.SUCCESS("--- Done ---"))
+
+    def _save_definitions_to_db(self, configs, dry_run):
+        """
+        Save WhatsApp UI flow definitions from flows/definitions/ into the
+        database for the first available config.  This ensures the DB always
+        has the latest definitions before syncing to Meta.
+        """
+        from flows.definitions import WHATSAPP_UI_FLOWS
+
+        if not WHATSAPP_UI_FLOWS:
+            return
+
+        meta_config = configs[0]  # use first config for initial save
+
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            "\n=== Saving WhatsApp UI flow definitions to database ==="
+        ))
+
+        for flow_json, metadata in WHATSAPP_UI_FLOWS:
+            name = metadata['name']
+            if dry_run:
+                self.stdout.write(f"  [DRY RUN] Would save '{name}' to database")
+                continue
+
+            with transaction.atomic():
+                whatsapp_flow, created = WhatsAppFlow.objects.update_or_create(
+                    name=name,
+                    defaults={
+                        'friendly_name': metadata.get('friendly_name', name),
+                        'description': metadata.get('description', ''),
+                        'flow_json': flow_json,
+                        'is_active': metadata.get('is_active', False),
+                        'meta_app_config': meta_config,
+                    },
+                )
+            action = "Created" if created else "Updated"
+            self.stdout.write(self.style.SUCCESS(
+                f"  \u2705 {action} '{whatsapp_flow.friendly_name or name}' in database"
+            ))

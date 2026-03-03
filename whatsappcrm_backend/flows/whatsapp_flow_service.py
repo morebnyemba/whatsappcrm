@@ -357,6 +357,159 @@ class WhatsAppFlowService:
             logger.error(f"Unexpected error deleting flow: {e}", exc_info=True)
             return False
 
+    def get_flow_details(self, flow_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches detailed metadata for a single flow from Meta's API.
+
+        Args:
+            flow_id: The Meta flow ID
+
+        Returns:
+            Dict with flow details, or None on failure
+        """
+        url = (
+            f"{self.base_url}/{flow_id}"
+            f"?fields=id,name,categories,status,json_version,data_api_version"
+        )
+        try:
+            response = requests.get(url, headers=self.headers, timeout=20)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching flow details for {flow_id}: {e}")
+            return None
+
+    def get_flow_assets(self, flow_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches the flow JSON asset (definition) for a single flow from Meta.
+
+        Uses GET /{flow_id}/assets to get the download_url, then downloads
+        the actual flow.json content.
+
+        Args:
+            flow_id: The Meta flow ID
+
+        Returns:
+            Parsed JSON dict of the flow definition, or None on failure
+        """
+        url = f"{self.base_url}/{flow_id}/assets"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=20)
+            response.raise_for_status()
+            assets = response.json().get('data', [])
+
+            for asset in assets:
+                if asset.get('asset_type') == 'FLOW_JSON' and asset.get('download_url'):
+                    dl_response = requests.get(
+                        asset['download_url'],
+                        headers={"Authorization": self.headers["Authorization"]},
+                        timeout=30,
+                    )
+                    dl_response.raise_for_status()
+                    return dl_response.json()
+
+            logger.warning(f"No FLOW_JSON asset found for flow {flow_id}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching flow assets for {flow_id}: {e}")
+            return None
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Error parsing flow asset JSON for {flow_id}: {e}")
+            return None
+
+    def import_flows_from_meta(self) -> Dict[str, Any]:
+        """
+        Fetches all WhatsApp UI Flow definitions from Meta's API and
+        saves or updates them as local WhatsAppFlow records.
+
+        Returns:
+            Dict with 'imported', 'updated', 'errors' counts and 'details' list
+        """
+        results = {'imported': 0, 'updated': 0, 'errors': 0, 'details': []}
+        remote_flows = self.list_flows()
+
+        if not remote_flows:
+            logger.info("No flows found on Meta to import.")
+            return results
+
+        for remote_flow in remote_flows:
+            flow_id = remote_flow.get('id')
+            flow_name = remote_flow.get('name', '')
+            flow_status = remote_flow.get('status', 'DRAFT')
+
+            if not flow_id:
+                continue
+
+            try:
+                # Fetch the flow JSON definition from Meta
+                flow_json = self.get_flow_assets(flow_id)
+
+                # Map Meta status to local sync_status
+                status_map = {
+                    'DRAFT': 'draft',
+                    'PUBLISHED': 'published',
+                    'DEPRECATED': 'draft',
+                    'BLOCKED': 'error',
+                    'THROTTLED': 'error',
+                }
+                local_status = status_map.get(flow_status, 'synced')
+
+                # Try to find existing local record by flow_id
+                existing = WhatsAppFlow.objects.filter(flow_id=flow_id).first()
+                if existing:
+                    # Update the existing record
+                    existing.name = flow_name or existing.name
+                    if flow_json:
+                        existing.flow_json = flow_json
+                    existing.sync_status = local_status
+                    existing.sync_error = None
+                    existing.last_synced_at = timezone.now()
+                    existing.save(update_fields=[
+                        'name', 'flow_json', 'sync_status',
+                        'sync_error', 'last_synced_at',
+                    ])
+                    results['updated'] += 1
+                    results['details'].append({
+                        'flow_id': flow_id,
+                        'name': existing.name,
+                        'action': 'updated',
+                    })
+                    logger.info(f"Updated local WhatsAppFlow '{existing.name}' from Meta (flow_id={flow_id})")
+                else:
+                    # Create a new local record
+                    new_flow = WhatsAppFlow.objects.create(
+                        name=flow_name,
+                        flow_id=flow_id,
+                        flow_json=flow_json or {},
+                        sync_status=local_status,
+                        meta_app_config=self.meta_config,
+                        is_active=(local_status == 'published'),
+                        last_synced_at=timezone.now(),
+                    )
+                    results['imported'] += 1
+                    results['details'].append({
+                        'flow_id': flow_id,
+                        'name': new_flow.name,
+                        'action': 'imported',
+                    })
+                    logger.info(f"Imported new WhatsAppFlow '{new_flow.name}' from Meta (flow_id={flow_id})")
+
+            except Exception as e:
+                results['errors'] += 1
+                results['details'].append({
+                    'flow_id': flow_id,
+                    'name': flow_name,
+                    'action': 'error',
+                    'error': str(e),
+                })
+                logger.error(f"Error importing flow '{flow_name}' (flow_id={flow_id}): {e}", exc_info=True)
+
+        logger.info(
+            f"Import complete: {results['imported']} imported, "
+            f"{results['updated']} updated, {results['errors']} errors"
+        )
+        return results
+
     @staticmethod
     def create_flow_message_data(
         flow_id: str,
