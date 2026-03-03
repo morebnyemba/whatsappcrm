@@ -14,7 +14,7 @@ def create_text_input(
     name: str,
     label: str,
     required: bool = True,
-    helper_text: str = None,
+    helper_text: Optional[str] = None,
     input_type: str = "text",
 ) -> Dict[str, Any]:
     """Create a TextInput component."""
@@ -96,7 +96,7 @@ def create_footer(
 
 
 def create_navigate_action(
-    next_screen: str, payload: Dict[str, Any] = None
+    next_screen: str, payload: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Create a navigate action to move to another screen."""
     action: Dict[str, Any] = {
@@ -108,7 +108,7 @@ def create_navigate_action(
     return action
 
 
-def create_complete_action(payload: Dict[str, Any] = None) -> Dict[str, Any]:
+def create_complete_action(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create a complete action to finish the flow."""
     action: Dict[str, Any] = {"name": "complete"}
     if payload:
