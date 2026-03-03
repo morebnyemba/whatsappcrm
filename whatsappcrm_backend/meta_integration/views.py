@@ -411,8 +411,47 @@ class MetaWebhookAPIView(View):
         self._save_log(log_entry, 'processed', "System message logged.")
 
     def handle_flow_response(self, flow_response_data, contact_wa_id, app_config, log_entry): 
+        """
+        Handles WhatsApp UI Flow (NFM) responses by persisting them to the
+        database and merging the data into the contact's active flow context.
+        """
+        from flows.whatsapp_flow_response_processor import WhatsAppFlowResponseProcessor
+        from flows.models import WhatsAppFlow
+        from conversations.services import get_or_create_contact_by_wa_id
+
         logger.info(f"Received Flow (NFM) response for {contact_wa_id}: {flow_response_data}")
-        self._save_log(log_entry, 'processed', "Flow (NFM) response logged and passed for processing.")
+        try:
+            contact, _ = get_or_create_contact_by_wa_id(
+                wa_id=contact_wa_id, name='Unknown', meta_app_config=app_config
+            )
+            if not contact:
+                logger.error(f"Could not get/create contact for {contact_wa_id} in handle_flow_response")
+                self._save_log(log_entry, 'error', f"Contact creation failed for {contact_wa_id}")
+                return
+
+            # Attempt to find the WhatsAppFlow matching this config
+            whatsapp_flow = (
+                WhatsAppFlow.objects
+                .filter(meta_app_config=app_config, is_active=True)
+                .first()
+            )
+            if whatsapp_flow:
+                result = WhatsAppFlowResponseProcessor.process_response(
+                    whatsapp_flow=whatsapp_flow,
+                    contact=contact,
+                    response_data=flow_response_data,
+                )
+                notes = f"Flow response processed: {result}" if result else "Flow response processing returned None"
+                self._save_log(log_entry, 'processed', notes)
+            else:
+                logger.warning(
+                    f"No active WhatsAppFlow found for config '{app_config.name}'. "
+                    f"Flow response for {contact_wa_id} logged but not persisted to WhatsAppFlowResponse."
+                )
+                self._save_log(log_entry, 'processed', "Flow (NFM) response logged; no matching WhatsAppFlow found.")
+        except Exception as e:
+            logger.error(f"Error in handle_flow_response for {contact_wa_id}: {e}", exc_info=True)
+            self._save_log(log_entry, 'error', f"handle_flow_response error: {str(e)[:200]}")
 
 
 @method_decorator(csrf_exempt, name='dispatch')

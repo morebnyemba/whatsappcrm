@@ -1801,6 +1801,9 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
     Handles processing of a message when a contact is already in an active flow.
     Manages question replies, transitions, and fallback logic.
     """
+    from .models import WhatsAppFlow
+    from .whatsapp_flow_response_processor import WhatsAppFlowResponseProcessor
+
     current_step = contact_flow_state.current_step
     flow_context = contact_flow_state.flow_context_data if isinstance(contact_flow_state.flow_context_data, dict) else {}
     actions_to_perform = []
@@ -1810,6 +1813,63 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
         f"Step: '{current_step.name}' (ID: {current_step.id}, Type: {current_step.step_type})."
     )
     logger.debug(f"Incoming message type: {message_data.get('type')}, data (snippet): {str(message_data)[:200]}. Current flow context (snippet): {str(flow_context)[:200]}")
+
+    # --- Detect and persist WhatsApp UI Flow (nfm_reply) responses ---
+    nfm_response_data_for_step = None
+    if message_data.get('type') == 'interactive' and isinstance(message_data.get('interactive'), dict):
+        interactive_payload = message_data.get('interactive', {})
+        if interactive_payload.get('type') == 'nfm_reply' and isinstance(interactive_payload.get('nfm_reply'), dict):
+            nfm_payload = interactive_payload['nfm_reply']
+            response_json_str = nfm_payload.get('response_json')
+            if response_json_str:
+                try:
+                    nfm_response_data_for_step = json.loads(response_json_str)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Could not parse nfm_reply response_json in _handle_active_flow_step "
+                        f"for contact {contact.whatsapp_id}: {response_json_str[:100]}"
+                    )
+
+            if nfm_response_data_for_step:
+                # Look up associated WhatsAppFlow via the current flow's linked definition
+                whatsapp_flow = (
+                    WhatsAppFlow.objects
+                    .filter(flow_definition=contact_flow_state.current_flow, is_active=True)
+                    .first()
+                )
+                if not whatsapp_flow:
+                    # Fallback: try any WhatsAppFlow linked to the current flow
+                    whatsapp_flow = (
+                        WhatsAppFlow.objects
+                        .filter(flow_definition=contact_flow_state.current_flow)
+                        .first()
+                    )
+
+                if whatsapp_flow:
+                    result = WhatsAppFlowResponseProcessor.process_response(
+                        whatsapp_flow=whatsapp_flow,
+                        contact=contact,
+                        response_data=nfm_response_data_for_step,
+                    )
+                    if result and result.get('success'):
+                        # Reload flow context after the processor merged nfm data
+                        contact_flow_state.refresh_from_db()
+                        flow_context = contact_flow_state.flow_context_data if isinstance(contact_flow_state.flow_context_data, dict) else {}
+                        logger.info(
+                            f"WhatsApp UI Flow response persisted and merged into context "
+                            f"for contact {contact.whatsapp_id}, flow '{whatsapp_flow.name}'."
+                        )
+                    else:
+                        logger.warning(
+                            f"WhatsAppFlowResponseProcessor returned non-success for "
+                            f"contact {contact.whatsapp_id}: {result}"
+                        )
+                else:
+                    logger.info(
+                        f"No WhatsAppFlow linked to current flow "
+                        f"'{contact_flow_state.current_flow.name}' for contact {contact.whatsapp_id}. "
+                        f"NFM response data will still be available for transition conditions."
+                    )
 
     question_expectation = flow_context.get('_question_awaiting_reply_for')
     is_processing_reply_for_current_question = False
@@ -1827,6 +1887,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
         
         user_text = message_data.get('text', {}).get('body', '').strip() if message_data.get('type') == 'text' else None
         interactive_reply_id = None
+        nfm_reply_data = nfm_response_data_for_step
         if message_data.get('type') == 'interactive':
             interactive_payload = message_data.get('interactive', {})
             interactive_type_from_payload = interactive_payload.get('type')
@@ -1835,7 +1896,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             elif interactive_type_from_payload == 'list_reply' and isinstance(interactive_payload.get('list_reply'), dict):
                 interactive_reply_id = interactive_payload.get('list_reply', {}).get('id')
         
-        logger.debug(f"Processing reply for question '{current_step.name}'. Expected type: '{expected_reply_type}'. User text: '{user_text}', Interactive ID: '{interactive_reply_id}'.")
+        logger.debug(f"Processing reply for question '{current_step.name}'. Expected type: '{expected_reply_type}'. User text: '{user_text}', Interactive ID: '{interactive_reply_id}', NFM data: {bool(nfm_reply_data)}.")
 
         value_to_save = None
 
@@ -1864,10 +1925,16 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
             if validation_regex_ctx and not re.match(validation_regex_ctx, interactive_reply_id):
                 reply_was_valid_for_question = False; value_to_save = None
                 logger.debug(f"Interactive ID reply '{interactive_reply_id}' for question '{current_step.name}' did not match regex '{validation_regex_ctx}'.")
+        elif expected_reply_type == 'nfm_reply' and nfm_reply_data is not None:
+            # WhatsApp UI Flow response — save the entire parsed response dict
+            value_to_save = nfm_reply_data
+            reply_was_valid_for_question = True
+            logger.debug(f"NFM reply data accepted for question '{current_step.name}'.")
         elif expected_reply_type == 'any':
-            # For 'any' type, try text, then interactive_id, then general message data
+            # For 'any' type, try text, then interactive_id, then nfm data, then general message data
             if user_text is not None: value_to_save = user_text
             elif interactive_reply_id is not None: value_to_save = interactive_reply_id
+            elif nfm_reply_data is not None: value_to_save = nfm_reply_data
             elif message_data:
                 # If it's a media message, save its ID or link if available
                 if message_data.get('type') in ['image', 'video', 'audio', 'document', 'sticker']:
