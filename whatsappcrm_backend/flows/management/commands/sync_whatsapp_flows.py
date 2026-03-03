@@ -175,6 +175,20 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.SUCCESS(
                         f"  \u2705 Created WhatsAppFlow '{target_flow.name}' for config '{config.name}'"
                     ))
+                elif source_flow.meta_app_config_id != config.id:
+                    # Refresh existing derived flow's definition from
+                    # the source so stale JSON is replaced.
+                    if target_flow.flow_json != source_flow.flow_json:
+                        if not dry_run:
+                            target_flow.flow_json = source_flow.flow_json
+                            target_flow.save(update_fields=['flow_json'])
+                            self.stdout.write(self.style.SUCCESS(
+                                f"  \u2705 Updated flow JSON for '{target_flow.name}' from source definition"
+                            ))
+                        else:
+                            self.stdout.write(
+                                f"  [DRY RUN] Would update flow JSON for '{target_flow.name}' from source definition"
+                            )
 
                 if dry_run:
                     self.stdout.write(f"  [DRY RUN] Would sync flow '{target_flow.name}'")
