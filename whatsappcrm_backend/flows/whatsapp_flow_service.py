@@ -224,9 +224,18 @@ class WhatsAppFlowService:
 
             result = response.json()
             if result.get('success'):
-                whatsapp_flow.sync_error = None
-                whatsapp_flow.last_synced_at = timezone.now()
-                whatsapp_flow.save(update_fields=['sync_error', 'last_synced_at'])
+                # Check for validation errors even after successful upload
+                validation_errors = self.get_validation_errors(whatsapp_flow.flow_id)
+                if validation_errors:
+                    warning_msg = f"Flow JSON uploaded but has validation errors: {json.dumps(validation_errors, indent=2)}"
+                    whatsapp_flow.sync_error = warning_msg
+                    whatsapp_flow.last_synced_at = timezone.now()
+                    whatsapp_flow.save(update_fields=['sync_error', 'last_synced_at'])
+                    logger.warning(f"Validation errors for '{whatsapp_flow.name}': {warning_msg}")
+                else:
+                    whatsapp_flow.sync_error = None
+                    whatsapp_flow.last_synced_at = timezone.now()
+                    whatsapp_flow.save(update_fields=['sync_error', 'last_synced_at'])
                 logger.info(f"Updated flow JSON on Meta for '{whatsapp_flow.name}' (ID: {whatsapp_flow.flow_id})")
                 return True
             else:
@@ -244,6 +253,11 @@ class WhatsAppFlowService:
                     error_msg += f" - Details: {error_details}"
                 except (ValueError, json.JSONDecodeError):
                     error_msg += f" - Response: {e.response.text}"
+            # Fetch validation errors from Meta for more detail
+            if whatsapp_flow.flow_id:
+                validation_errors = self.get_validation_errors(whatsapp_flow.flow_id)
+                if validation_errors:
+                    error_msg += f" - Validation errors: {json.dumps(validation_errors, indent=2)}"
             whatsapp_flow.sync_error = error_msg
             whatsapp_flow.save(update_fields=['sync_error'])
             logger.error(error_msg)
@@ -297,6 +311,10 @@ class WhatsAppFlowService:
                     error_msg += f" - Details: {error_details}"
                 except (ValueError, json.JSONDecodeError):
                     error_msg += f" - Response: {e.response.text}"
+            # Fetch validation errors from Meta for more detail
+            validation_errors = self.get_validation_errors(whatsapp_flow.flow_id)
+            if validation_errors:
+                error_msg += f" - Validation errors: {json.dumps(validation_errors, indent=2)}"
             whatsapp_flow.sync_error = error_msg
             whatsapp_flow.save(update_fields=['sync_error'])
             logger.error(error_msg)
@@ -387,7 +405,7 @@ class WhatsAppFlowService:
         """
         url = (
             f"{self.base_url}/{flow_id}"
-            f"?fields=id,name,categories,status,json_version,data_api_version"
+            f"?fields=id,name,categories,status,json_version,data_api_version,validation_errors"
         )
         try:
             response = requests.get(url, headers=self.headers, timeout=20)
@@ -395,6 +413,26 @@ class WhatsAppFlowService:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching flow details for {flow_id}: {e}")
+            return None
+
+    def get_validation_errors(self, flow_id: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetches validation errors for a flow from Meta's API.
+
+        Args:
+            flow_id: The Meta flow ID
+
+        Returns:
+            List of validation error dicts, or None on failure
+        """
+        url = f"{self.base_url}/{flow_id}?fields=validation_errors"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=20)
+            response.raise_for_status()
+            result = response.json()
+            return result.get('validation_errors', [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching validation errors for {flow_id}: {e}")
             return None
 
     def get_flow_assets(self, flow_id: str) -> Optional[Dict[str, Any]]:
