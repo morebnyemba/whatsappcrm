@@ -115,12 +115,8 @@ class Command(BaseCommand):
 
         seen_flow_definitions = {}
         for flow in source_flows:
-            # When a specific flow name was requested, include it as-is
-            if flow_name:
-                if flow.name not in seen_flow_definitions:
-                    seen_flow_definitions[flow.name] = flow
-                continue
-
+            # When a specific flow name was requested, include it but still
+            # apply base/derived filtering to prevent re-derivation.
             is_base = flow.name in definition_names
             is_derived = any(
                 flow.name.startswith(base + '-') for base in definition_names
@@ -130,6 +126,14 @@ class Command(BaseCommand):
             elif not is_base and not is_derived and flow.name not in seen_flow_definitions:
                 # Include non-definition, non-derived flows (manually created)
                 seen_flow_definitions[flow.name] = flow
+
+        # When a specific flow name targets a derived flow, sync it directly
+        # for its own config only (don't try to derive it for other configs).
+        direct_sync_flows = []
+        if flow_name:
+            for flow in source_flows:
+                if flow.name not in seen_flow_definitions:
+                    direct_sync_flows.append(flow)
 
         for config in configs:
             self.stdout.write(self.style.MIGRATE_HEADING(
@@ -210,6 +214,50 @@ class Command(BaseCommand):
                         f"  \u274c Error syncing '{target_flow.name}': {e}"
                     ))
                     logger.error(f"Error syncing flow '{target_flow.name}': {e}", exc_info=True)
+                    total_errors += 1
+
+            # Sync derived flows directly for their own config (no re-derivation)
+            for direct_flow in direct_sync_flows:
+                if direct_flow.meta_app_config_id != config.id:
+                    continue
+
+                if dry_run:
+                    self.stdout.write(f"  [DRY RUN] Would sync flow '{direct_flow.name}'")
+                    if publish:
+                        self.stdout.write(f"  [DRY RUN] Would publish flow '{direct_flow.name}'")
+                    continue
+
+                self.stdout.write(f"  Syncing '{direct_flow.name}'...")
+                try:
+                    success = service.sync_flow(direct_flow)
+                    if success:
+                        self.stdout.write(self.style.SUCCESS(
+                            f"  \u2705 Synced '{direct_flow.name}' (flow_id: {direct_flow.flow_id})"
+                        ))
+                        total_synced += 1
+
+                        if publish:
+                            pub_success = service.publish_flow(direct_flow)
+                            if pub_success:
+                                self.stdout.write(self.style.SUCCESS(
+                                    f"  \u2705 Published '{direct_flow.name}'"
+                                ))
+                                total_published += 1
+                            else:
+                                self.stderr.write(self.style.ERROR(
+                                    f"  \u274c Publish failed for '{direct_flow.name}': {direct_flow.sync_error}"
+                                ))
+                                total_errors += 1
+                    else:
+                        self.stderr.write(self.style.ERROR(
+                            f"  \u274c Sync failed for '{direct_flow.name}': {direct_flow.sync_error}"
+                        ))
+                        total_errors += 1
+                except Exception as e:
+                    self.stderr.write(self.style.ERROR(
+                        f"  \u274c Error syncing '{direct_flow.name}': {e}"
+                    ))
+                    logger.error(f"Error syncing flow '{direct_flow.name}': {e}", exc_info=True)
                     total_errors += 1
 
         # Summary
