@@ -187,9 +187,14 @@ class Command(BaseCommand):
                 try:
                     success = service.sync_flow(target_flow)
                     if success:
+                        target_flow.refresh_from_db()
                         self.stdout.write(self.style.SUCCESS(
                             f"  \u2705 Synced '{target_flow.name}' (flow_id: {target_flow.flow_id})"
                         ))
+                        if target_flow.sync_error:
+                            self.stderr.write(self.style.WARNING(
+                                f"  \u26a0\ufe0f  {target_flow.sync_error}"
+                            ))
                         total_synced += 1
 
                         if publish:
@@ -200,11 +205,13 @@ class Command(BaseCommand):
                                 ))
                                 total_published += 1
                             else:
+                                target_flow.refresh_from_db()
                                 self.stderr.write(self.style.ERROR(
                                     f"  \u274c Publish failed for '{target_flow.name}': {target_flow.sync_error}"
                                 ))
                                 total_errors += 1
                     else:
+                        target_flow.refresh_from_db()
                         self.stderr.write(self.style.ERROR(
                             f"  \u274c Sync failed for '{target_flow.name}': {target_flow.sync_error}"
                         ))
@@ -231,9 +238,14 @@ class Command(BaseCommand):
                 try:
                     success = service.sync_flow(direct_flow)
                     if success:
+                        direct_flow.refresh_from_db()
                         self.stdout.write(self.style.SUCCESS(
                             f"  \u2705 Synced '{direct_flow.name}' (flow_id: {direct_flow.flow_id})"
                         ))
+                        if direct_flow.sync_error:
+                            self.stderr.write(self.style.WARNING(
+                                f"  \u26a0\ufe0f  {direct_flow.sync_error}"
+                            ))
                         total_synced += 1
 
                         if publish:
@@ -244,11 +256,13 @@ class Command(BaseCommand):
                                 ))
                                 total_published += 1
                             else:
+                                direct_flow.refresh_from_db()
                                 self.stderr.write(self.style.ERROR(
                                     f"  \u274c Publish failed for '{direct_flow.name}': {direct_flow.sync_error}"
                                 ))
                                 total_errors += 1
                     else:
+                        direct_flow.refresh_from_db()
                         self.stderr.write(self.style.ERROR(
                             f"  \u274c Sync failed for '{direct_flow.name}': {direct_flow.sync_error}"
                         ))
