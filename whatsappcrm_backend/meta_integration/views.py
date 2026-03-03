@@ -585,7 +585,7 @@ class WhatsAppFlowEndpointView(View):
                 })
 
             return JsonResponse({
-                "screen": "SUCCESS",
+                "screen": "COMPLETE",
                 "data": {
                     "extension_message_response": {
                         "params": {
@@ -689,7 +689,7 @@ class WhatsAppFlowEndpointView(View):
                     )
 
             return JsonResponse({
-                "screen": "SUCCESS",
+                "screen": "COMPLETE",
                 "data": {
                     "extension_message_response": {
                         "params": {
