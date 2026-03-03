@@ -130,7 +130,8 @@ def initialize_football_betting_flow():
         name=flow_config["name"],
         defaults={
             "description": flow_config["description"],
-            "is_active": True
+            "is_active": True,
+            "requires_login": flow_config.get("requires_login", True),
         }
     )
     
