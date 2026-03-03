@@ -29,7 +29,7 @@ def process_flow_for_message_task(message_id: int):
     
     try:
         with transaction.atomic():
-            incoming_message = Message.objects.select_related('contact').get(pk=message_id)
+            incoming_message = Message.objects.select_related('contact', 'contact__associated_app_config').get(pk=message_id)
             contact = incoming_message.contact
             message_data = incoming_message.content_payload or {}
 
@@ -41,19 +41,20 @@ def process_flow_for_message_task(message_id: int):
                 logger.info(f"Flow processing for message {message_id} resulted in no actions.")
                 return
 
-            # Determine which config to use for sending responses
-            try:
-                config_to_use = MetaAppConfig.objects.get_active_config()
-            except MetaAppConfig.DoesNotExist:
-                logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
-                return
-            except MetaAppConfig.MultipleObjectsReturned:
-                logger.error(f"Multiple active MetaAppConfig found. Cannot determine which to use for message {message_id}.")
-                return
-
+            # Determine which config to use for sending responses.
+            # Use the contact's associated_app_config so replies go through
+            # the same number the user originally messaged.
+            config_to_use = getattr(contact, 'associated_app_config', None)
             if not config_to_use:
-                logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
-                return
+                try:
+                    config_to_use = MetaAppConfig.objects.get_active_config()
+                    logger.warning(
+                        f"Contact {contact.whatsapp_id} has no associated_app_config. "
+                        f"Falling back to default active config '{config_to_use.name}' for message {message_id}."
+                    )
+                except MetaAppConfig.DoesNotExist:
+                    logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
+                    return
 
             dispatch_countdown = 0
             for action in actions_to_perform:
@@ -123,7 +124,7 @@ def cleanup_idle_conversations_task():
     # A contact is idle in a flow if their flow state hasn't been updated recently.
     idle_flow_states = ContactFlowState.objects.filter(
         last_updated_at__lt=idle_threshold
-    ).select_related('contact', 'current_flow')
+    ).select_related('contact', 'contact__associated_app_config', 'current_flow')
 
     timed_out_contacts = set()
 
@@ -140,11 +141,20 @@ def cleanup_idle_conversations_task():
     # Send notifications to timed out contacts
     if timed_out_contacts:
         logger.info(f"{log_prefix} Sending timeout notifications to {len(timed_out_contacts)} contacts.")
-        try:
-            config_to_use = MetaAppConfig.objects.get_active_config()
-            notification_text = "Your session has expired due to inactivity. Please send 'menu' to start over."
-            
-            for contact in timed_out_contacts:
+        notification_text = "Your session has expired due to inactivity. Please send 'menu' to start over."
+        
+        for contact in timed_out_contacts:
+            try:
+                # Use the contact's associated config so the reply comes
+                # from the same number the user originally messaged.
+                config_to_use = contact.associated_app_config
+                if not config_to_use:
+                    config_to_use = MetaAppConfig.objects.get_active_config()
+                    logger.warning(
+                        f"{log_prefix} Contact {contact.whatsapp_id} has no associated_app_config. "
+                        f"Falling back to default active config '{config_to_use.name}'."
+                    )
+                
                 outgoing_msg = Message.objects.create(
                     contact=contact,
                     direction='out',
@@ -153,10 +163,10 @@ def cleanup_idle_conversations_task():
                     status='pending_dispatch'
                 )
                 send_whatsapp_message_task.delay(outgoing_msg.id, config_to_use.id)
-        except MetaAppConfig.DoesNotExist:
-            logger.error(f"{log_prefix} No active MetaAppConfig found. Cannot send timeout notifications.")
-        except Exception as e:
-            logger.error(f"{log_prefix} Error sending timeout notifications: {e}", exc_info=True)
+            except MetaAppConfig.DoesNotExist:
+                logger.error(f"{log_prefix} No active MetaAppConfig found for contact {contact.whatsapp_id}. Cannot send timeout notification.")
+            except Exception as e:
+                logger.error(f"{log_prefix} Error sending timeout notification to {contact.whatsapp_id}: {e}", exc_info=True)
 
     logger.info(f"{log_prefix} Cleanup complete. Timed out {len(timed_out_contacts)} contacts.")
 
