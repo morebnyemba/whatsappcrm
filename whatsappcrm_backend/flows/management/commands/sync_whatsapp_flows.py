@@ -103,25 +103,29 @@ class Command(BaseCommand):
             service = WhatsAppFlowService(config)
 
             for flow_name_key, source_flow in seen_flow_definitions.items():
-                # Check if a WhatsAppFlow already exists for this config
-                target_flow = WhatsAppFlow.objects.filter(
-                    name=source_flow.name,
-                    meta_app_config=config,
-                ).first()
-
-                if not target_flow and source_flow.meta_app_config_id == config.id:
+                # If the source flow already belongs to this config, use it directly.
+                if source_flow.meta_app_config_id == config.id:
                     target_flow = source_flow
+                else:
+                    # Look for an existing copy of this flow for the target config.
+                    # Copies are named "<original_name>-<phone_number_id>".
+                    derived_name = f"{source_flow.name}-{config.phone_number_id}"
+                    target_flow = WhatsAppFlow.objects.filter(
+                        name=derived_name,
+                        meta_app_config=config,
+                    ).first()
 
                 if not target_flow:
+                    derived_name = f"{source_flow.name}-{config.phone_number_id}"
                     # Create a new WhatsAppFlow record for this config
                     if dry_run:
                         self.stdout.write(
-                            f"  [DRY RUN] Would create WhatsAppFlow '{source_flow.name}' for config '{config.name}'"
+                            f"  [DRY RUN] Would create WhatsAppFlow '{derived_name}' for config '{config.name}'"
                         )
                         continue
 
                     target_flow = WhatsAppFlow.objects.create(
-                        name=f"{source_flow.name}__{config.phone_number_id}",
+                        name=derived_name,
                         friendly_name=source_flow.friendly_name,
                         description=source_flow.description,
                         flow_json=source_flow.flow_json,

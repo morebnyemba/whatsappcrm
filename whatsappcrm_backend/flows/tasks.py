@@ -56,10 +56,6 @@ def process_flow_for_message_task(message_id: int):
                     logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
                     return
 
-            if not config_to_use:
-                logger.error(f"No active MetaAppConfig found. Cannot send flow responses for message {message_id}.")
-                return
-
             dispatch_countdown = 0
             for action in actions_to_perform:
                 if action.get('type') == 'send_whatsapp_message':
