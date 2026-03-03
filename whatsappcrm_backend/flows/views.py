@@ -324,8 +324,12 @@ class WhatsAppFlowViewSet(viewsets.ModelViewSet):
             else:
                 meta_config = MetaAppConfig.objects.get_active_config()
         except MetaAppConfig.DoesNotExist:
+            if config_id:
+                msg = f"MetaAppConfig with ID {config_id} not found."
+            else:
+                msg = "No active MetaAppConfig found. Provide a valid meta_app_config_id."
             return Response(
-                {"detail": "No active MetaAppConfig found. Provide a valid meta_app_config_id."},
+                {"detail": msg},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

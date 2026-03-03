@@ -448,7 +448,7 @@ class WhatsAppFlowService:
                 status_map = {
                     'DRAFT': 'draft',
                     'PUBLISHED': 'published',
-                    'DEPRECATED': 'synced',
+                    'DEPRECATED': 'draft',
                     'BLOCKED': 'error',
                     'THROTTLED': 'error',
                 }

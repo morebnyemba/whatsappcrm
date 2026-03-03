@@ -61,15 +61,15 @@ class Command(BaseCommand):
                     fid = detail.get('flow_id', 'N/A')
                     if action == 'imported':
                         self.stdout.write(self.style.SUCCESS(
-                            f"  \u2705 Imported '{name}' (flow_id: {fid})"
+                            f"  ✅ Imported '{name}' (flow_id: {fid})"
                         ))
                     elif action == 'updated':
                         self.stdout.write(self.style.SUCCESS(
-                            f"  \u2705 Updated '{name}' (flow_id: {fid})"
+                            f"  ✅ Updated '{name}' (flow_id: {fid})"
                         ))
                     elif action == 'error':
                         self.stderr.write(self.style.ERROR(
-                            f"  \u274c Error for '{name}' (flow_id: {fid}): {detail.get('error')}"
+                            f"  ❌ Error for '{name}' (flow_id: {fid}): {detail.get('error')}"
                         ))
 
                 total_imported += results.get('imported', 0)
@@ -78,7 +78,7 @@ class Command(BaseCommand):
 
             except Exception as e:
                 self.stderr.write(self.style.ERROR(
-                    f"  \u274c Error importing from config '{config.name}': {e}"
+                    f"  ❌ Error importing from config '{config.name}': {e}"
                 ))
                 logger.error(f"Error importing flows for config '{config.name}': {e}", exc_info=True)
                 total_errors += 1
