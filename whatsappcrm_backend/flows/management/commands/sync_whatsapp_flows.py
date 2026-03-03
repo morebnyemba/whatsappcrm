@@ -107,9 +107,28 @@ class Command(BaseCommand):
         # Deduplicate: group source flows by their base name (ignoring config).
         # For each unique flow definition, ensure a WhatsAppFlow record exists
         # for every target config, then sync it.
+        # Only use "base" definition flows as sources — derived flows (those
+        # whose name already contains a phone_number_id suffix) should not
+        # be re-derived for other configs.
+        from flows.definitions import WHATSAPP_UI_FLOWS
+        definition_names = {metadata['name'] for _, metadata in WHATSAPP_UI_FLOWS}
+
         seen_flow_definitions = {}
         for flow in source_flows:
-            if flow.name not in seen_flow_definitions:
+            # When a specific flow name was requested, include it as-is
+            if flow_name:
+                if flow.name not in seen_flow_definitions:
+                    seen_flow_definitions[flow.name] = flow
+                continue
+
+            is_base = flow.name in definition_names
+            is_derived = any(
+                flow.name.startswith(base + '-') for base in definition_names
+            )
+            if is_base and flow.name not in seen_flow_definitions:
+                seen_flow_definitions[flow.name] = flow
+            elif not is_base and not is_derived and flow.name not in seen_flow_definitions:
+                # Include non-definition, non-derived flows (manually created)
                 seen_flow_definitions[flow.name] = flow
 
         for config in configs:
