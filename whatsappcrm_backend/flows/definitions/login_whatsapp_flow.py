@@ -10,6 +10,7 @@ Meta's Flow JSON schema.  The backend data-exchange endpoint at
 
 LOGIN_WHATSAPP_FLOW = {
     "version": "6.0",
+    "data_api_version": "6.0",
     "screens": [
         {
             "id": "LOGIN",

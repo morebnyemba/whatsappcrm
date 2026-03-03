@@ -14,6 +14,7 @@ Screens:
 
 REGISTER_WHATSAPP_FLOW = {
     "version": "6.0",
+    "data_api_version": "6.0",
     "screens": [
         {
             "id": "REGISTER",
