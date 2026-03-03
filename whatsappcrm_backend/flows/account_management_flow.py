@@ -9,6 +9,7 @@ def create_account_management_flow():
         "description": "A sub-menu for account-related actions like deposit and withdrawal.",
         "trigger_keywords": ["account", "manage account"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "show_account_menu",

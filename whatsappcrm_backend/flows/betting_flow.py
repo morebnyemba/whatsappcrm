@@ -9,6 +9,7 @@ def create_betting_flow():
         "description": "Guides the user through viewing matches, placing bets, and checking tickets.",
         "trigger_keywords": ["bet", "play", "ticket", "matches", "odds"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             # 1. Entry Point: Ensure user has an account
             {

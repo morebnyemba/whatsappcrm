@@ -89,12 +89,9 @@ class Command(BaseCommand):
         flow, created = Flow.objects.update_or_create(
             name=flow_name,
             defaults={
-                'friendly_name': flow_def.get(
-                    'friendly_name',
-                    flow_name.replace('_', ' ').replace('-', ' ').title(),
-                ),
                 'description': flow_def.get('description', ''),
                 'trigger_keywords': flow_def.get('trigger_keywords', []),
+                'requires_login': flow_def.get('requires_login', False),
                 'is_active': False,  # activate after steps are created
             },
         )

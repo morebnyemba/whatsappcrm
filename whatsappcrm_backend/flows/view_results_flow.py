@@ -9,6 +9,7 @@ def create_view_results_flow():
         "description": "Shows all recent football match results and prompts for next action.",
         "trigger_keywords": ["results", "view results", "scores"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "fetch_all_results",

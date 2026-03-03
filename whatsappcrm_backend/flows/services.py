@@ -1721,6 +1721,21 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
     if message_data.get('type') == 'text':
         message_text_body = message_data.get('text', {}).get('body', '').lower().strip()
 
+    # Handle interactive button replies (e.g., from session enforcement prompt)
+    interactive_reply_id = None
+    if message_data.get('type') == 'interactive':
+        interactive = message_data.get('interactive', {})
+        if interactive.get('type') == 'button_reply':
+            interactive_reply_id = interactive.get('button_reply', {}).get('id', '')
+        elif interactive.get('type') == 'list_reply':
+            interactive_reply_id = interactive.get('list_reply', {}).get('id', '')
+
+    # Map session enforcement prompt buttons to trigger keywords
+    if interactive_reply_id in ('prompt_login', 'login_btn_login'):
+        message_text_body = 'login'
+    elif interactive_reply_id in ('prompt_register', 'login_btn_register'):
+        message_text_body = 'register'
+
     triggered_flow = None
     # Assuming Flow model has is_active and trigger_keywords fields
     active_flows = Flow.objects.filter(is_active=True).order_by('name')
@@ -1757,8 +1772,22 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                 actions_to_perform.append({
                     'type': 'send_whatsapp_message',
                     'recipient_wa_id': contact.whatsapp_id,
-                    'message_type': 'text',
-                    'data': {'body': LOGIN_REQUIRED_MESSAGE}
+                    'message_type': 'interactive',
+                    'data': {
+                        'type': 'button',
+                        'body': {
+                            'text': (
+                                '\U0001f512 You need to be logged in to access this feature.\n\n'
+                                'Please login or register to continue.'
+                            )
+                        },
+                        'action': {
+                            'buttons': [
+                                {'type': 'reply', 'reply': {'id': 'prompt_login', 'title': 'Login'}},
+                                {'type': 'reply', 'reply': {'id': 'prompt_register', 'title': 'Register'}},
+                            ]
+                        }
+                    }
                 })
                 return actions_to_perform
         # --- End session security check ---
@@ -1794,6 +1823,39 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             logger.error(f"Flow '{triggered_flow.name}' is active but has no entry point step defined.")
     else:
         logger.info(f"No active flow triggered for contact {contact.whatsapp_id} with message: {message_text_body[:100] if message_text_body else message_data.get('type')}")
+        # If no flow was triggered and user has no active session, prompt login/register
+        from conversations.models import ContactSession
+        has_valid_session = False
+        try:
+            session = ContactSession.objects.get(contact=contact)
+            has_valid_session = session.is_valid()
+        except ContactSession.DoesNotExist:
+            pass
+
+        if not has_valid_session:
+            logger.info(
+                f"No flow triggered and no valid session for contact {contact.whatsapp_id}. "
+                f"Prompting login/register."
+            )
+            actions_to_perform.append({
+                'type': 'send_whatsapp_message',
+                'recipient_wa_id': contact.whatsapp_id,
+                'message_type': 'interactive',
+                'data': {
+                    'type': 'button',
+                    'body': {
+                        'text': (
+                            'Welcome! \U0001f44b Please login or register to get started.'
+                        )
+                    },
+                    'action': {
+                        'buttons': [
+                            {'type': 'reply', 'reply': {'id': 'prompt_login', 'title': 'Login'}},
+                            {'type': 'reply', 'reply': {'id': 'prompt_register', 'title': 'Register'}},
+                        ]
+                    }
+                }
+            })
     return actions_to_perform
 
 def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
@@ -2477,6 +2539,26 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
         # Refresh session if the active flow requires login
         if contact_flow_state.current_flow and contact_flow_state.current_flow.requires_login:
             from conversations.models import ContactSession
+            session_expired_prompt = {
+                'type': 'send_whatsapp_message',
+                'recipient_wa_id': contact.whatsapp_id,
+                'message_type': 'interactive',
+                'data': {
+                    'type': 'button',
+                    'body': {
+                        'text': (
+                            '\U0001f512 Your session has expired. '
+                            'Please login again to continue.'
+                        )
+                    },
+                    'action': {
+                        'buttons': [
+                            {'type': 'reply', 'reply': {'id': 'prompt_login', 'title': 'Login'}},
+                            {'type': 'reply', 'reply': {'id': 'prompt_register', 'title': 'Register'}},
+                        ]
+                    }
+                }
+            }
             try:
                 session = ContactSession.objects.get(contact=contact)
                 if session.is_valid():
@@ -2484,21 +2566,11 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                 else:
                     logger.info(f"Session expired for contact {contact.whatsapp_id} while in protected flow '{flow_name}'. Clearing flow state.")
                     _clear_contact_flow_state(contact, reason="Session expired during protected flow")
-                    return [{
-                        'type': 'send_whatsapp_message',
-                        'recipient_wa_id': contact.whatsapp_id,
-                        'message_type': 'text',
-                        'data': {'body': SESSION_EXPIRED_MESSAGE}
-                    }]
+                    return [session_expired_prompt]
             except ContactSession.DoesNotExist:
                 logger.info(f"No session found for contact {contact.whatsapp_id} in protected flow '{flow_name}'. Clearing flow state.")
                 _clear_contact_flow_state(contact, reason="No session found for protected flow")
-                return [{
-                    'type': 'send_whatsapp_message',
-                    'recipient_wa_id': contact.whatsapp_id,
-                    'message_type': 'text',
-                    'data': {'body': SESSION_EXPIRED_MESSAGE}
-                }]
+                return [session_expired_prompt]
 
         actions_to_perform = _handle_active_flow_step(
             contact_flow_state, contact, message_data, incoming_message_obj

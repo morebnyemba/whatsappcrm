@@ -9,6 +9,7 @@ def create_welcome_flow():
         "description": "The main entry point for users, providing a menu of options.",
         "trigger_keywords": ["hi", "hello", "menu", "start"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "show_welcome_menu",

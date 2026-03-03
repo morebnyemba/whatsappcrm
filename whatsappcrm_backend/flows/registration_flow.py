@@ -12,6 +12,7 @@ def create_registration_flow() -> Dict[str, Any]:
         "description": "A flow to register new users, creating their profile and wallet.",
         "trigger_keywords": ["register", "join", "signup"],
         "is_active": True,
+        "requires_login": False,
         "steps": [
             # 1. Entry point, immediately checks for email
             # MODIFIED: This is now the main entry point that decides the registration path.
