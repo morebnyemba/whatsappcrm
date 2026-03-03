@@ -1835,15 +1835,9 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
                 whatsapp_flow = (
                     WhatsAppFlow.objects
                     .filter(flow_definition=contact_flow_state.current_flow, is_active=True)
+                    .order_by('-updated_at')
                     .first()
                 )
-                if not whatsapp_flow:
-                    # Fallback: try any WhatsAppFlow linked to the current flow
-                    whatsapp_flow = (
-                        WhatsAppFlow.objects
-                        .filter(flow_definition=contact_flow_state.current_flow)
-                        .first()
-                    )
 
                 if whatsapp_flow:
                     result = WhatsAppFlowResponseProcessor.process_response(
@@ -1887,7 +1881,7 @@ def _handle_active_flow_step(contact_flow_state: ContactFlowState, contact: Cont
         
         user_text = message_data.get('text', {}).get('body', '').strip() if message_data.get('type') == 'text' else None
         interactive_reply_id = None
-        nfm_reply_data = nfm_response_data_for_step
+        nfm_reply_data = nfm_response_data_for_step  # alias for consistency with user_text / interactive_reply_id
         if message_data.get('type') == 'interactive':
             interactive_payload = message_data.get('interactive', {})
             interactive_type_from_payload = interactive_payload.get('type')

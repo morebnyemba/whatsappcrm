@@ -433,6 +433,7 @@ class MetaWebhookAPIView(View):
             whatsapp_flow = (
                 WhatsAppFlow.objects
                 .filter(meta_app_config=app_config, is_active=True)
+                .order_by('-updated_at')
                 .first()
             )
             if whatsapp_flow:
