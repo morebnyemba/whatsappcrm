@@ -126,7 +126,7 @@ class WhatsAppFlowAdmin(admin.ModelAdmin):
         }),
     )
 
-    actions = ['sync_with_meta', 'publish_flows', 'activate_flows', 'deactivate_flows']
+    actions = ['sync_with_meta', 'publish_flows', 'import_from_meta', 'activate_flows', 'deactivate_flows']
 
     def sync_with_meta(self, request, queryset):
         from flows.whatsapp_flow_service import WhatsAppFlowService
@@ -177,6 +177,39 @@ class WhatsAppFlowAdmin(admin.ModelAdmin):
             self.message_user(request, f"Errors: {', '.join(errors)}", level='error')
 
     publish_flows.short_description = "Publish selected flows"
+
+    def import_from_meta(self, request, queryset):
+        """Import/refresh flow definitions from Meta for the selected flows' configs."""
+        from flows.whatsapp_flow_service import WhatsAppFlowService
+
+        configs_seen = set()
+        total_imported = 0
+        total_updated = 0
+        errors = []
+
+        for flow in queryset:
+            config = flow.meta_app_config
+            if config.pk in configs_seen:
+                continue
+            configs_seen.add(config.pk)
+
+            try:
+                service = WhatsAppFlowService(config)
+                results = service.import_flows_from_meta()
+                total_imported += results.get('imported', 0)
+                total_updated += results.get('updated', 0)
+                for detail in results.get('details', []):
+                    if detail.get('action') == 'error':
+                        errors.append(f"{detail.get('name', 'Unknown')}: {detail.get('error')}")
+            except Exception as e:
+                errors.append(f"Config '{config.name}': {str(e)}")
+
+        msg = f"Imported {total_imported}, updated {total_updated} flow(s) from Meta"
+        self.message_user(request, msg)
+        if errors:
+            self.message_user(request, f"Errors: {', '.join(errors)}", level='error')
+
+    import_from_meta.short_description = "Import/refresh flow definitions from Meta"
 
     def activate_flows(self, request, queryset):
         queryset.update(is_active=True)

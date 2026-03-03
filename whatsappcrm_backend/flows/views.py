@@ -302,6 +302,53 @@ class WhatsAppFlowViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @action(detail=False, methods=['post'])
+    def import_from_meta(self, request):
+        """
+        Import WhatsApp UI Flow definitions from Meta's platform into the
+        local database. Fetches all flows for the specified (or default)
+        MetaAppConfig, downloads their JSON assets, and creates or updates
+        local WhatsAppFlow records.
+
+        Optional body parameter:
+            meta_app_config_id: ID of the MetaAppConfig to use (defaults to
+                                the first active config).
+        """
+        from meta_integration.models import MetaAppConfig
+        from .whatsapp_flow_service import WhatsAppFlowService
+
+        config_id = request.data.get('meta_app_config_id')
+        try:
+            if config_id:
+                meta_config = MetaAppConfig.objects.get(pk=config_id)
+            else:
+                meta_config = MetaAppConfig.objects.get_active_config()
+        except MetaAppConfig.DoesNotExist:
+            return Response(
+                {"detail": "No active MetaAppConfig found. Provide a valid meta_app_config_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = WhatsAppFlowService(meta_config)
+            results = service.import_flows_from_meta()
+            return Response(
+                {
+                    "detail": (
+                        f"Import complete: {results['imported']} imported, "
+                        f"{results['updated']} updated, {results['errors']} errors."
+                    ),
+                    "results": results,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Error importing flows from Meta: {e}", exc_info=True)
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class WhatsAppFlowResponseViewSet(viewsets.ReadOnlyModelViewSet):
     """
