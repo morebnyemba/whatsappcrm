@@ -613,6 +613,14 @@ class WhatsAppFlowEndpointView(View):
                 }
             })
 
+        if not email or '@' not in email:
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "A valid email address is required."
+                }
+            })
+
         if password != confirm_password:
             return JsonResponse({
                 "screen": "REGISTER",
@@ -621,11 +629,11 @@ class WhatsAppFlowEndpointView(View):
                 }
             })
 
-        if len(password) < 6:
+        if len(password) < 8:
             return JsonResponse({
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Password must be at least 6 characters."
+                    "error_message": "Password must be at least 8 characters."
                 }
             })
 
@@ -651,11 +659,11 @@ class WhatsAppFlowEndpointView(View):
                 try:
                     contact = Contact.objects.get(whatsapp_id=flow_token)
                     # Create or update customer profile
-                    profile, _ = CustomerProfile.objects.get_or_create(
+                    profile, created = CustomerProfile.objects.get_or_create(
                         contact=contact,
                         defaults={'user': user},
                     )
-                    if not profile.user:
+                    if not created and not profile.user:
                         profile.user = user
                         profile.save(update_fields=['user'])
                     if email and not profile.email:

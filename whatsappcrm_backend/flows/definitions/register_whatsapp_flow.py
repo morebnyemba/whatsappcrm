@@ -73,7 +73,7 @@ REGISTER_WHATSAPP_FLOW = {
                         "label": "Password",
                         "required": True,
                         "input-type": "password",
-                        "helper-text": "Minimum 6 characters"
+                        "helper-text": "Minimum 8 characters"
                     },
                     {
                         "type": "TextInput",
