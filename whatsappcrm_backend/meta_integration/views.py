@@ -558,12 +558,10 @@ class WhatsAppFlowEndpointView(View):
 
     def _get_private_key(self):
         """Retrieve the first available private key from active MetaAppConfigs."""
-        configs = MetaAppConfig.objects.filter(
+        config = MetaAppConfig.objects.filter(
             is_active=True, flow_private_key_pem__isnull=False,
-        ).exclude(flow_private_key_pem='')
-        for config in configs:
-            return config.flow_private_key_pem
-        return None
+        ).exclude(flow_private_key_pem='').first()
+        return config.flow_private_key_pem if config else None
 
 
     def _handle_init(self, body):
