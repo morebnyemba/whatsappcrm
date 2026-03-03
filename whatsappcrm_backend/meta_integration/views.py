@@ -462,30 +462,90 @@ class WhatsAppFlowEndpointView(View):
     WhatsApp calls this endpoint when a user interacts with a Flow screen.
     Currently supports the login/authentication flow.
 
-    Request format from WhatsApp:
-        POST with JSON body containing:
+    Meta sends encrypted requests containing:
+        - encrypted_flow_data: AES-GCM encrypted payload (base64)
+        - encrypted_aes_key: RSA-OAEP encrypted AES key (base64)
+        - initial_vector: AES-GCM IV (base64)
+
+    The decrypted payload contains:
         - action: "ping" | "INIT" | "data_exchange"
         - flow_token: unique token for the flow session
         - screen: current screen name (for data_exchange)
         - data: user-submitted form data (for data_exchange)
 
     Response format:
-        JSON with screen name and data to render.
+        Encrypted (base64) response containing screen name and data to render.
     """
 
     def post(self, request, *args, **kwargs):
         try:
-            body = json.loads(request.body.decode('utf-8'))
+            raw_body = json.loads(request.body.decode('utf-8'))
         except json.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
+        # Check if the request is encrypted (has encryption fields)
+        encrypted_flow_data = raw_body.get('encrypted_flow_data')
+        encrypted_aes_key = raw_body.get('encrypted_aes_key')
+        initial_vector = raw_body.get('initial_vector')
+
+        if encrypted_flow_data and encrypted_aes_key and initial_vector:
+            return self._handle_encrypted_request(
+                encrypted_flow_data, encrypted_aes_key, initial_vector
+            )
+
+        # Fallback: handle unencrypted request (for testing / draft flows)
+        return self._handle_plaintext_request(raw_body)
+
+    def _handle_encrypted_request(self, encrypted_flow_data, encrypted_aes_key,
+                                  initial_vector):
+        """Decrypt the request, process it, and return an encrypted response."""
+        from .flow_crypto import decrypt_flow_request, encrypt_flow_response
+
+        # Find a config that has a private key
+        private_key_pem = self._get_private_key()
+        if not private_key_pem:
+            logger.error("WhatsApp Flow endpoint: No private key configured for decryption.")
+            return HttpResponse(status=500)
+
+        try:
+            body, aes_key, iv = decrypt_flow_request(
+                encrypted_flow_data, encrypted_aes_key,
+                initial_vector, private_key_pem,
+            )
+        except Exception as e:
+            logger.error(f"WhatsApp Flow endpoint: Decryption failed: {e}", exc_info=True)
+            return HttpResponse(status=500)
+
+        logger.info(
+            f"WhatsApp Flow endpoint (encrypted). Action: {body.get('action')}, "
+            f"flow_token: {body.get('flow_token')}"
+        )
+
+        response_data = self._process_body(body)
+
+        try:
+            encrypted_response = encrypt_flow_response(response_data, aes_key, iv)
+        except Exception as e:
+            logger.error(f"WhatsApp Flow endpoint: Encryption failed: {e}", exc_info=True)
+            return HttpResponse(status=500)
+
+        return HttpResponse(encrypted_response, content_type='text/plain')
+
+    def _handle_plaintext_request(self, body):
+        """Handle an unencrypted request (draft flows / testing)."""
         action = body.get('action')
         flow_token = body.get('flow_token')
-
         logger.info(f"WhatsApp Flow endpoint called. Action: {action}, flow_token: {flow_token}")
 
+        response_data = self._process_body(body)
+        return JsonResponse(response_data)
+
+    def _process_body(self, body):
+        """Route the decrypted/plain body to the correct handler and return response dict."""
+        action = body.get('action')
+
         if action == 'ping':
-            return JsonResponse({"data": {"status": "active"}})
+            return {"data": {"status": "active"}}
 
         if action == 'INIT':
             return self._handle_init(body)
@@ -494,30 +554,40 @@ class WhatsAppFlowEndpointView(View):
             return self._handle_data_exchange(body)
 
         logger.warning(f"WhatsApp Flow endpoint: Unknown action '{action}'")
-        return JsonResponse({"data": {"error": "Unknown action"}}, status=400)
+        return {"data": {"error": "Unknown action"}}
+
+    def _get_private_key(self):
+        """Retrieve the first available private key from active MetaAppConfigs."""
+        configs = MetaAppConfig.objects.filter(
+            is_active=True, flow_private_key_pem__isnull=False,
+        ).exclude(flow_private_key_pem='')
+        for config in configs:
+            return config.flow_private_key_pem
+        return None
+
 
     def _handle_init(self, body):
-        """Handle INIT action - return the appropriate initial screen."""
+        """Handle INIT action - return the appropriate initial screen dict."""
         flow_token = body.get('flow_token', '')
         # Check flow_action_payload to determine which screen to show
         flow_action_payload = body.get('flow_action_payload', {}) or {}
         screen_hint = flow_action_payload.get('screen', '')
 
         if screen_hint == 'REGISTER':
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": ""
                 }
-            })
+            }
 
         # Default to login screen
-        return JsonResponse({
+        return {
             "screen": "LOGIN",
             "data": {
                 "error_message": ""
             }
-        })
+        }
 
     def _handle_data_exchange(self, body):
         """Handle data_exchange action - process form submissions."""
@@ -537,7 +607,7 @@ class WhatsAppFlowEndpointView(View):
             return self._handle_register_screen(data, flow_token)
 
         logger.warning(f"WhatsApp Flow data_exchange: Unknown screen '{screen}'")
-        return JsonResponse({"data": {"error": "Unknown screen"}}, status=400)
+        return {"data": {"error": "Unknown screen"}}
 
     # ------------------------------------------------------------------
     # Screen handlers
@@ -552,23 +622,23 @@ class WhatsAppFlowEndpointView(View):
         password = data.get('password', '').strip()
 
         if not username or not password:
-            return JsonResponse({
+            return {
                 "screen": "LOGIN",
                 "data": {
                     "error_message": "Please enter both username and password."
                 }
-            })
+            }
 
         auth_user = authenticate(username=username, password=password)
         if auth_user is not None:
             if not flow_token:
                 logger.error("WhatsApp Flow auth: flow_token missing. Cannot create session.")
-                return JsonResponse({
+                return {
                     "screen": "LOGIN",
                     "data": {
                         "error_message": "Authentication error. Please try again."
                     }
-                })
+                }
 
             try:
                 contact = Contact.objects.get(whatsapp_id=flow_token)
@@ -577,14 +647,14 @@ class WhatsAppFlowEndpointView(View):
                 logger.info(f"WhatsApp Flow auth: Session started for contact {flow_token} as user '{username}'.")
             except Contact.DoesNotExist:
                 logger.error(f"WhatsApp Flow auth: Contact with whatsapp_id '{flow_token}' not found.")
-                return JsonResponse({
+                return {
                     "screen": "LOGIN",
                     "data": {
                         "error_message": "Authentication error. Please try again."
                     }
-                })
+                }
 
-            return JsonResponse({
+            return {
                 "screen": "COMPLETE",
                 "data": {
                     "extension_message_response": {
@@ -595,15 +665,15 @@ class WhatsAppFlowEndpointView(View):
                         }
                     }
                 }
-            })
+            }
         else:
             logger.warning(f"WhatsApp Flow auth: Failed authentication attempt for username '{username}'.")
-            return JsonResponse({
+            return {
                 "screen": "LOGIN",
                 "data": {
                     "error_message": "Incorrect username or password. Please try again."
                 }
-            })
+            }
 
     def _handle_register_screen(self, data, flow_token):
         """Process the REGISTER screen form submission — create a new user account."""
@@ -618,44 +688,44 @@ class WhatsAppFlowEndpointView(View):
 
         # --- Validation ---
         if not username or not password:
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "Username and password are required."
                 }
-            })
+            }
 
         if not email or '@' not in email:
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "A valid email address is required."
                 }
-            })
+            }
 
         if password != confirm_password:
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "Passwords do not match."
                 }
-            })
+            }
 
         if len(password) < 8:
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "Password must be at least 8 characters."
                 }
-            })
+            }
 
         if User.objects.filter(username=username).exists():
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "Username already taken. Please choose another."
                 }
-            })
+            }
 
         # --- Create account ---
         try:
@@ -688,7 +758,7 @@ class WhatsAppFlowEndpointView(View):
                         f"User created but not linked to a contact."
                     )
 
-            return JsonResponse({
+            return {
                 "screen": "COMPLETE",
                 "data": {
                     "extension_message_response": {
@@ -699,16 +769,16 @@ class WhatsAppFlowEndpointView(View):
                         }
                     }
                 }
-            })
+            }
 
         except Exception as e:
             logger.error(f"WhatsApp Flow register: Error creating user '{username}': {e}", exc_info=True)
-            return JsonResponse({
+            return {
                 "screen": "REGISTER",
                 "data": {
                     "error_message": "Registration failed. Please try again later."
                 }
-            })
+            }
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):

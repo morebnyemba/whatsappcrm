@@ -17,6 +17,11 @@ class MetaAppConfigAdmin(admin.ModelAdmin):
             'fields': ('verify_token', 'access_token', 'app_secret', 'phone_number_id', 'waba_id', 'api_version'),
             'description': "These details are used to connect to the Meta (WhatsApp) Cloud API. Ensure they are correct and kept secure."
         }),
+        ('WhatsApp Flows Encryption', {
+            'fields': ('flow_private_key_pem',),
+            'classes': ('collapse',),
+            'description': "RSA private key for WhatsApp Flows encryption. Generate with: manage.py setup_flow_encryption"
+        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',),

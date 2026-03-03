@@ -1,0 +1,182 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting django
+  Downloading django-6.0.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting python-dotenv
+  Downloading python_dotenv-1.2.2-py3-none-any.whl.metadata (27 kB)
+Collecting django-jazzmin
+  Downloading django_jazzmin-3.0.3-py3-none-any.whl.metadata (6.7 kB)
+Collecting djangorestframework
+  Downloading djangorestframework-3.16.1-py3-none-any.whl.metadata (11 kB)
+Collecting djangorestframework-simplejwt
+  Downloading djangorestframework_simplejwt-5.5.1-py3-none-any.whl.metadata (4.6 kB)
+Collecting django-extensions
+  Downloading django_extensions-4.1-py3-none-any.whl.metadata (6.1 kB)
+Collecting django-cors-headers
+  Downloading django_cors_headers-4.9.0-py3-none-any.whl.metadata (16 kB)
+Collecting celery
+  Downloading celery-5.6.2-py3-none-any.whl.metadata (23 kB)
+Collecting redis
+  Downloading redis-7.2.1-py3-none-any.whl.metadata (12 kB)
+Collecting django-celery-results
+  Downloading django_celery_results-2.6.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting django-celery-beat
+  Downloading django_celery_beat-2.9.0-py3-none-any.whl.metadata (13 kB)
+Collecting whitenoise
+  Downloading whitenoise-6.12.0-py3-none-any.whl.metadata (3.7 kB)
+Requirement already satisfied: requests in /usr/lib/python3/dist-packages (2.31.0)
+Collecting pydantic
+  Downloading pydantic-2.12.5-py3-none-any.whl.metadata (90 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 90.6/90.6 kB 17.0 MB/s eta 0:00:00
+Collecting paynow
+  Downloading paynow-1.0.8-py2.py3-none-any.whl.metadata (5.2 kB)
+Collecting drf-nested-routers
+  Downloading drf_nested_routers-0.95.0-py2.py3-none-any.whl.metadata (11 kB)
+Collecting djoser
+  Downloading djoser-2.3.3-py3-none-any.whl.metadata (6.0 kB)
+Collecting reportlab
+  Downloading reportlab-4.4.10-py3-none-any.whl.metadata (1.7 kB)
+Requirement already satisfied: cryptography in /usr/lib/python3/dist-packages (41.0.7)
+Collecting asgiref>=3.9.1 (from django)
+  Downloading asgiref-3.11.1-py3-none-any.whl.metadata (9.3 kB)
+Collecting sqlparse>=0.5.0 (from django)
+  Downloading sqlparse-0.5.5-py3-none-any.whl.metadata (4.7 kB)
+Requirement already satisfied: pyjwt>=1.7.1 in /usr/lib/python3/dist-packages (from djangorestframework-simplejwt) (2.7.0)
+Collecting billiard<5.0,>=4.2.1 (from celery)
+  Downloading billiard-4.2.4-py3-none-any.whl.metadata (4.8 kB)
+Collecting kombu>=5.6.0 (from celery)
+  Downloading kombu-5.6.2-py3-none-any.whl.metadata (3.5 kB)
+Collecting vine<6.0,>=5.1.0 (from celery)
+  Downloading vine-5.1.0-py3-none-any.whl.metadata (2.7 kB)
+Requirement already satisfied: click<9.0,>=8.1.2 in /usr/lib/python3/dist-packages (from celery) (8.1.6)
+Collecting click-didyoumean>=0.3.0 (from celery)
+  Downloading click_didyoumean-0.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting click-repl>=0.2.0 (from celery)
+  Downloading click_repl-0.3.0-py3-none-any.whl.metadata (3.6 kB)
+Collecting click-plugins>=1.1.1 (from celery)
+  Downloading click_plugins-1.1.1.2-py2.py3-none-any.whl.metadata (6.5 kB)
+Requirement already satisfied: python-dateutil>=2.8.2 in /usr/lib/python3/dist-packages (from celery) (2.8.2)
+Collecting tzlocal (from celery)
+  Downloading tzlocal-5.3.1-py3-none-any.whl.metadata (7.6 kB)
+Collecting django-timezone-field>=5.0 (from django-celery-beat)
+  Downloading django_timezone_field-7.2.1-py3-none-any.whl.metadata (13 kB)
+Collecting tzdata (from django-celery-beat)
+  Downloading tzdata-2025.3-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting python-crontab>=2.3.4 (from django-celery-beat)
+  Downloading python_crontab-3.3.0-py3-none-any.whl.metadata (17 kB)
+Collecting cron-descriptor<2.0.0,>=1.2.32 (from django-celery-beat)
+  Downloading cron_descriptor-1.4.5-py3-none-any.whl.metadata (5.7 kB)
+Collecting annotated-types>=0.6.0 (from pydantic)
+  Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.41.5 (from pydantic)
+  Downloading pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+Collecting typing-extensions>=4.14.1 (from pydantic)
+  Downloading typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting typing-inspection>=0.4.2 (from pydantic)
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Requirement already satisfied: six in /usr/lib/python3/dist-packages (from paynow) (1.16.0)
+Collecting social-auth-app-django<6.0.0,>=5.0.0 (from djoser)
+  Downloading social_auth_app_django-5.7.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting pillow>=9.0.0 (from reportlab)
+  Downloading pillow-12.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (8.8 kB)
+Collecting charset-normalizer (from reportlab)
+  Downloading charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (37 kB)
+Collecting prompt-toolkit>=3.0.36 (from click-repl>=0.2.0->celery)
+  Downloading prompt_toolkit-3.0.52-py3-none-any.whl.metadata (6.4 kB)
+Collecting amqp<6.0.0,>=5.1.1 (from kombu>=5.6.0->celery)
+  Downloading amqp-5.3.1-py3-none-any.whl.metadata (8.9 kB)
+Requirement already satisfied: packaging in /usr/lib/python3/dist-packages (from kombu>=5.6.0->celery) (24.0)
+Collecting social-auth-core~=4.8.3 (from social-auth-app-django<6.0.0,>=5.0.0->djoser)
+  Downloading social_auth_core-4.8.5-py3-none-any.whl.metadata (4.3 kB)
+Collecting wcwidth (from prompt-toolkit>=3.0.36->click-repl>=0.2.0->celery)
+  Downloading wcwidth-0.6.0-py3-none-any.whl.metadata (30 kB)
+Collecting defusedxml>=0.7.1 (from social-auth-core~=4.8.3->social-auth-app-django<6.0.0,>=5.0.0->djoser)
+  Downloading defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+Collecting oauthlib>=3.3.1 (from social-auth-core~=4.8.3->social-auth-app-django<6.0.0,>=5.0.0->djoser)
+  Downloading oauthlib-3.3.1-py3-none-any.whl.metadata (7.9 kB)
+Collecting pyjwt>=1.7.1 (from djangorestframework-simplejwt)
+  Downloading pyjwt-2.11.0-py3-none-any.whl.metadata (4.0 kB)
+Collecting python3-openid>=3.2.0 (from social-auth-core~=4.8.3->social-auth-app-django<6.0.0,>=5.0.0->djoser)
+  Downloading python3_openid-3.2.0-py3-none-any.whl.metadata (1.6 kB)
+Collecting requests-oauthlib>=2.0.0 (from social-auth-core~=4.8.3->social-auth-app-django<6.0.0,>=5.0.0->djoser)
+  Downloading requests_oauthlib-2.0.0-py2.py3-none-any.whl.metadata (11 kB)
+Collecting requests
+  Downloading requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Requirement already satisfied: idna<4,>=2.5 in /usr/lib/python3/dist-packages (from requests) (3.6)
+Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/lib/python3/dist-packages (from requests) (2.0.7)
+Requirement already satisfied: certifi>=2017.4.17 in /usr/lib/python3/dist-packages (from requests) (2023.11.17)
+Downloading django-6.0.3-py3-none-any.whl (8.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.4/8.4 MB 134.3 MB/s eta 0:00:00
+Downloading python_dotenv-1.2.2-py3-none-any.whl (22 kB)
+Downloading django_jazzmin-3.0.3-py3-none-any.whl (2.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.5/2.5 MB 152.4 MB/s eta 0:00:00
+Downloading djangorestframework-3.16.1-py3-none-any.whl (1.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.1/1.1 MB 129.2 MB/s eta 0:00:00
+Downloading djangorestframework_simplejwt-5.5.1-py3-none-any.whl (107 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 107.7/107.7 kB 34.6 MB/s eta 0:00:00
+Downloading django_extensions-4.1-py3-none-any.whl (232 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 233.0/233.0 kB 68.3 MB/s eta 0:00:00
+Downloading django_cors_headers-4.9.0-py3-none-any.whl (12 kB)
+Downloading celery-5.6.2-py3-none-any.whl (445 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 445.5/445.5 kB 94.1 MB/s eta 0:00:00
+Downloading redis-7.2.1-py3-none-any.whl (396 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 396.1/396.1 kB 88.0 MB/s eta 0:00:00
+Downloading django_celery_results-2.6.0-py3-none-any.whl (38 kB)
+Downloading django_celery_beat-2.9.0-py3-none-any.whl (105 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 105.0/105.0 kB 36.3 MB/s eta 0:00:00
+Downloading whitenoise-6.12.0-py3-none-any.whl (20 kB)
+Downloading pydantic-2.12.5-py3-none-any.whl (463 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 463.6/463.6 kB 90.4 MB/s eta 0:00:00
+Downloading pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 149.1 MB/s eta 0:00:00
+Downloading paynow-1.0.8-py2.py3-none-any.whl (7.7 kB)
+Downloading drf_nested_routers-0.95.0-py2.py3-none-any.whl (36 kB)
+Downloading djoser-2.3.3-py3-none-any.whl (71 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 71.9/71.9 kB 23.5 MB/s eta 0:00:00
+Downloading reportlab-4.4.10-py3-none-any.whl (2.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.0/2.0 MB 122.7 MB/s eta 0:00:00
+Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading asgiref-3.11.1-py3-none-any.whl (24 kB)
+Downloading billiard-4.2.4-py3-none-any.whl (87 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 87.1/87.1 kB 28.6 MB/s eta 0:00:00
+Downloading click_didyoumean-0.3.1-py3-none-any.whl (3.6 kB)
+Downloading click_plugins-1.1.1.2-py2.py3-none-any.whl (11 kB)
+Downloading click_repl-0.3.0-py3-none-any.whl (10 kB)
+Downloading cron_descriptor-1.4.5-py3-none-any.whl (50 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 50.4/50.4 kB 17.3 MB/s eta 0:00:00
+Downloading django_timezone_field-7.2.1-py3-none-any.whl (13 kB)
+Downloading kombu-5.6.2-py3-none-any.whl (214 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 214.2/214.2 kB 61.8 MB/s eta 0:00:00
+Downloading vine-5.1.0-py3-none-any.whl (9.6 kB)
+Downloading pillow-12.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (7.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7.0/7.0 MB 176.6 MB/s eta 0:00:00
+Downloading python_crontab-3.3.0-py3-none-any.whl (27 kB)
+Downloading social_auth_app_django-5.7.0-py3-none-any.whl (28 kB)
+Downloading sqlparse-0.5.5-py3-none-any.whl (46 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 46.1/46.1 kB 14.5 MB/s eta 0:00:00
+Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 44.6/44.6 kB 13.3 MB/s eta 0:00:00
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Downloading tzdata-2025.3-py2.py3-none-any.whl (348 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 348.5/348.5 kB 82.7 MB/s eta 0:00:00
+Downloading charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (153 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 153.5/153.5 kB 51.4 MB/s eta 0:00:00
+Downloading tzlocal-5.3.1-py3-none-any.whl (18 kB)
+Downloading amqp-5.3.1-py3-none-any.whl (50 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 50.9/50.9 kB 15.2 MB/s eta 0:00:00
+Downloading prompt_toolkit-3.0.52-py3-none-any.whl (391 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 391.4/391.4 kB 88.1 MB/s eta 0:00:00
+Downloading social_auth_core-4.8.5-py3-none-any.whl (447 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 447.3/447.3 kB 95.8 MB/s eta 0:00:00
+Downloading requests-2.32.5-py3-none-any.whl (64 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 64.7/64.7 kB 21.8 MB/s eta 0:00:00
+Downloading pyjwt-2.11.0-py3-none-any.whl (28 kB)
+Downloading defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+Downloading oauthlib-3.3.1-py3-none-any.whl (160 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 160.1/160.1 kB 48.7 MB/s eta 0:00:00
+Downloading python3_openid-3.2.0-py3-none-any.whl (133 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 133.7/133.7 kB 43.7 MB/s eta 0:00:00
+Downloading requests_oauthlib-2.0.0-py2.py3-none-any.whl (24 kB)
+Downloading wcwidth-0.6.0-py3-none-any.whl (94 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 94.2/94.2 kB 32.2 MB/s eta 0:00:00
+Installing collected packages: python-crontab, cron-descriptor, whitenoise, wcwidth, vine, tzlocal, tzdata, typing-extensions, sqlparse, redis, python-dotenv, pyjwt, pillow, oauthlib, defusedxml, click-plugins, click-didyoumean, charset-normalizer, billiard, asgiref, annotated-types, typing-inspection, requests, reportlab, python3-openid, pydantic-core, prompt-toolkit, django, amqp, requests-oauthlib, pydantic, paynow, kombu, djangorestframework, django-timezone-field, django-jazzmin, django-extensions, django-cors-headers, click-repl, social-auth-core, drf-nested-routers, djangorestframework-simplejwt, celery, social-auth-app-django, django-celery-results, django-celery-beat, djoser
+Successfully installed amqp-5.3.1 annotated-types-0.7.0 asgiref-3.11.1 billiard-4.2.4 celery-5.6.2 charset-normalizer-3.4.4 click-didyoumean-0.3.1 click-plugins-1.1.1.2 click-repl-0.3.0 cron-descriptor-1.4.5 defusedxml-0.7.1 django-6.0.3 django-celery-beat-2.9.0 django-celery-results-2.6.0 django-cors-headers-4.9.0 django-extensions-4.1 django-jazzmin-3.0.3 django-timezone-field-7.2.1 djangorestframework-3.16.1 djangorestframework-simplejwt-5.5.1 djoser-2.3.3 drf-nested-routers-0.95.0 kombu-5.6.2 oauthlib-3.3.1 paynow-1.0.8 pillow-12.1.1 prompt-toolkit-3.0.52 pydantic-2.12.5 pydantic-core-2.41.5 pyjwt-2.11.0 python-crontab-3.3.0 python-dotenv-1.2.2 python3-openid-3.2.0 redis-7.2.1 reportlab-4.4.10 requests-2.32.5 requests-oauthlib-2.0.0 social-auth-app-django-5.7.0 social-auth-core-4.8.5 sqlparse-0.5.5 typing-extensions-4.15.0 typing-inspection-0.4.2 tzdata-2025.3 tzlocal-5.3.1 vine-5.1.0 wcwidth-0.6.0 whitenoise-6.12.0
