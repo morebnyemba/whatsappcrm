@@ -45,27 +45,9 @@ class Command(BaseCommand):
         # Traditional flow definitions
         # (Flow → FlowStep → FlowTransition)
         # ----------------------------------------------------------------
-        from flows.welcome_flow import create_welcome_flow
-        from flows.registration_flow import create_registration_flow
-        from flows.login_flow import create_login_flow
-        from flows.betting_flow import create_betting_flow
-        from flows.deposit_flow import create_deposit_flow
-        from flows.withdrawal_flow import create_withdrawal_flow
-        from flows.get_fixtures_flow import create_get_fixtures_flow
-        from flows.view_results_flow import create_view_results_flow
-        from flows.account_management_flow import create_account_management_flow
+        from flows.definitions import TRADITIONAL_FLOW_CREATORS, WHATSAPP_UI_FLOWS
 
-        traditional_flows = [
-            create_welcome_flow(),
-            create_registration_flow(),
-            create_login_flow(),
-            create_betting_flow(),
-            create_deposit_flow(),
-            create_withdrawal_flow(),
-            create_get_fixtures_flow(),
-            create_view_results_flow(),
-            create_account_management_flow(),
-        ]
+        traditional_flows = [creator() for creator in TRADITIONAL_FLOW_CREATORS]
 
         self.stdout.write(self.style.MIGRATE_HEADING(
             "\n=== Loading traditional flow definitions ==="
@@ -78,16 +60,7 @@ class Command(BaseCommand):
         # WhatsApp UI flow definitions
         # (WhatsAppFlow with Meta Flow JSON)
         # ----------------------------------------------------------------
-        from flows.definitions.login_whatsapp_flow import (
-            LOGIN_WHATSAPP_FLOW,
-            LOGIN_WHATSAPP_FLOW_METADATA,
-        )
-
-        whatsapp_flows = [
-            (LOGIN_WHATSAPP_FLOW, LOGIN_WHATSAPP_FLOW_METADATA),
-        ]
-
-        if whatsapp_flows:
+        if WHATSAPP_UI_FLOWS:
             self.stdout.write(self.style.MIGRATE_HEADING(
                 "\n=== Loading WhatsApp UI flow definitions ==="
             ))
@@ -97,7 +70,7 @@ class Command(BaseCommand):
                     "Use --config-id to specify one."
                 ))
             else:
-                for flow_json, metadata in whatsapp_flows:
+                for flow_json, metadata in WHATSAPP_UI_FLOWS:
                     self._load_whatsapp_flow(flow_json, metadata, meta_config)
 
         self.stdout.write(self.style.SUCCESS(
