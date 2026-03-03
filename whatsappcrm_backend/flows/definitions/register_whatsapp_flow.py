@@ -19,22 +19,6 @@ REGISTER_WHATSAPP_FLOW = {
             "id": "REGISTER",
             "title": "Create Account",
             "data": {
-                "username": {
-                    "type": "string",
-                    "__example__": "john_doe"
-                },
-                "email": {
-                    "type": "string",
-                    "__example__": "john@example.com"
-                },
-                "password": {
-                    "type": "string",
-                    "__example__": "********"
-                },
-                "confirm_password": {
-                    "type": "string",
-                    "__example__": "********"
-                },
                 "error_message": {
                     "type": "string",
                     "__example__": ""
@@ -52,50 +36,56 @@ REGISTER_WHATSAPP_FLOW = {
                         "text": "Create your account to get started."
                     },
                     {
-                        "type": "TextInput",
-                        "name": "username",
-                        "label": "Username",
-                        "required": True,
-                        "input-type": "text",
-                        "helper-text": "Choose a unique username"
-                    },
-                    {
-                        "type": "TextInput",
-                        "name": "email",
-                        "label": "Email Address",
-                        "required": True,
-                        "input-type": "email",
-                        "helper-text": "Enter a valid email address"
-                    },
-                    {
-                        "type": "TextInput",
-                        "name": "password",
-                        "label": "Password",
-                        "required": True,
-                        "input-type": "password",
-                        "helper-text": "Minimum 8 characters"
-                    },
-                    {
-                        "type": "TextInput",
-                        "name": "confirm_password",
-                        "label": "Confirm Password",
-                        "required": True,
-                        "input-type": "password",
-                        "helper-text": "Re-enter your password"
-                    },
-                    {
-                        "type": "Footer",
-                        "label": "Register",
-                        "on-click-action": {
-                            "name": "data_exchange",
-                            "payload": {
-                                "username": "${form.username}",
-                                "email": "${form.email}",
-                                "password": "${form.password}",
-                                "confirm_password": "${form.confirm_password}",
-                                "action": "register"
+                        "type": "Form",
+                        "name": "register_form",
+                        "children": [
+                            {
+                                "type": "TextInput",
+                                "name": "username",
+                                "label": "Username",
+                                "required": True,
+                                "input-type": "text",
+                                "helper-text": "Choose a unique username"
+                            },
+                            {
+                                "type": "TextInput",
+                                "name": "email",
+                                "label": "Email Address",
+                                "required": True,
+                                "input-type": "email",
+                                "helper-text": "Enter a valid email address"
+                            },
+                            {
+                                "type": "TextInput",
+                                "name": "password",
+                                "label": "Password",
+                                "required": True,
+                                "input-type": "password",
+                                "helper-text": "Minimum 8 characters"
+                            },
+                            {
+                                "type": "TextInput",
+                                "name": "confirm_password",
+                                "label": "Confirm Password",
+                                "required": True,
+                                "input-type": "password",
+                                "helper-text": "Re-enter your password"
+                            },
+                            {
+                                "type": "Footer",
+                                "label": "Register",
+                                "on-click-action": {
+                                    "name": "data_exchange",
+                                    "payload": {
+                                        "username": "${form.username}",
+                                        "email": "${form.email}",
+                                        "password": "${form.password}",
+                                        "confirm_password": "${form.confirm_password}",
+                                        "action": "register"
+                                    }
+                                }
                             }
-                        }
+                        ]
                     }
                 ]
             }

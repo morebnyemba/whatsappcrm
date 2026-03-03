@@ -499,7 +499,19 @@ class WhatsAppFlowEndpointView(View):
     def _handle_init(self, body):
         """Handle INIT action - return the appropriate initial screen."""
         flow_token = body.get('flow_token', '')
-        # Default to login screen; the flow_action_payload may hint at register
+        # Check flow_action_payload to determine which screen to show
+        flow_action_payload = body.get('flow_action_payload', {}) or {}
+        screen_hint = flow_action_payload.get('screen', '')
+
+        if screen_hint == 'REGISTER':
+            return JsonResponse({
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": ""
+                }
+            })
+
+        # Default to login screen
         return JsonResponse({
             "screen": "LOGIN",
             "data": {

@@ -123,6 +123,24 @@ class WhatsAppFlowService:
             existing_flow_id = self.find_flow_by_name(flow_name_with_version)
             if existing_flow_id:
                 logger.info(f"Flow '{flow_name_with_version}' already exists on Meta with ID: {existing_flow_id}")
+                # Check if another local record already owns this flow_id
+                existing_owner = WhatsAppFlow.objects.filter(
+                    flow_id=existing_flow_id
+                ).exclude(pk=whatsapp_flow.pk).first()
+                if existing_owner:
+                    logger.warning(
+                        f"Flow ID {existing_flow_id} already owned by "
+                        f"'{existing_owner.name}' (pk={existing_owner.pk}). "
+                        f"Skipping duplicate assignment for '{whatsapp_flow.name}'."
+                    )
+                    whatsapp_flow.sync_status = 'error'
+                    whatsapp_flow.sync_error = (
+                        f"Meta flow ID {existing_flow_id} is already assigned "
+                        f"to '{existing_owner.name}'. Delete the duplicate or "
+                        f"use a different version suffix."
+                    )
+                    whatsapp_flow.save(update_fields=['sync_status', 'sync_error'])
+                    return False
                 whatsapp_flow.flow_id = existing_flow_id
                 whatsapp_flow.sync_status = 'synced'
                 whatsapp_flow.sync_error = None

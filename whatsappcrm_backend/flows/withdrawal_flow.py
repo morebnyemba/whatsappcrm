@@ -7,6 +7,7 @@ def create_withdrawal_flow():
         "description": "Guides the user through requesting a withdrawal.",
         "trigger_keywords": ["withdraw", "cash out", "get money"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "ensure_customer_account_withdrawal",

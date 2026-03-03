@@ -15,13 +15,9 @@ LOGIN_WHATSAPP_FLOW = {
             "id": "LOGIN",
             "title": "Login",
             "data": {
-                "username": {
+                "error_message": {
                     "type": "string",
-                    "__example__": "john_doe"
-                },
-                "password": {
-                    "type": "string",
-                    "__example__": "********"
+                    "__example__": ""
                 }
             },
             "layout": {
@@ -36,30 +32,65 @@ LOGIN_WHATSAPP_FLOW = {
                         "text": "Please enter your credentials to log in."
                     },
                     {
-                        "type": "TextInput",
-                        "name": "username",
-                        "label": "Username",
-                        "required": True,
-                        "input-type": "text",
-                        "helper-text": "Enter your username"
+                        "type": "Form",
+                        "name": "login_form",
+                        "children": [
+                            {
+                                "type": "TextInput",
+                                "name": "username",
+                                "label": "Username",
+                                "required": True,
+                                "input-type": "text",
+                                "helper-text": "Enter your username"
+                            },
+                            {
+                                "type": "TextInput",
+                                "name": "password",
+                                "label": "Password",
+                                "required": True,
+                                "input-type": "password",
+                                "helper-text": "Enter your password"
+                            },
+                            {
+                                "type": "Footer",
+                                "label": "Login",
+                                "on-click-action": {
+                                    "name": "data_exchange",
+                                    "payload": {
+                                        "username": "${form.username}",
+                                        "password": "${form.password}",
+                                        "action": "login"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "SUCCESS",
+            "title": "Login Successful",
+            "terminal": True,
+            "success": True,
+            "layout": {
+                "type": "SingleColumnLayout",
+                "children": [
+                    {
+                        "type": "TextHeading",
+                        "text": "Welcome!"
                     },
                     {
-                        "type": "TextInput",
-                        "name": "password",
-                        "label": "Password",
-                        "required": True,
-                        "input-type": "password",
-                        "helper-text": "Enter your password"
+                        "type": "TextBody",
+                        "text": "You have been logged in successfully."
                     },
                     {
                         "type": "Footer",
-                        "label": "Login",
+                        "label": "Done",
                         "on-click-action": {
-                            "name": "data_exchange",
+                            "name": "complete",
                             "payload": {
-                                "username": "${form.username}",
-                                "password": "${form.password}",
-                                "action": "login"
+                                "authenticated": "true"
                             }
                         }
                     }

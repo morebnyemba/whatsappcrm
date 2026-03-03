@@ -9,6 +9,7 @@ def create_deposit_flow():
         "description": "Guides the user through making a deposit using various methods.",
         "trigger_keywords": ["deposit", "topup", "add funds", "fund wallet"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "ensure_customer_account",

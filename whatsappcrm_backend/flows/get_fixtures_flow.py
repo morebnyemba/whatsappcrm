@@ -9,6 +9,7 @@ def create_get_fixtures_flow():
         "description": "Shows all upcoming football fixtures and prompts for next action.",
         "trigger_keywords": ["fixtures", "matches", "view matches", "upcoming games"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "fetch_all_fixtures",
