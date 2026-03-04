@@ -1796,6 +1796,34 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                 return actions_to_perform
         # --- End session security check ---
 
+        # --- Populate WhatsApp UI Flow IDs into initial context ---
+        from .models import WhatsAppFlow
+        app_config = getattr(contact, 'associated_app_config', None)
+        if app_config:
+            login_wa_flow = (
+                WhatsAppFlow.objects
+                .filter(meta_app_config=app_config, is_active=True, name__istartswith='login_whatsapp')
+                .exclude(flow_id__isnull=True).exclude(flow_id='')
+                .order_by('-updated_at')
+                .first()
+            )
+            register_wa_flow = (
+                WhatsAppFlow.objects
+                .filter(meta_app_config=app_config, is_active=True, name__istartswith='register_whatsapp')
+                .exclude(flow_id__isnull=True).exclude(flow_id='')
+                .order_by('-updated_at')
+                .first()
+            )
+            if login_wa_flow:
+                initial_flow_context['whatsapp_login_flow_id'] = login_wa_flow.flow_id
+                logger.debug(f"Set whatsapp_login_flow_id={login_wa_flow.flow_id} for contact {contact.whatsapp_id}")
+            if register_wa_flow:
+                initial_flow_context['whatsapp_register_flow_id'] = register_wa_flow.flow_id
+                logger.debug(f"Set whatsapp_register_flow_id={register_wa_flow.flow_id} for contact {contact.whatsapp_id}")
+        else:
+            logger.warning(f"Contact {contact.whatsapp_id} has no associated_app_config; cannot resolve WhatsApp Flow IDs.")
+        # --- End populate WhatsApp UI Flow IDs ---
+
         # Assuming FlowStep has is_entry_point field and a related manager for steps
         entry_point_step = FlowStep.objects.filter(flow=triggered_flow, is_entry_point=True).first()
         if entry_point_step:
