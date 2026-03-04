@@ -46,19 +46,15 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_triggered_by_flow_step_field,
-                    reverse_code=_remove_triggered_by_flow_step_field,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='message',
-                    name='triggered_by_flow_step',
-                    field=models.ForeignKey(blank=True, help_text='The flow step that triggered the creation of this message, if any.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='triggered_messages', to='flows.flowstep'),
-                ),
-            ],
+        # First add the field to state
+        migrations.AddField(
+            model_name='message',
+            name='triggered_by_flow_step',
+            field=models.ForeignKey(blank=True, help_text='The flow step that triggered the creation of this message, if any.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='triggered_messages', to='flows.flowstep'),
+        ),
+        # Then add it to the database if it doesn't exist
+        migrations.RunPython(
+            _add_triggered_by_flow_step_field,
+            reverse_code=_remove_triggered_by_flow_step_field,
         ),
     ]

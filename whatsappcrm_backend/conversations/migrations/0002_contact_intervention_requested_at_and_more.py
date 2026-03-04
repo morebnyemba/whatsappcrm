@@ -10,33 +10,56 @@ def check_and_add_intervention_fields(apps, schema_editor):
     cases where the columns may have already been added through other means.
     """
     table_name = 'conversations_contact'
+    db_vendor = schema_editor.connection.vendor
     
     with schema_editor.connection.cursor() as cursor:
-        # Check and add intervention_requested_at
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'intervention_requested_at'])
+        # Helper function to check column existence
+        def column_exists(cursor, col_name):
+            if db_vendor == 'postgresql':
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+                """, [table_name, col_name])
+                return cursor.fetchone() is not None
+            elif db_vendor == 'sqlite':
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = [row[1] for row in cursor.fetchall()]
+                return col_name in columns
+            elif db_vendor == 'mysql':
+                cursor.execute("""
+                    SELECT COLUMN_NAME 
+                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_NAME=%s AND COLUMN_NAME=%s AND TABLE_SCHEMA=DATABASE()
+                """, [table_name, col_name])
+                return cursor.fetchone() is not None
+            return False
         
-        if cursor.fetchone() is None:
-            cursor.execute("""
-                ALTER TABLE conversations_contact 
-                ADD COLUMN intervention_requested_at TIMESTAMP WITH TIME ZONE NULL
-            """)
+        # Check and add intervention_requested_at
+        if not column_exists(cursor, 'intervention_requested_at'):
+            if db_vendor == 'sqlite':
+                cursor.execute(f"""
+                    ALTER TABLE {table_name} 
+                    ADD COLUMN intervention_requested_at TIMESTAMP NULL
+                """)
+            else:
+                cursor.execute("""
+                    ALTER TABLE conversations_contact 
+                    ADD COLUMN intervention_requested_at TIMESTAMP WITH TIME ZONE NULL
+                """)
         
         # Check and add needs_human_intervention
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'needs_human_intervention'])
-        
-        if cursor.fetchone() is None:
-            cursor.execute("""
-                ALTER TABLE conversations_contact 
-                ADD COLUMN needs_human_intervention BOOLEAN NOT NULL DEFAULT FALSE
-            """)
+        if not column_exists(cursor, 'needs_human_intervention'):
+            if db_vendor == 'sqlite':
+                cursor.execute(f"""
+                    ALTER TABLE {table_name} 
+                    ADD COLUMN needs_human_intervention BOOLEAN NOT NULL DEFAULT 0
+                """)
+            else:
+                cursor.execute("""
+                    ALTER TABLE conversations_contact 
+                    ADD COLUMN needs_human_intervention BOOLEAN NOT NULL DEFAULT FALSE
+                """)
             # Create index for needs_human_intervention using IF NOT EXISTS
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS conversations_contact_needs_human_idx 
@@ -50,35 +73,46 @@ def reverse_intervention_fields(apps, schema_editor):
     Contact if they exist.
     """
     table_name = 'conversations_contact'
+    db_vendor = schema_editor.connection.vendor
     
     with schema_editor.connection.cursor() as cursor:
-        # Check and drop needs_human_intervention
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'needs_human_intervention'])
+        # Helper function to check column existence
+        def column_exists(cursor, col_name):
+            if db_vendor == 'postgresql':
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+                """, [table_name, col_name])
+                return cursor.fetchone() is not None
+            elif db_vendor == 'sqlite':
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = [row[1] for row in cursor.fetchall()]
+                return col_name in columns
+            elif db_vendor == 'mysql':
+                cursor.execute("""
+                    SELECT COLUMN_NAME 
+                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_NAME=%s AND COLUMN_NAME=%s AND TABLE_SCHEMA=DATABASE()
+                """, [table_name, col_name])
+                return cursor.fetchone() is not None
+            return False
         
-        if cursor.fetchone() is not None:
+        # Check and drop needs_human_intervention
+        if column_exists(cursor, 'needs_human_intervention'):
             # Drop index first
             cursor.execute("""
                 DROP INDEX IF EXISTS conversations_contact_needs_human_idx
             """)
-            cursor.execute("""
-                ALTER TABLE conversations_contact 
+            cursor.execute(f"""
+                ALTER TABLE {table_name} 
                 DROP COLUMN needs_human_intervention
             """)
         
         # Check and drop intervention_requested_at
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'intervention_requested_at'])
-        
-        if cursor.fetchone() is not None:
-            cursor.execute("""
-                ALTER TABLE conversations_contact 
+        if column_exists(cursor, 'intervention_requested_at'):
+            cursor.execute(f"""
+                ALTER TABLE {table_name} 
                 DROP COLUMN intervention_requested_at
             """)
 

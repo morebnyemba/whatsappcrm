@@ -96,16 +96,47 @@ def create_login_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 4. Switch to registration flow
+            # 4. Send WhatsApp UI Flow for registration
+            #    Similar to login, this sends a native WhatsApp Flow message
+            #    with a registration form.
             {
                 "name": "switch_to_registration",
-                "step_type": "action",
+                "step_type": "question",
                 "config": {
-                    "actions_to_run": [
-                        {"action_type": "switch_flow", "trigger_keyword_template": "register"}
-                    ]
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "flow",
+                            "header": {"type": "text", "text": "Register"},
+                            "body": {"text": "Tap the button below to create your account."},
+                            "footer": {"text": "Your information is sent securely."},
+                            "action": {
+                                "name": "flow",
+                                "parameters": {
+                                    "flow_message_version": "3",
+                                    "flow_action": "data_exchange",
+                                    "flow_token": "{{ contact.whatsapp_id }}",
+                                    "flow_id": "{{ flow_context.whatsapp_register_flow_id }}",
+                                    "flow_cta": "Register",
+                                    "flow_action_payload": {
+                                        "screen": "REGISTER"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "register_nfm_response",
+                        "expected_type": "any"
+                    }
                 },
-                "transitions": []
+                "transitions": [
+                    {
+                        "to_step": "process_register_auth_result",
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
             },
             # 5. Send WhatsApp UI Flow for login
             #    This sends a native WhatsApp Flow message with a form.
@@ -209,7 +240,64 @@ def create_login_flow() -> Dict[str, Any]:
                     {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
-            # 9. End flow
+            # 9. Process registration result
+            {
+                "name": "process_register_auth_result",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "check_session",
+                            "output_variable_name": "register_result"
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "register_success",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "variable_equals",
+                            "variable_name": "flow_context.register_result",
+                            "value": True
+                        }
+                    },
+                    {
+                        "to_step": "register_completed",
+                        "priority": 2,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # 10. Registration success (session was auto-started)
+            {
+                "name": "register_success",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "\u2705 Registration successful! Your session is now active.\n\nType 'menu' to see available options."
+                    }
+                },
+                "transitions": [
+                    {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # 11. Registration completed (user may need to login separately)
+            {
+                "name": "register_completed",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "\u2705 Registration complete! Please type 'login' to sign in."
+                    }
+                },
+                "transitions": [
+                    {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # 12. End flow
             {
                 "name": "end_login_flow",
                 "step_type": "end_flow",

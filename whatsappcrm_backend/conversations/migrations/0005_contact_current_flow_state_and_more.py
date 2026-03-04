@@ -52,24 +52,20 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_contact_fields_if_missing,
-                    reverse_code=_remove_contact_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='contact',
-                    name='current_flow_state',
-                    field=models.JSONField(blank=True, default=dict, help_text='Stores the current state of the contact within a flow.'),
-                ),
-                migrations.AddField(
-                    model_name='contact',
-                    name='intervention_resolved_at',
-                    field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was resolved.', null=True),
-                ),
-            ],
+        # First add the fields to state
+        migrations.AddField(
+            model_name='contact',
+            name='current_flow_state',
+            field=models.JSONField(blank=True, default=dict, help_text='Stores the current state of the contact within a flow.'),
+        ),
+        migrations.AddField(
+            model_name='contact',
+            name='intervention_resolved_at',
+            field=models.DateTimeField(blank=True, help_text='Timestamp of when human intervention was resolved.', null=True),
+        ),
+        # Then add them to the database if they don't exist
+        migrations.RunPython(
+            _add_contact_fields_if_missing,
+            reverse_code=_remove_contact_fields_if_present,
         ),
     ]

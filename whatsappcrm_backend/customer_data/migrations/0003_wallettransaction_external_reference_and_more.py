@@ -56,34 +56,30 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_wallettransaction_fields_if_missing,
-                    reverse_code=_remove_wallettransaction_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='wallettransaction',
-                    name='external_reference',
-                    field=models.CharField(blank=True, db_index=True, help_text='Reference from the external payment gateway (e.g., Paynow).', max_length=255, null=True),
-                ),
-                migrations.AddField(
-                    model_name='wallettransaction',
-                    name='payment_method',
-                    field=models.CharField(blank=True, max_length=50, null=True),
-                ),
-                migrations.AddField(
-                    model_name='wallettransaction',
-                    name='reference',
-                    field=models.CharField(blank=True, db_index=True, help_text='Our internal unique reference for the transaction.', max_length=255, null=True, unique=True),
-                ),
-                migrations.AddField(
-                    model_name='wallettransaction',
-                    name='status',
-                    field=models.CharField(choices=[('PENDING', 'Pending'), ('COMPLETED', 'Completed'), ('FAILED', 'Failed'), ('CANCELLED', 'Cancelled')], db_index=True, default='COMPLETED', max_length=20),
-                ),
-            ],
+        # First add all fields to state
+        migrations.AddField(
+            model_name='wallettransaction',
+            name='external_reference',
+            field=models.CharField(blank=True, db_index=True, help_text='Reference from the external payment gateway (e.g., Paynow).', max_length=255, null=True),
+        ),
+        migrations.AddField(
+            model_name='wallettransaction',
+            name='payment_method',
+            field=models.CharField(blank=True, max_length=50, null=True),
+        ),
+        migrations.AddField(
+            model_name='wallettransaction',
+            name='reference',
+            field=models.CharField(blank=True, db_index=True, help_text='Our internal unique reference for the transaction.', max_length=255, null=True, unique=True),
+        ),
+        migrations.AddField(
+            model_name='wallettransaction',
+            name='status',
+            field=models.CharField(choices=[('PENDING', 'Pending'), ('COMPLETED', 'Completed'), ('FAILED', 'Failed'), ('CANCELLED', 'Cancelled')], db_index=True, default='COMPLETED', max_length=20),
+        ),
+        # Then add them to the database if they don't exist
+        migrations.RunPython(
+            _add_wallettransaction_fields_if_missing,
+            reverse_code=_remove_wallettransaction_fields_if_present,
         ),
     ]

@@ -60,45 +60,41 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_customerprofile_fields_if_missing,
-                    reverse_code=_remove_customerprofile_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='acquisition_source',
-                    field=models.CharField(blank=True, default='whatsapp_flow', max_length=100, null=True),
-                ),
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='email',
-                    field=models.EmailField(blank=True, max_length=255, null=True, unique=True),
-                ),
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='first_name',
-                    field=models.CharField(blank=True, max_length=100, null=True),
-                ),
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='gender',
-                    field=models.CharField(blank=True, choices=[('M', 'Male'), ('F', 'Female'), ('O', 'Other')], max_length=1, null=True),
-                ),
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='last_name',
-                    field=models.CharField(blank=True, max_length=100, null=True),
-                ),
-                migrations.AddField(
-                    model_name='customerprofile',
-                    name='last_updated_from_conversation',
-                    field=models.DateTimeField(blank=True, help_text='Timestamp of the last update from a conversation flow.', null=True),
-                ),
-            ],
+        # First add all fields to state
+        migrations.AddField(
+            model_name='customerprofile',
+            name='acquisition_source',
+            field=models.CharField(blank=True, default='whatsapp_flow', max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='customerprofile',
+            name='email',
+            field=models.EmailField(blank=True, max_length=255, null=True, unique=True),
+        ),
+        migrations.AddField(
+            model_name='customerprofile',
+            name='first_name',
+            field=models.CharField(blank=True, max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='customerprofile',
+            name='gender',
+            field=models.CharField(blank=True, choices=[('M', 'Male'), ('F', 'Female'), ('O', 'Other')], max_length=1, null=True),
+        ),
+        migrations.AddField(
+            model_name='customerprofile',
+            name='last_name',
+            field=models.CharField(blank=True, max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='customerprofile',
+            name='last_updated_from_conversation',
+            field=models.DateTimeField(blank=True, help_text='Timestamp of the last update from a conversation flow.', null=True),
+        ),
+        # Then add them to the database if they don't exist
+        migrations.RunPython(
+            _add_customerprofile_fields_if_missing,
+            reverse_code=_remove_customerprofile_fields_if_present,
         ),
         migrations.AlterField(
             model_name='customerprofile',

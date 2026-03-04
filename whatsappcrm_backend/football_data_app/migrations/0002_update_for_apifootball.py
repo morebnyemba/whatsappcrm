@@ -149,57 +149,48 @@ class Migration(migrations.Migration):
             name='api_key',
             field=models.CharField(help_text='API key for authentication', max_length=100),
         ),
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_configuration_fields_if_missing,
-                    reverse_code=_remove_configuration_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='configuration',
-                    name='is_active',
-                    field=models.BooleanField(default=True, help_text='Whether this configuration is currently active'),
-                ),
-                migrations.AddField(
-                    model_name='configuration',
-                    name='created_at',
-                    field=models.DateTimeField(auto_now_add=True, null=True),
-                ),
-                migrations.AddField(
-                    model_name='configuration',
-                    name='updated_at',
-                    field=models.DateTimeField(auto_now=True, null=True),
-                ),
-            ],
+        # First add Configuration fields to state
+        migrations.AddField(
+            model_name='configuration',
+            name='is_active',
+            field=models.BooleanField(default=True, help_text='Whether this configuration is currently active'),
+        ),
+        migrations.AddField(
+            model_name='configuration',
+            name='created_at',
+            field=models.DateTimeField(auto_now_add=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='configuration',
+            name='updated_at',
+            field=models.DateTimeField(auto_now=True, null=True),
+        ),
+        # Then add them to the database if they don't exist
+        migrations.RunPython(
+            _add_configuration_fields_if_missing,
+            reverse_code=_remove_configuration_fields_if_present,
         ),
         
-        # Update League model with APIFootball fields
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_league_fields_if_missing,
-                    reverse_code=_remove_league_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='league',
-                    name='country_id',
-                    field=models.CharField(blank=True, help_text='Country ID from APIFootball.', max_length=50, null=True),
-                ),
-                migrations.AddField(
-                    model_name='league',
-                    name='country_name',
-                    field=models.CharField(blank=True, help_text='Country name from APIFootball.', max_length=100, null=True),
-                ),
-                migrations.AddField(
-                    model_name='league',
-                    name='league_season',
-                    field=models.CharField(blank=True, help_text="Current season (e.g., '2023/2024').", max_length=50, null=True),
-                ),
-            ],
+        # Update League model with APIFootball fields - add to state first
+        migrations.AddField(
+            model_name='league',
+            name='country_id',
+            field=models.CharField(blank=True, help_text='Country ID from APIFootball.', max_length=50, null=True),
+        ),
+        migrations.AddField(
+            model_name='league',
+            name='country_name',
+            field=models.CharField(blank=True, help_text='Country name from APIFootball.', max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='league',
+            name='league_season',
+            field=models.CharField(blank=True, help_text="Current season (e.g., '2023/2024').", max_length=50, null=True),
+        ),
+        # Then add them to the database if they don't exist
+        migrations.RunPython(
+            _add_league_fields_if_missing,
+            reverse_code=_remove_league_fields_if_present,
         ),
         migrations.AlterField(
             model_name='league',
@@ -211,21 +202,16 @@ class Migration(migrations.Migration):
             ),
         ),
         
-        # Update Team model
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_team_fields_if_missing,
-                    reverse_code=_remove_team_fields_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='team',
-                    name='badge_url',
-                    field=models.URLField(blank=True, help_text='Alternative badge/logo URL from APIFootball.', max_length=512, null=True),
-                ),
-            ],
+        # Update Team model - add to state first
+        migrations.AddField(
+            model_name='team',
+            name='badge_url',
+            field=models.URLField(blank=True, help_text='Alternative badge/logo URL from APIFootball.', max_length=512, null=True),
+        ),
+        # Then add it to the database if it doesn't exist
+        migrations.RunPython(
+            _add_team_fields_if_missing,
+            reverse_code=_remove_team_fields_if_present,
         ),
         
         # Update Configuration meta ordering

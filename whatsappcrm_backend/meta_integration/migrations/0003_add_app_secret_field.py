@@ -10,49 +10,81 @@ def check_and_add_app_secret_field(apps, schema_editor):
     may have already been added through other means.
     """
     # Check if the column already exists
+    table_name = 'meta_integration_metaappconfig'
+    column_exists = False
+    
     with schema_editor.connection.cursor() as cursor:
-        # Get the table name for the model
-        table_name = 'meta_integration_metaappconfig'
+        db_vendor = schema_editor.connection.vendor
         
-        # Check if the column exists (PostgreSQL specific query)
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'app_secret'])
-        
-        column_exists = cursor.fetchone() is not None
+        if db_vendor == 'postgresql':
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+            """, [table_name, 'app_secret'])
+            column_exists = cursor.fetchone() is not None
+        elif db_vendor == 'sqlite':
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [row[1] for row in cursor.fetchall()]
+            column_exists = 'app_secret' in columns
+        elif db_vendor == 'mysql':
+            cursor.execute("""
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME=%s AND COLUMN_NAME=%s AND TABLE_SCHEMA=DATABASE()
+            """, [table_name, 'app_secret'])
+            column_exists = cursor.fetchone() is not None
     
     # Only add the field if it doesn't exist
     if not column_exists:
         with schema_editor.connection.cursor() as cursor:
-            cursor.execute("""
-                ALTER TABLE meta_integration_metaappconfig 
-                ADD COLUMN app_secret VARCHAR(255) NULL
-            """)
+            db_vendor = schema_editor.connection.vendor
+            if db_vendor == 'sqlite':
+                cursor.execute(f"""
+                    ALTER TABLE {table_name} 
+                    ADD COLUMN app_secret VARCHAR(255) NULL
+                """)
+            else:
+                cursor.execute("""
+                    ALTER TABLE meta_integration_metaappconfig 
+                    ADD COLUMN app_secret VARCHAR(255) NULL
+                """)
 
 
 def reverse_app_secret_field(apps, schema_editor):
     """
     Remove app_secret field from MetaAppConfig if it exists.
     """
+    table_name = 'meta_integration_metaappconfig'
+    column_exists = False
+    
     with schema_editor.connection.cursor() as cursor:
-        table_name = 'meta_integration_metaappconfig'
+        db_vendor = schema_editor.connection.vendor
         
-        # Check if the column exists
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
-        """, [table_name, 'app_secret'])
-        
-        column_exists = cursor.fetchone() is not None
+        if db_vendor == 'postgresql':
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name=%s AND column_name=%s AND table_schema=CURRENT_SCHEMA()
+            """, [table_name, 'app_secret'])
+            column_exists = cursor.fetchone() is not None
+        elif db_vendor == 'sqlite':
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [row[1] for row in cursor.fetchall()]
+            column_exists = 'app_secret' in columns
+        elif db_vendor == 'mysql':
+            cursor.execute("""
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME=%s AND COLUMN_NAME=%s AND TABLE_SCHEMA=DATABASE()
+            """, [table_name, 'app_secret'])
+            column_exists = cursor.fetchone() is not None
     
     # Only drop the field if it exists
     if column_exists:
         with schema_editor.connection.cursor() as cursor:
-            cursor.execute("""
-                ALTER TABLE meta_integration_metaappconfig 
+            cursor.execute(f"""
+                ALTER TABLE {table_name} 
                 DROP COLUMN app_secret
             """)
 

@@ -40,19 +40,15 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_payment_details_if_missing,
-                    reverse_code=_remove_payment_details_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='wallettransaction',
-                    name='payment_details',
-                    field=models.JSONField(blank=True, default=dict, help_text='Stores details for the payment method, e.g., phone number for mobile money.'),
-                ),
-            ],
+        # First add the field to state
+        migrations.AddField(
+            model_name='wallettransaction',
+            name='payment_details',
+            field=models.JSONField(blank=True, default=dict, help_text='Stores details for the payment method, e.g., phone number for mobile money.'),
+        ),
+        # Then add it to the database if it doesn't exist
+        migrations.RunPython(
+            _add_payment_details_if_missing,
+            reverse_code=_remove_payment_details_if_present,
         ),
     ]

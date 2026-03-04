@@ -40,19 +40,15 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(
-                    _add_flow_execution_disabled_if_missing,
-                    reverse_code=_remove_flow_execution_disabled_if_present,
-                ),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name='contact',
-                    name='flow_execution_disabled',
-                    field=models.BooleanField(default=False, help_text='If true, automated flow processing is paused for this contact (e.g., during human agent interaction).'),
-                ),
-            ],
+        # First add the field to state
+        migrations.AddField(
+            model_name='contact',
+            name='flow_execution_disabled',
+            field=models.BooleanField(default=False, help_text='If true, automated flow processing is paused for this contact (e.g., during human agent interaction).'),
+        ),
+        # Then add it to the database if it doesn't exist
+        migrations.RunPython(
+            _add_flow_execution_disabled_if_missing,
+            reverse_code=_remove_flow_execution_disabled_if_present,
         ),
     ]
