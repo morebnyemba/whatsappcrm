@@ -35,6 +35,13 @@ class WhatsAppFlowService:
             "Content-Type": "application/json",
         }
 
+    def _get_endpoint_uri(self) -> str:
+        """
+        Build the WhatsApp Flow data-exchange endpoint URI from SITE_URL.
+        """
+        site_url = getattr(settings, 'SITE_URL', 'http://localhost:8000').rstrip('/')
+        return f"{site_url}/crm-api/meta/flow-endpoint/"
+
     def list_flows(self) -> List[Dict[str, Any]]:
         """
         Lists all flows from Meta's platform for this WhatsApp Business Account.
@@ -112,7 +119,8 @@ class WhatsAppFlowService:
 
         payload = {
             "name": flow_name_with_version,
-            "categories": ["OTHER"]
+            "categories": ["OTHER"],
+            "endpoint_uri": self._get_endpoint_uri(),
         }
 
         try:
@@ -268,6 +276,48 @@ class WhatsAppFlowService:
             logger.error(f"Unexpected error updating flow JSON: {e}", exc_info=True)
             return False
 
+    def set_endpoint_uri(self, whatsapp_flow: WhatsAppFlow) -> bool:
+        """
+        Sets the endpoint_uri on an existing flow on Meta's platform.
+        Required before a data_exchange flow can be published.
+
+        Args:
+            whatsapp_flow: The WhatsAppFlow instance to update
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not whatsapp_flow.flow_id:
+            logger.error(f"Cannot set endpoint_uri: flow_id not set for '{whatsapp_flow.name}'")
+            return False
+
+        url = f"{self.base_url}/{whatsapp_flow.flow_id}"
+        endpoint_uri = self._get_endpoint_uri()
+
+        try:
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json={"endpoint_uri": endpoint_uri},
+                timeout=20,
+            )
+            response.raise_for_status()
+            logger.info(f"Set endpoint_uri='{endpoint_uri}' on flow '{whatsapp_flow.name}' (ID: {whatsapp_flow.flow_id})")
+            return True
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error setting endpoint_uri: {e}"
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_details = e.response.json()
+                    error_msg += f" - Details: {error_details}"
+                except (ValueError, json.JSONDecodeError):
+                    error_msg += f" - Response: {e.response.text}"
+            whatsapp_flow.sync_error = error_msg
+            whatsapp_flow.save(update_fields=['sync_error'])
+            logger.error(error_msg)
+            return False
+
     def publish_flow(self, whatsapp_flow: WhatsAppFlow) -> bool:
         """
         Publishes a flow on Meta's platform, making it available to users.
@@ -345,6 +395,10 @@ class WhatsAppFlowService:
         sync_delay = getattr(settings, 'META_FLOW_SYNC_DELAY_SECONDS', 1)
         time.sleep(sync_delay)  # Brief delay to avoid rate limiting
         if not self.update_flow_json(whatsapp_flow):
+            return False
+
+        # Step 3: Ensure endpoint_uri is set (required before publishing)
+        if not self.set_endpoint_uri(whatsapp_flow):
             return False
 
         whatsapp_flow.sync_status = 'synced'
