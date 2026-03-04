@@ -47,3 +47,6 @@ gevent>=24.11.1
 
 # PDF generation
 reportlab>=4.2.5
+
+# Cryptography (WhatsApp Flows encryption)
+cryptography>=46.0.5

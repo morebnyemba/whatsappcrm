@@ -1,12 +1,19 @@
 import json
 import hmac
 import hashlib
+import base64
+import os
 from django.test import TestCase, RequestFactory
 from django.conf import settings
 from unittest.mock import patch, MagicMock
 
-from .views import MetaWebhookAPIView
+from .views import MetaWebhookAPIView, WhatsAppFlowEndpointView
 from .models import MetaAppConfig
+from .flow_crypto import (
+    generate_rsa_key_pair,
+    decrypt_flow_request,
+    encrypt_flow_response,
+)
 
 
 class WebhookSignatureVerificationTestCase(TestCase):
@@ -244,3 +251,268 @@ class MultiConfigRoutingTestCase(TestCase):
         config = MetaAppConfig.objects.get_active_config()
         self.assertIsNotNone(config)
         self.assertTrue(config.is_active)
+
+
+class FlowCryptoTestCase(TestCase):
+    """Test cases for WhatsApp Flows encryption/decryption utilities."""
+
+    def test_generate_rsa_key_pair(self):
+        """Test RSA key pair generation produces valid PEM keys."""
+        private_pem, public_pem = generate_rsa_key_pair()
+        self.assertIn('-----BEGIN PRIVATE KEY-----', private_pem)
+        self.assertIn('-----END PRIVATE KEY-----', private_pem)
+        self.assertIn('-----BEGIN PUBLIC KEY-----', public_pem)
+        self.assertIn('-----END PUBLIC KEY-----', public_pem)
+
+    def test_decrypt_flow_request(self):
+        """Test decryption of a simulated encrypted flow request."""
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        private_pem, public_pem = generate_rsa_key_pair()
+
+        # Simulate Meta encrypting a request
+        pub_key = serialization.load_pem_public_key(public_pem.encode('utf-8'))
+        test_payload = {"action": "INIT", "flow_token": "test_token_123"}
+        payload_bytes = json.dumps(test_payload).encode('utf-8')
+
+        aes_key = os.urandom(16)
+        iv = os.urandom(12)
+
+        encrypted_aes_key = pub_key.encrypt(
+            aes_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        encryptor = Cipher(algorithms.AES(aes_key), modes.GCM(iv)).encryptor()
+        ciphertext = encryptor.update(payload_bytes) + encryptor.finalize()
+        encrypted_flow_data = ciphertext + encryptor.tag
+
+        # Decrypt using our function
+        decrypted, dec_aes_key, dec_iv = decrypt_flow_request(
+            base64.b64encode(encrypted_flow_data).decode('utf-8'),
+            base64.b64encode(encrypted_aes_key).decode('utf-8'),
+            base64.b64encode(iv).decode('utf-8'),
+            private_pem,
+        )
+
+        self.assertEqual(decrypted, test_payload)
+        self.assertEqual(dec_aes_key, aes_key)
+        self.assertEqual(dec_iv, iv)
+
+    def test_encrypt_flow_response(self):
+        """Test encryption of a flow response and verify it can be decrypted."""
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        aes_key = os.urandom(16)
+        iv = os.urandom(12)
+        response_data = {"screen": "LOGIN", "data": {"error_message": ""}}
+
+        encrypted = encrypt_flow_response(response_data, aes_key, iv)
+
+        # Verify by decrypting with flipped IV
+        flipped_iv = bytearray(byte ^ 0xFF for byte in iv)
+        enc_bytes = base64.b64decode(encrypted)
+        resp_ciphertext = enc_bytes[:-16]
+        resp_tag = enc_bytes[-16:]
+        decryptor = Cipher(
+            algorithms.AES(aes_key), modes.GCM(flipped_iv, resp_tag)
+        ).decryptor()
+        resp_bytes = decryptor.update(resp_ciphertext) + decryptor.finalize()
+        decrypted = json.loads(resp_bytes.decode('utf-8'))
+
+        self.assertEqual(decrypted, response_data)
+
+    def test_roundtrip_encrypt_decrypt(self):
+        """Test full roundtrip: generate keys, encrypt request, decrypt, encrypt response."""
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        private_pem, public_pem = generate_rsa_key_pair()
+        pub_key = serialization.load_pem_public_key(public_pem.encode('utf-8'))
+
+        # Request payload
+        request_payload = {
+            "action": "data_exchange",
+            "screen": "LOGIN",
+            "data": {"username": "testuser", "password": "testpass"},
+            "flow_token": "wa_id_123",
+        }
+
+        # Encrypt request (simulate Meta)
+        aes_key = os.urandom(16)
+        iv = os.urandom(12)
+        encrypted_aes_key = pub_key.encrypt(
+            aes_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+        encryptor = Cipher(algorithms.AES(aes_key), modes.GCM(iv)).encryptor()
+        payload_bytes = json.dumps(request_payload).encode('utf-8')
+        ciphertext = encryptor.update(payload_bytes) + encryptor.finalize()
+        encrypted_flow_data = ciphertext + encryptor.tag
+
+        # Decrypt request (our endpoint)
+        decrypted, dec_aes_key, dec_iv = decrypt_flow_request(
+            base64.b64encode(encrypted_flow_data).decode('utf-8'),
+            base64.b64encode(encrypted_aes_key).decode('utf-8'),
+            base64.b64encode(iv).decode('utf-8'),
+            private_pem,
+        )
+        self.assertEqual(decrypted, request_payload)
+
+        # Encrypt response (our endpoint)
+        response_payload = {"screen": "COMPLETE", "data": {"extension_message_response": {}}}
+        encrypted_response = encrypt_flow_response(response_payload, dec_aes_key, dec_iv)
+
+        # Decrypt response (simulate Meta)
+        flipped_iv = bytearray(byte ^ 0xFF for byte in dec_iv)
+        enc_bytes = base64.b64decode(encrypted_response)
+        resp_ct = enc_bytes[:-16]
+        resp_tag = enc_bytes[-16:]
+        decryptor = Cipher(
+            algorithms.AES(dec_aes_key), modes.GCM(flipped_iv, resp_tag)
+        ).decryptor()
+        resp = json.loads(
+            (decryptor.update(resp_ct) + decryptor.finalize()).decode('utf-8')
+        )
+        self.assertEqual(resp, response_payload)
+
+
+class WhatsAppFlowEndpointTestCase(TestCase):
+    """Test cases for the WhatsApp Flow endpoint view."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.private_pem, self.public_pem = generate_rsa_key_pair()
+        self.config = MetaAppConfig.objects.create(
+            name="Flow Test Config",
+            access_token="test_token",
+            phone_number_id="555555555",
+            waba_id="waba_test",
+            verify_token="verify_test",
+            is_active=True,
+            flow_private_key_pem=self.private_pem,
+        )
+
+    def _encrypt_payload(self, payload):
+        """Helper to encrypt a payload as Meta would."""
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        pub_key = serialization.load_pem_public_key(self.public_pem.encode('utf-8'))
+        aes_key = os.urandom(16)
+        iv = os.urandom(12)
+
+        encrypted_aes_key = pub_key.encrypt(
+            aes_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        encryptor = Cipher(algorithms.AES(aes_key), modes.GCM(iv)).encryptor()
+        payload_bytes = json.dumps(payload).encode('utf-8')
+        ciphertext = encryptor.update(payload_bytes) + encryptor.finalize()
+        encrypted_flow_data = ciphertext + encryptor.tag
+
+        return {
+            "encrypted_flow_data": base64.b64encode(encrypted_flow_data).decode('utf-8'),
+            "encrypted_aes_key": base64.b64encode(encrypted_aes_key).decode('utf-8'),
+            "initial_vector": base64.b64encode(iv).decode('utf-8'),
+        }, aes_key, iv
+
+    def _decrypt_response(self, response_text, aes_key, iv):
+        """Helper to decrypt a response from the endpoint."""
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        flipped_iv = bytearray(byte ^ 0xFF for byte in iv)
+        enc_bytes = base64.b64decode(response_text)
+        ct = enc_bytes[:-16]
+        tag = enc_bytes[-16:]
+        decryptor = Cipher(
+            algorithms.AES(aes_key), modes.GCM(flipped_iv, tag)
+        ).decryptor()
+        return json.loads(
+            (decryptor.update(ct) + decryptor.finalize()).decode('utf-8')
+        )
+
+    def test_encrypted_ping(self):
+        """Test encrypted ping request returns active status."""
+        payload = {"action": "ping"}
+        encrypted_body, aes_key, iv = self._encrypt_payload(payload)
+
+        request = self.factory.post(
+            '/flow-endpoint/',
+            data=json.dumps(encrypted_body).encode('utf-8'),
+            content_type='application/json',
+        )
+
+        view = WhatsAppFlowEndpointView.as_view()
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        decrypted = self._decrypt_response(response.content.decode(), aes_key, iv)
+        self.assertEqual(decrypted, {"data": {"status": "active"}})
+
+    def test_encrypted_init_default_login(self):
+        """Test encrypted INIT returns login screen by default."""
+        payload = {"action": "INIT", "flow_token": "wa_test"}
+        encrypted_body, aes_key, iv = self._encrypt_payload(payload)
+
+        request = self.factory.post(
+            '/flow-endpoint/',
+            data=json.dumps(encrypted_body).encode('utf-8'),
+            content_type='application/json',
+        )
+
+        view = WhatsAppFlowEndpointView.as_view()
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        decrypted = self._decrypt_response(response.content.decode(), aes_key, iv)
+        self.assertEqual(decrypted["screen"], "LOGIN")
+
+    def test_plaintext_ping_still_works(self):
+        """Test that plaintext (unencrypted) requests still work for draft flows."""
+        payload = {"action": "ping"}
+        request = self.factory.post(
+            '/flow-endpoint/',
+            data=json.dumps(payload).encode('utf-8'),
+            content_type='application/json',
+        )
+
+        view = WhatsAppFlowEndpointView.as_view()
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(data, {"data": {"status": "active"}})
+
+    def test_plaintext_init_still_works(self):
+        """Test that plaintext INIT requests still work."""
+        payload = {"action": "INIT", "flow_token": "test"}
+        request = self.factory.post(
+            '/flow-endpoint/',
+            data=json.dumps(payload).encode('utf-8'),
+            content_type='application/json',
+        )
+
+        view = WhatsAppFlowEndpointView.as_view()
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(data["screen"], "LOGIN")
