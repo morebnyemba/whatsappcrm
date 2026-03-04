@@ -1750,12 +1750,16 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             for wa_flow in WhatsAppFlow.objects.filter(
                 meta_app_config=config, flow_id__isnull=False,
             ).exclude(flow_id=''):
-                if 'login' in wa_flow.name:
+                name_lower = wa_flow.name.lower()
+                if name_lower.startswith('login_whatsapp'):
                     initial_flow_context['whatsapp_login_flow_id'] = wa_flow.flow_id
-                elif 'register' in wa_flow.name:
+                elif name_lower.startswith('register_whatsapp'):
                     initial_flow_context['whatsapp_register_flow_id'] = wa_flow.flow_id
-    except Exception:
-        logger.debug("Could not populate WhatsApp UI flow IDs in flow context.", exc_info=True)
+    except Exception as exc:
+        logger.debug(
+            "Could not populate WhatsApp UI flow IDs in flow context for "
+            "contact %s: %s", contact.whatsapp_id, exc, exc_info=True,
+        )
 
     message_text_body = None
     if message_data.get('type') == 'text':
