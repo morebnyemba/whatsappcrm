@@ -1736,31 +1736,6 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
 def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj: Message) -> List[Dict[str, Any]]:
     actions_to_perform = []
     initial_flow_context = {}
-
-    # Populate WhatsApp UI flow IDs so templates like
-    # {{ flow_context.whatsapp_login_flow_id }} resolve correctly.
-    try:
-        from .models import WhatsAppFlow
-        from meta_integration.models import MetaAppConfig
-
-        config = getattr(contact, 'associated_app_config', None)
-        if not config:
-            config = MetaAppConfig.objects.get_active_config()
-        if config:
-            for wa_flow in WhatsAppFlow.objects.filter(
-                meta_app_config=config, flow_id__isnull=False,
-            ).exclude(flow_id=''):
-                name_lower = wa_flow.name.lower()
-                if name_lower.startswith('login_whatsapp'):
-                    initial_flow_context['whatsapp_login_flow_id'] = wa_flow.flow_id
-                elif name_lower.startswith('register_whatsapp'):
-                    initial_flow_context['whatsapp_register_flow_id'] = wa_flow.flow_id
-    except Exception as exc:
-        logger.debug(
-            "Could not populate WhatsApp UI flow IDs in flow context for "
-            "contact %s: %s", contact.whatsapp_id, exc, exc_info=True,
-        )
-
     message_text_body = None
     if message_data.get('type') == 'text':
         message_text_body = message_data.get('text', {}).get('body', '').lower().strip()

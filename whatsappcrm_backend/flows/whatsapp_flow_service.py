@@ -297,8 +297,8 @@ class WhatsAppFlowService:
         try:
             response = requests.post(
                 url,
-                headers={"Authorization": self.headers["Authorization"]},
-                data={"endpoint_uri": endpoint_uri},
+                headers=self.headers,
+                json={"endpoint_uri": endpoint_uri},
                 timeout=20,
             )
             response.raise_for_status()
