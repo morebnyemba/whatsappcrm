@@ -157,12 +157,24 @@ class InteractiveListAction(BasePydanticConfig):
     button: str = Field(..., min_length=1, max_length=20)
     sections: List[InteractiveListSection] = Field(..., min_items=1)
 
+class InteractiveFlowActionParameters(BasePydanticConfig):
+    flow_message_version: str = Field(..., min_length=1)
+    flow_token: Optional[str] = None
+    flow_id: str = Field(..., min_length=1)
+    flow_cta: str = Field(..., min_length=1, max_length=20)
+    flow_action: Literal["navigate", "data_exchange"]
+    flow_action_payload: Optional[Dict[str, Any]] = None
+
+class InteractiveFlowAction(BasePydanticConfig):
+    name: Literal["flow"] = "flow"
+    parameters: InteractiveFlowActionParameters
+
 class InteractiveMessagePayload(BasePydanticConfig):
-    type: Literal["button", "list", "product", "product_list"]
+    type: Literal["button", "list", "product", "product_list", "flow"]
     header: Optional[InteractiveHeader] = None
     body: InteractiveBody
     footer: Optional[InteractiveFooter] = None
-    action: Union[InteractiveButtonAction, InteractiveListAction] # This uses Union
+    action: Union[InteractiveButtonAction, InteractiveListAction, InteractiveFlowAction]
 
 class TemplateLanguage(BasePydanticConfig):
     code: str
@@ -276,6 +288,8 @@ class StepConfigSendMessage(BasePydanticConfig):
                 raise ValueError("For interactive message type 'button', the 'action' field must be a valid InteractiveButtonAction.")
             if interactive_internal_type == "list" and not isinstance(interactive_action, InteractiveListAction):
                 raise ValueError("For interactive message type 'list', the 'action' field must be a valid InteractiveListAction.")
+            if interactive_internal_type == "flow" and not isinstance(interactive_action, InteractiveFlowAction):
+                raise ValueError("For interactive message type 'flow', the 'action' field must be a valid InteractiveFlowAction.")
         return values
 
 class ReplyConfig(BasePydanticConfig):
