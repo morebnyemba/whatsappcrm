@@ -516,3 +516,155 @@ class WhatsAppFlowEndpointTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
         self.assertEqual(data["screen"], "LOGIN")
+
+
+class RegisterScreenHandlerTestCase(TestCase):
+    """Tests for the _handle_register_screen method."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.view = WhatsAppFlowEndpointView()
+        # Create a contact to use as the flow_token target
+        from conversations.models import Contact
+        from meta_integration.models import MetaAppConfig
+        self.config = MetaAppConfig.objects.create(
+            name="Reg Test Config",
+            access_token="tok",
+            phone_number_id="111",
+            waba_id="waba111",
+            verify_token="vt",
+            is_active=True,
+        )
+        self.contact = Contact.objects.create(
+            whatsapp_id="15550001234",
+            name="Test User",
+            associated_app_config=self.config,
+        )
+
+    def _valid_data(self, **overrides):
+        base = {
+            "first_name": "John",
+            "last_name": "Doe",
+            "username": "johndoe_test",
+            "email": "john@example.com",
+            "password": "Secure123!",
+            "confirm_password": "Secure123!",
+        }
+        base.update(overrides)
+        return base
+
+    # ------------------------------------------------------------------ #
+    # Validation tests                                                     #
+    # ------------------------------------------------------------------ #
+
+    def test_missing_first_last_name_returns_error(self):
+        data = self._valid_data(first_name="", last_name="")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("First name and last name", result["data"]["error_message"])
+
+    def test_missing_username_returns_error(self):
+        data = self._valid_data(username="")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("Username and password", result["data"]["error_message"])
+
+    def test_invalid_email_returns_error(self):
+        data = self._valid_data(email="not-an-email")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("valid email", result["data"]["error_message"])
+
+    def test_password_mismatch_returns_error(self):
+        data = self._valid_data(confirm_password="WrongPass1!")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("do not match", result["data"]["error_message"])
+
+    def test_short_password_returns_error(self):
+        data = self._valid_data(password="Short1!", confirm_password="Short1!")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("8 characters", result["data"]["error_message"])
+
+    def test_duplicate_username_returns_error(self):
+        from django.contrib.auth.models import User
+        User.objects.create_user(username="johndoe_test", password="pass1234")
+        data = self._valid_data()
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("already taken", result["data"]["error_message"])
+
+    def test_duplicate_email_returns_error(self):
+        from customer_data.models import CustomerProfile
+        from django.contrib.auth.models import User
+        u = User.objects.create_user(username="other_user", password="pass1234")
+        CustomerProfile.objects.create(user=u, email="john@example.com")
+        data = self._valid_data(username="new_user")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("already exists", result["data"]["error_message"])
+
+    def test_invalid_dob_format_returns_error(self):
+        data = self._valid_data(date_of_birth="31-01-1990", username="dobusr")
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("YYYY-MM-DD", result["data"]["error_message"])
+
+    # ------------------------------------------------------------------ #
+    # Success path tests                                                   #
+    # ------------------------------------------------------------------ #
+
+    def test_successful_registration_returns_complete(self):
+        data = self._valid_data()
+        result = self.view._handle_register_screen(data, None)
+        self.assertEqual(result["screen"], "COMPLETE")
+        self.assertEqual(result["data"], {})
+
+    def test_successful_registration_creates_user(self):
+        from django.contrib.auth.models import User
+        data = self._valid_data()
+        self.view._handle_register_screen(data, None)
+        self.assertTrue(User.objects.filter(username="johndoe_test").exists())
+        user = User.objects.get(username="johndoe_test")
+        self.assertEqual(user.first_name, "John")
+        self.assertEqual(user.last_name, "Doe")
+
+    def test_successful_registration_with_flow_token_links_contact(self):
+        from django.contrib.auth.models import User
+        from customer_data.models import CustomerProfile
+        data = self._valid_data()
+        result = self.view._handle_register_screen(data, self.contact.whatsapp_id)
+        self.assertEqual(result["screen"], "COMPLETE")
+        user = User.objects.get(username="johndoe_test")
+        profile = CustomerProfile.objects.get(contact=self.contact)
+        self.assertEqual(profile.user, user)
+        self.assertEqual(profile.email, "john@example.com")
+        self.assertEqual(profile.first_name, "John")
+        self.assertEqual(profile.last_name, "Doe")
+
+    def test_successful_registration_saves_optional_fields(self):
+        from customer_data.models import CustomerProfile
+        data = self._valid_data(
+            gender="M",
+            date_of_birth="1990-06-15",
+        )
+        self.view._handle_register_screen(data, self.contact.whatsapp_id)
+        profile = CustomerProfile.objects.get(contact=self.contact)
+        self.assertEqual(profile.gender, "M")
+        import datetime
+        self.assertEqual(profile.date_of_birth, datetime.date(1990, 6, 15))
+
+    def test_successful_registration_starts_session(self):
+        from conversations.models import ContactSession
+        data = self._valid_data()
+        self.view._handle_register_screen(data, self.contact.whatsapp_id)
+        session = ContactSession.objects.filter(contact=self.contact).first()
+        self.assertIsNotNone(session)
+        self.assertTrue(session.is_authenticated)
+
+    def test_none_data_handled_gracefully(self):
+        """Non-dict data (e.g. None) should not cause an unhandled exception."""
+        result = self.view._handle_register_screen(None, None)
+        self.assertEqual(result["screen"], "REGISTER")
+        self.assertIn("error_message", result["data"])
