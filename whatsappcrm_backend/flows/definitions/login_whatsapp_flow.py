@@ -34,6 +34,11 @@ LOGIN_WHATSAPP_FLOW = {
                         "text": "Please enter your credentials to log in."
                     },
                     {
+                        "type": "TextBody",
+                        "text": "${data.error_message}",
+                        "visible": "${data.error_message != \"\"}"
+                    },
+                    {
                         "type": "Form",
                         "name": "login_form",
                         "children": [

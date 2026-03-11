@@ -521,7 +521,11 @@ class WhatsAppFlowEndpointView(View):
             f"flow_token: {body.get('flow_token')}"
         )
 
-        response_data = self._process_body(body)
+        try:
+            response_data = self._process_body(body)
+        except Exception as e:
+            logger.error(f"WhatsApp Flow endpoint: Unhandled error processing body: {e}", exc_info=True)
+            response_data = {"data": {"error": "An error occurred."}}
 
         try:
             encrypted_response = encrypt_flow_response(response_data, aes_key, iv)
@@ -654,15 +658,7 @@ class WhatsAppFlowEndpointView(View):
 
             return {
                 "screen": "COMPLETE",
-                "data": {
-                    "extension_message_response": {
-                        "params": {
-                            "flow_token": flow_token,
-                            "authenticated": "true",
-                            "username": username
-                        }
-                    }
-                }
+                "data": {}
             }
         else:
             logger.warning(f"WhatsApp Flow auth: Failed authentication attempt for username '{username}'.")
@@ -676,15 +672,32 @@ class WhatsAppFlowEndpointView(View):
     def _handle_register_screen(self, data, flow_token):
         """Process the REGISTER screen form submission — create a new user account."""
         from django.contrib.auth.models import User
-        from conversations.models import Contact
+        from conversations.models import Contact, ContactSession
         from customer_data.models import CustomerProfile
+        import datetime as _dt
 
-        username = data.get('username', '').strip()
-        email = data.get('email', '').strip()
-        password = data.get('password', '').strip()
-        confirm_password = data.get('confirm_password', '').strip()
+        if not isinstance(data, dict):
+            data = {}
+
+        username = (data.get('username') or '').strip()
+        email = (data.get('email') or '').strip()
+        password = (data.get('password') or '').strip()
+        confirm_password = (data.get('confirm_password') or '').strip()
+        first_name = (data.get('first_name') or '').strip()
+        last_name = (data.get('last_name') or '').strip()
+        gender = (data.get('gender') or '').strip()
+        date_of_birth = (data.get('date_of_birth') or '').strip()
+        referral_code = (data.get('referral_code') or '').strip() or None
 
         # --- Validation ---
+        if not first_name or not last_name:
+            return {
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "First name and last name are required."
+                }
+            }
+
         if not username or not password:
             return {
                 "screen": "REGISTER",
@@ -725,12 +738,39 @@ class WhatsAppFlowEndpointView(View):
                 }
             }
 
+        if CustomerProfile.objects.filter(email=email).exists():
+            return {
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "An account with this email already exists."
+                }
+            }
+
+        # Validate date_of_birth format if provided
+        parsed_dob = None
+        if date_of_birth:
+            try:
+                parsed_dob = _dt.date.fromisoformat(date_of_birth)
+            except ValueError:
+                return {
+                    "screen": "REGISTER",
+                    "data": {
+                        "error_message": "Date of birth must be in YYYY-MM-DD format (e.g. 1990-01-31)."
+                    }
+                }
+
+        # Normalise gender to model choices: M / F / O
+        gender_map = {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F', 'o': 'O', 'other': 'O'}
+        normalised_gender = gender_map.get(gender.lower(), None) if gender else None
+
         # --- Create account ---
         try:
             user = User.objects.create_user(
                 username=username,
                 email=email,
                 password=password,
+                first_name=first_name,
+                last_name=last_name,
             )
             logger.info(f"WhatsApp Flow register: User '{username}' created.")
 
@@ -741,15 +781,62 @@ class WhatsAppFlowEndpointView(View):
                     # Create or update customer profile
                     profile, created = CustomerProfile.objects.get_or_create(
                         contact=contact,
-                        defaults={'user': user},
+                        defaults={
+                            'user': user,
+                            'email': email,
+                            'first_name': first_name,
+                            'last_name': last_name,
+                            'gender': normalised_gender,
+                            'date_of_birth': parsed_dob,
+                        },
                     )
-                    if not created and not profile.user:
-                        profile.user = user
-                        profile.save(update_fields=['user'])
-                    if email and not profile.email:
-                        profile.email = email
-                        profile.save(update_fields=['email'])
-                    logger.info(f"WhatsApp Flow register: Linked user '{username}' to contact {flow_token}.")
+                    if not created:
+                        # Update existing profile: always set the names/DOB/gender
+                        # submitted during registration so User and profile are consistent.
+                        update_fields = []
+                        if not profile.user:
+                            profile.user = user
+                            update_fields.append('user')
+                        if email and not profile.email:
+                            profile.email = email
+                            update_fields.append('email')
+                        if first_name:
+                            profile.first_name = first_name
+                            update_fields.append('first_name')
+                        if last_name:
+                            profile.last_name = last_name
+                            update_fields.append('last_name')
+                        if normalised_gender:
+                            profile.gender = normalised_gender
+                            update_fields.append('gender')
+                        if parsed_dob:
+                            profile.date_of_birth = parsed_dob
+                            update_fields.append('date_of_birth')
+                        if update_fields:
+                            profile.save(update_fields=update_fields)
+
+                    # Process referral code if provided
+                    if referral_code:
+                        try:
+                            from referrals.utils import link_referral
+                            link_referral(new_user=user, referral_code=referral_code)
+                            logger.info(
+                                f"WhatsApp Flow register: Linked referral code '{referral_code}' "
+                                f"to user '{username}'."
+                            )
+                        except Exception as ref_exc:
+                            logger.warning(
+                                f"WhatsApp Flow register: Could not apply referral code "
+                                f"'{referral_code}' for user '{username}': {ref_exc}"
+                            )
+
+                    # Start a session so the user is immediately logged in
+                    session, _ = ContactSession.objects.get_or_create(contact=contact)
+                    session.start()
+                    logger.info(
+                        f"WhatsApp Flow register: Session started for contact {flow_token} "
+                        f"as user '{username}'."
+                    )
                 except Contact.DoesNotExist:
                     logger.warning(
                         f"WhatsApp Flow register: Contact with whatsapp_id '{flow_token}' not found. "
@@ -758,15 +845,7 @@ class WhatsAppFlowEndpointView(View):
 
             return {
                 "screen": "COMPLETE",
-                "data": {
-                    "extension_message_response": {
-                        "params": {
-                            "flow_token": flow_token or "",
-                            "registered": "true",
-                            "username": username
-                        }
-                    }
-                }
+                "data": {}
             }
 
         except Exception as e:
