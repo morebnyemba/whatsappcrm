@@ -41,7 +41,7 @@ REGISTER_WHATSAPP_FLOW = {
                     {
                         "type": "TextBody",
                         "text": "${data.error_message}",
-                        "visible": "${data.error_message != \"\"}"
+                        "visible": "${data.error_message}"
                     },
                     {
                         "type": "Form",
@@ -100,7 +100,7 @@ REGISTER_WHATSAPP_FLOW = {
                                 "name": "gender",
                                 "label": "Gender",
                                 "required": False,
-                                "options": [
+                                "data-source": [
                                     {"id": "M", "title": "Male"},
                                     {"id": "F", "title": "Female"},
                                     {"id": "O", "title": "Other"}

@@ -36,7 +36,7 @@ LOGIN_WHATSAPP_FLOW = {
                     {
                         "type": "TextBody",
                         "text": "${data.error_message}",
-                        "visible": "${data.error_message != \"\"}"
+                        "visible": "${data.error_message}"
                     },
                     {
                         "type": "Form",
