@@ -20,6 +20,10 @@ LOGIN_WHATSAPP_FLOW = {
                 "error_message": {
                     "type": "string",
                     "__example__": ""
+                },
+                "is_error": {
+                    "type": "boolean",
+                    "__example__": False
                 }
             },
             "layout": {
@@ -36,7 +40,7 @@ LOGIN_WHATSAPP_FLOW = {
                     {
                         "type": "TextBody",
                         "text": "${data.error_message}",
-                        "visible": "${data.error_message != \"\"}"
+                        "visible": "${data.is_error}"
                     },
                     {
                         "type": "Form",

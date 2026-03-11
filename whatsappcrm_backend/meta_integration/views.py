@@ -579,7 +579,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": ""
+                    "error_message": "",
+                    "is_error": False
                 }
             }
 
@@ -587,7 +588,8 @@ class WhatsAppFlowEndpointView(View):
         return {
             "screen": "LOGIN",
             "data": {
-                "error_message": ""
+                "error_message": "",
+                "is_error": False
             }
         }
 
@@ -627,7 +629,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "LOGIN",
                 "data": {
-                    "error_message": "Please enter both username and password."
+                    "error_message": "Please enter both username and password.",
+                    "is_error": True
                 }
             }
 
@@ -638,7 +641,8 @@ class WhatsAppFlowEndpointView(View):
                 return {
                     "screen": "LOGIN",
                     "data": {
-                        "error_message": "Authentication error. Please try again."
+                        "error_message": "Authentication error. Please try again.",
+                        "is_error": True
                     }
                 }
 
@@ -652,7 +656,8 @@ class WhatsAppFlowEndpointView(View):
                 return {
                     "screen": "LOGIN",
                     "data": {
-                        "error_message": "Authentication error. Please try again."
+                        "error_message": "Authentication error. Please try again.",
+                        "is_error": True
                     }
                 }
 
@@ -665,7 +670,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "LOGIN",
                 "data": {
-                    "error_message": "Incorrect username or password. Please try again."
+                    "error_message": "Incorrect username or password. Please try again.",
+                    "is_error": True
                 }
             }
 
@@ -694,7 +700,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "First name and last name are required."
+                    "error_message": "First name and last name are required.",
+                    "is_error": True
                 }
             }
 
@@ -702,7 +709,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Username and password are required."
+                    "error_message": "Username and password are required.",
+                    "is_error": True
                 }
             }
 
@@ -710,7 +718,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "A valid email address is required."
+                    "error_message": "A valid email address is required.",
+                    "is_error": True
                 }
             }
 
@@ -718,7 +727,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Passwords do not match."
+                    "error_message": "Passwords do not match.",
+                    "is_error": True
                 }
             }
 
@@ -726,7 +736,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Password must be at least 8 characters."
+                    "error_message": "Password must be at least 8 characters.",
+                    "is_error": True
                 }
             }
 
@@ -734,7 +745,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Username already taken. Please choose another."
+                    "error_message": "Username already taken. Please choose another.",
+                    "is_error": True
                 }
             }
 
@@ -742,7 +754,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "An account with this email already exists."
+                    "error_message": "An account with this email already exists.",
+                    "is_error": True
                 }
             }
 
@@ -755,7 +768,8 @@ class WhatsAppFlowEndpointView(View):
                 return {
                     "screen": "REGISTER",
                     "data": {
-                        "error_message": "Date of birth must be in YYYY-MM-DD format (e.g. 1990-01-31)."
+                        "error_message": "Date of birth must be in YYYY-MM-DD format (e.g. 1990-01-31).",
+                        "is_error": True
                     }
                 }
 
@@ -853,7 +867,8 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "Registration failed. Please try again later."
+                    "error_message": "Registration failed. Please try again later.",
+                    "is_error": True
                 }
             }
 
