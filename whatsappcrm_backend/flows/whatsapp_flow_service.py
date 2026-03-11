@@ -295,10 +295,16 @@ class WhatsAppFlowService:
         endpoint_uri = self._get_endpoint_uri()
 
         try:
+            # Meta Graph API requires form-encoded data (not JSON) for flow metadata updates.
+            # Using json= with Content-Type: application/json silently fails to set endpoint_uri.
+            # We send only the Authorization header here: the requests library automatically
+            # sets Content-Type: application/x-www-form-urlencoded when data= is used, and
+            # self.headers also carries Content-Type: application/json which must NOT be
+            # included for form-encoded requests.
             response = requests.post(
                 url,
-                headers=self.headers,
-                json={"endpoint_uri": endpoint_uri},
+                headers={"Authorization": self.headers["Authorization"]},
+                data={"endpoint_uri": endpoint_uri},
                 timeout=20,
             )
             response.raise_for_status()

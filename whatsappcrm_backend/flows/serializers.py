@@ -265,10 +265,16 @@ class WhatsAppFlowSerializer(serializers.ModelSerializer):
     """
     Serializer for WhatsAppFlow model.
     Handles CRUD operations for WhatsApp interactive flow definitions.
+
+    The ``auto_sync`` write-only boolean field can be included in POST requests.
+    When ``true``, the newly created flow is automatically synced to Meta's
+    platform (create on Meta → upload flow JSON → set endpoint_uri).
     """
     sync_status_display = serializers.CharField(source='get_sync_status_display', read_only=True)
     meta_app_config_name = serializers.CharField(source='meta_app_config.name', read_only=True)
     flow_definition_name = serializers.CharField(source='flow_definition.name', read_only=True, default=None)
+    # Write-only helper: consumed by WhatsAppFlowViewSet.create(), not stored on the model.
+    auto_sync = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = WhatsAppFlow
@@ -279,6 +285,7 @@ class WhatsAppFlowSerializer(serializers.ModelSerializer):
             'meta_app_config', 'meta_app_config_name',
             'flow_definition', 'flow_definition_name',
             'created_at', 'updated_at', 'last_synced_at',
+            'auto_sync',
         ]
         read_only_fields = (
             'id', 'flow_id', 'sync_status', 'sync_status_display',
