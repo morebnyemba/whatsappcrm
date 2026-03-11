@@ -21,7 +21,10 @@ urlpatterns = [
     
     # WhatsApp Flows data exchange endpoint
     # This is the endpoint WhatsApp calls when a user interacts with a Flow screen (e.g., login form)
-    path('flow-endpoint/', views.WhatsAppFlowEndpointView.as_view(), name='whatsapp_flow_endpoint'),
+    # Config-specific path (preferred): phone_number_id identifies which config to use for decryption
+    path('flow-endpoint/<str:phone_number_id>/', views.WhatsAppFlowEndpointView.as_view(), name='whatsapp_flow_endpoint'),
+    # Legacy path (no phone_number_id): falls back to the first active config with a private key
+    path('flow-endpoint/', views.WhatsAppFlowEndpointView.as_view(), name='whatsapp_flow_endpoint_legacy'),
     
     # Paths for DRF API for managing MetaAppConfig and viewing WebhookEventLog
     # These will be accessible under a prefix like: /crm-api/meta/api/

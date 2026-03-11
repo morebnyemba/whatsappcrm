@@ -38,9 +38,12 @@ class WhatsAppFlowService:
     def _get_endpoint_uri(self) -> str:
         """
         Build the WhatsApp Flow data-exchange endpoint URI from SITE_URL.
+        Includes the phone_number_id so Meta routes encrypted health-check and
+        data-exchange requests to the correct config when multiple configs share
+        a single backend.
         """
         site_url = getattr(settings, 'SITE_URL', 'http://localhost:8000').rstrip('/')
-        return f"{site_url}/crm-api/meta/flow-endpoint/"
+        return f"{site_url}/crm-api/meta/flow-endpoint/{self.meta_config.phone_number_id}/"
 
     def list_flows(self) -> List[Dict[str, Any]]:
         """

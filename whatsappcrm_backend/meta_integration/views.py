@@ -483,6 +483,11 @@ class WhatsAppFlowEndpointView(View):
         except json.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
+        # phone_number_id is present when using the config-specific URL pattern
+        # (flow-endpoint/<phone_number_id>/), or None for the legacy endpoint
+        # without phone_number_id in the path.
+        phone_number_id = kwargs.get('phone_number_id')
+
         # Check if the request is encrypted (has encryption fields)
         encrypted_flow_data = raw_body.get('encrypted_flow_data')
         encrypted_aes_key = raw_body.get('encrypted_aes_key')
@@ -490,19 +495,20 @@ class WhatsAppFlowEndpointView(View):
 
         if encrypted_flow_data and encrypted_aes_key and initial_vector:
             return self._handle_encrypted_request(
-                encrypted_flow_data, encrypted_aes_key, initial_vector
+                encrypted_flow_data, encrypted_aes_key, initial_vector,
+                phone_number_id=phone_number_id,
             )
 
         # Fallback: handle unencrypted request (for testing / draft flows)
         return self._handle_plaintext_request(raw_body)
 
     def _handle_encrypted_request(self, encrypted_flow_data, encrypted_aes_key,
-                                  initial_vector):
+                                  initial_vector, phone_number_id=None):
         """Decrypt the request, process it, and return an encrypted response."""
         from .flow_crypto import decrypt_flow_request, encrypt_flow_response
 
-        # Find a config that has a private key
-        private_key_pem = self._get_private_key()
+        # Find a config that has a private key, preferring the one matching phone_number_id
+        private_key_pem = self._get_private_key(phone_number_id)
         if not private_key_pem:
             logger.error("WhatsApp Flow endpoint: No private key configured for decryption.")
             return HttpResponse(status=500)
@@ -560,8 +566,27 @@ class WhatsAppFlowEndpointView(View):
         logger.warning(f"WhatsApp Flow endpoint: Unknown action '{action}'")
         return {"data": {"error": "Unknown action"}}
 
-    def _get_private_key(self):
-        """Retrieve the first available private key from active MetaAppConfigs."""
+    def _get_private_key(self, phone_number_id=None):
+        """Retrieve the private key for the given phone_number_id, or fall back to
+        the first active config that has a private key configured.
+
+        Args:
+            phone_number_id (str, optional): The phone number ID to match against
+                MetaAppConfig. When provided, the matching config's key is returned.
+                Falls back to the first active config with a key if no match is found.
+
+        Returns:
+            str or None: The private key PEM string, or None if no config with a key
+                is found.
+        """
+        if phone_number_id:
+            config = MetaAppConfig.objects.filter(
+                phone_number_id=phone_number_id,
+                is_active=True,
+                flow_private_key_pem__isnull=False,
+            ).exclude(flow_private_key_pem='').first()
+            if config:
+                return config.flow_private_key_pem
         config = MetaAppConfig.objects.filter(
             is_active=True, flow_private_key_pem__isnull=False,
         ).exclude(flow_private_key_pem='').first()
