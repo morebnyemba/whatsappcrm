@@ -91,28 +91,15 @@ def create_login_flow() -> Dict[str, Any]:
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "login_btn_login"}
                     },
                     {
-                        "to_step": "switch_to_registration",
+                        "to_step": "send_register_flow_ui",
                         "condition_config": {"type": "interactive_reply_id_equals", "value": "login_btn_register"}
                     }
                 ]
             },
-            # 4. Switch to registration flow
-            {
-                "name": "switch_to_registration",
-                "step_type": "action",
-                "config": {
-                    "actions_to_run": [
-                        {"action_type": "switch_flow", "trigger_keyword_template": "register"}
-                    ]
-                },
-                "transitions": []
-            },
-            # 5. Send WhatsApp UI Flow for login
-            #    This sends a native WhatsApp Flow message with a form.
-            #    The flow_id must be configured in the admin or settings to match
-            #    the WhatsApp Flow created in Meta Business Manager.
-            #    The flow_token is set to the contact's whatsapp_id so the endpoint
-            #    can identify which contact is authenticating.
+            # 4. Send WhatsApp UI Flow for login
+            #    Uses flow_action "navigate" with flow_action_payload to directly open
+            #    the LOGIN screen.  The flow_token is set to the contact's whatsapp_id
+            #    so the endpoint can identify which contact is authenticating.
             {
                 "name": "send_login_flow_ui",
                 "step_type": "question",
@@ -128,7 +115,8 @@ def create_login_flow() -> Dict[str, Any]:
                                 "name": "flow",
                                 "parameters": {
                                     "flow_message_version": "3",
-                                    "flow_action": "data_exchange",
+                                    "flow_action": "navigate",
+                                    "flow_action_payload": {"screen": "LOGIN"},
                                     "flow_token": "{{ contact.whatsapp_id }}",
                                     "flow_id": "{{ flow_context.whatsapp_login_flow_id }}",
                                     "flow_cta": "Login"
@@ -149,8 +137,48 @@ def create_login_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 6. Process the Flow auth result
-            #    After the WhatsApp Flow completes, the backend endpoint has
+            # 5. Send WhatsApp UI Flow for registration
+            #    Uses flow_action "navigate" with flow_action_payload to directly open
+            #    the REGISTER screen.  The flow_token is set to the contact's whatsapp_id.
+            {
+                "name": "send_register_flow_ui",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "flow",
+                            "header": {"type": "text", "text": "Register"},
+                            "body": {"text": "Tap the button below to create your account."},
+                            "footer": {"text": "Your information is sent securely."},
+                            "action": {
+                                "name": "flow",
+                                "parameters": {
+                                    "flow_message_version": "3",
+                                    "flow_action": "navigate",
+                                    "flow_action_payload": {"screen": "REGISTER"},
+                                    "flow_token": "{{ contact.whatsapp_id }}",
+                                    "flow_id": "{{ flow_context.whatsapp_register_flow_id }}",
+                                    "flow_cta": "Register"
+                                }
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "register_nfm_response",
+                        "expected_type": "any"
+                    }
+                },
+                "transitions": [
+                    {
+                        "to_step": "process_flow_register_result",
+                        "priority": 1,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # 6. Process the Flow auth result (login path)
+            #    After the WhatsApp Login Flow completes, the backend endpoint has
             #    already authenticated the user and started a ContactSession.
             #    We use check_session to verify the session was created successfully.
             {
@@ -181,7 +209,36 @@ def create_login_flow() -> Dict[str, Any]:
                     }
                 ]
             },
-            # 7. Login success
+            # 7. Process the Flow register result (register path)
+            {
+                "name": "process_flow_register_result",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "check_session",
+                            "output_variable_name": "register_result"
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "register_success",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "variable_equals",
+                            "variable_name": "flow_context.register_result",
+                            "value": True
+                        }
+                    },
+                    {
+                        "to_step": "register_failed",
+                        "priority": 2,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            # 8. Login success
             {
                 "name": "login_success",
                 "step_type": "send_message",
@@ -195,7 +252,7 @@ def create_login_flow() -> Dict[str, Any]:
                     {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
-            # 8. Login failed
+            # 9. Login failed
             {
                 "name": "login_failed",
                 "step_type": "send_message",
@@ -209,7 +266,35 @@ def create_login_flow() -> Dict[str, Any]:
                     {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
                 ]
             },
-            # 9. End flow
+            # 10. Register success
+            {
+                "name": "register_success",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "\u2705 Registration successful! Your account has been created.\n\nType 'login' to sign in."
+                    }
+                },
+                "transitions": [
+                    {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # 11. Register failed
+            {
+                "name": "register_failed",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {
+                        "body": "\u274c Registration was not completed. Please type 'register' to try again."
+                    }
+                },
+                "transitions": [
+                    {"to_step": "end_login_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            # 12. End flow
             {
                 "name": "end_login_flow",
                 "step_type": "end_flow",

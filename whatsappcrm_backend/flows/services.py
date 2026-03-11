@@ -1763,7 +1763,74 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         elif interactive.get('type') == 'list_reply':
             interactive_reply_id = interactive.get('list_reply', {}).get('id', '')
 
-    # Map session enforcement prompt buttons to trigger keywords
+    # When user taps Login/Register from the session-enforcement prompt, directly
+    # launch the corresponding WhatsApp UI flow if one is published.  This avoids
+    # a redundant round-trip through the conversational Login Flow (which would
+    # show the same Login/Register buttons a second time).
+    if interactive_reply_id in ('prompt_login', 'prompt_register'):
+        from .models import WhatsAppFlow as _WhatsAppFlow
+        from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
+        app_config = getattr(contact, 'associated_app_config', None)
+        if app_config:
+            # Flow names follow the convention "login_whatsapp[_<suffix>]" and
+            # "register_whatsapp[_<suffix>]" — the same convention used throughout
+            # this file and in sync_whatsapp_flows management command.
+            if interactive_reply_id == 'prompt_login':
+                wa_flow = (
+                    _WhatsAppFlow.objects
+                    .filter(meta_app_config=app_config, is_active=True, name__istartswith='login_whatsapp')
+                    .exclude(flow_id__isnull=True).exclude(flow_id='')
+                    .order_by('-updated_at').first()
+                )
+                screen = 'LOGIN'
+                cta = 'Login'
+                header = 'Login'
+                body_text = 'Please enter your credentials to log in.'
+            else:
+                wa_flow = (
+                    _WhatsAppFlow.objects
+                    .filter(meta_app_config=app_config, is_active=True, name__istartswith='register_whatsapp')
+                    .exclude(flow_id__isnull=True).exclude(flow_id='')
+                    .order_by('-updated_at').first()
+                )
+                screen = 'REGISTER'
+                cta = 'Register'
+                header = 'Register'
+                body_text = 'Create your account to get started.'
+
+            if wa_flow:
+                logger.info(
+                    f"Contact {contact.whatsapp_id} tapped '{interactive_reply_id}'; "
+                    f"sending WhatsApp UI flow '{wa_flow.name}' (flow_id={wa_flow.flow_id}) directly."
+                )
+                flow_message = _WhatsAppFlowService.create_flow_message_data(
+                    flow_id=wa_flow.flow_id,
+                    screen=screen,
+                    flow_cta=cta,
+                    body_text=body_text,
+                    header_text=header,
+                    flow_token=contact.whatsapp_id,
+                )
+                actions_to_perform.append({
+                    'type': 'send_whatsapp_message',
+                    'recipient_wa_id': contact.whatsapp_id,
+                    'message_type': 'interactive',
+                    'data': flow_message,
+                })
+                return actions_to_perform
+            else:
+                logger.warning(
+                    f"No published WhatsApp UI flow found for '{interactive_reply_id}' "
+                    f"(config: {app_config.name}). Falling back to conversational flow."
+                )
+        else:
+            logger.warning(
+                f"Contact {contact.whatsapp_id} has no associated_app_config; "
+                f"cannot resolve WhatsApp UI flow for '{interactive_reply_id}'. "
+                f"Falling back to conversational flow."
+            )
+
+    # Map session enforcement prompt buttons to trigger keywords as a fallback
     if interactive_reply_id in ('prompt_login', 'login_btn_login'):
         message_text_body = 'login'
     elif interactive_reply_id in ('prompt_register', 'login_btn_register'):

@@ -219,6 +219,11 @@ class WhatsAppFlowViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing WhatsApp interactive flows.
     Supports CRUD plus custom actions for syncing and publishing flows with Meta.
+
+    Create endpoint accepts an optional ``auto_sync`` boolean field.  When true
+    (and ``flow_json`` + ``meta_app_config`` are provided), the flow is
+    automatically created on Meta's platform, its JSON is uploaded, and the
+    data-exchange ``endpoint_uri`` is configured — all in a single request.
     """
     queryset = WhatsAppFlow.objects.select_related('meta_app_config', 'flow_definition').all()
     serializer_class = WhatsAppFlowSerializer
@@ -231,6 +236,52 @@ class WhatsAppFlowViewSet(viewsets.ModelViewSet):
                 logger.info(f"WhatsAppFlow '{serializer.instance.name}' created successfully.")
         except DjangoValidationError as e:
             raise serializers.ValidationError(e.message_dict if hasattr(e, 'message_dict') else list(e))
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a WhatsApp flow.  Pass ``"auto_sync": true`` (boolean) in the
+        request body to immediately sync the flow to Meta's platform after
+        creation (create → upload JSON → set endpoint_uri).
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        # Extract auto_sync before saving so it is not forwarded to the model
+        auto_sync = bool(serializer.validated_data.pop('auto_sync', False))
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        response = Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        if auto_sync:
+            pk = serializer.instance.pk
+            try:
+                whatsapp_flow = WhatsAppFlow.objects.get(pk=pk)
+                if whatsapp_flow.meta_app_config and whatsapp_flow.flow_json:
+                    from .whatsapp_flow_service import WhatsAppFlowService
+                    service = WhatsAppFlowService(whatsapp_flow.meta_app_config)
+                    success = service.sync_flow(whatsapp_flow)
+                    whatsapp_flow.refresh_from_db()
+                    if success:
+                        logger.info(
+                            f"Auto-synced WhatsAppFlow '{whatsapp_flow.name}' "
+                            f"(flow_id: {whatsapp_flow.flow_id}) after creation."
+                        )
+                    else:
+                        logger.warning(
+                            f"Auto-sync failed for WhatsAppFlow '{whatsapp_flow.name}': "
+                            f"{whatsapp_flow.sync_error}"
+                        )
+                    # Return the updated serializer data (includes flow_id, sync_status)
+                    response.data.update(WhatsAppFlowSerializer(whatsapp_flow).data)
+                else:
+                    logger.info(
+                        f"auto_sync requested but WhatsAppFlow '{whatsapp_flow.name}' "
+                        f"is missing meta_app_config or flow_json; skipping auto-sync."
+                    )
+            except Exception as e:
+                logger.error(f"Error during auto-sync after WhatsApp flow creation: {e}", exc_info=True)
+                # Don't fail the create — the record was saved successfully
+
+        return response
 
     def perform_update(self, serializer):
         try:
