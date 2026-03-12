@@ -179,8 +179,19 @@ def award_agent_commission(ticket):
 
     agent_user = profile.referred_by
 
+    # Only award commission to admin-designated agents
+    try:
+        agent_profile = ReferralProfile.objects.get(user=agent_user)
+    except ReferralProfile.DoesNotExist:
+        logger.debug(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
+        return
+
+    if not agent_profile.is_agent:
+        logger.debug(f"{log_prefix} User {agent_user.username} is not a designated agent. Skipping commission.")
+        return
+
     # Prevent duplicate commission for the same ticket
-    if AgentEarning.objects.filter(agent_profile__user=agent_user, bet_ticket=ticket).exists():
+    if AgentEarning.objects.filter(agent_profile=agent_profile, bet_ticket=ticket).exists():
         logger.info(f"{log_prefix} Commission already awarded to agent {agent_user.username}. Skipping.")
         return
 
@@ -195,12 +206,6 @@ def award_agent_commission(ticket):
 
     if commission_amount <= 0:
         logger.debug(f"{log_prefix} Commission amount is zero or negative. Skipping.")
-        return
-
-    try:
-        agent_profile = ReferralProfile.objects.get(user=agent_user)
-    except ReferralProfile.DoesNotExist:
-        logger.error(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
         return
 
     with transaction.atomic():

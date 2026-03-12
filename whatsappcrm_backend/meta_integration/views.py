@@ -815,7 +815,7 @@ class WhatsAppFlowEndpointView(View):
             }
 
         from referrals.models import ReferralProfile as _ReferralProfile
-        if not _ReferralProfile.objects.filter(referral_code__iexact=agent_code).exists():
+        if not _ReferralProfile.objects.filter(referral_code__iexact=agent_code, is_agent=True).exists():
             return {
                 "screen": "REGISTER",
                 "data": {

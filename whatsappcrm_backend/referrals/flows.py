@@ -3,7 +3,9 @@
 def create_referral_flow():
     """
     Defines the flow for the agent program.
-    Agents can get their code, check referrals, and view commission earnings.
+    Only admin-designated agents (is_agent=True on their ReferralProfile) can
+    access options. Regular users without agent status are directed to contact
+    support. The flow never prompts users to register/sign up.
     """
     return {
         "name": "Agent Program",
@@ -20,8 +22,35 @@ def create_referral_flow():
                         {
                             "action_type": "set_context_variable",
                             "variable_name": "has_account",
-                            # Check for the user on the customer_profile
                             "value_template": "{{ customer_profile.user.id }}"
+                        }
+                    ]
+                },
+                "transitions": [
+                    {
+                        "to_step": "check_if_user_is_agent",
+                        "priority": 1,
+                        "condition_config": {
+                            "type": "variable_exists",
+                            "variable_name": "flow_context.has_account"
+                        }
+                    },
+                    {
+                        "to_step": "not_logged_in_message",
+                        "priority": 2,
+                        "condition_config": {"type": "always_true"}
+                    }
+                ]
+            },
+            {
+                "name": "check_if_user_is_agent",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "set_context_variable",
+                            "variable_name": "is_agent",
+                            "value_template": "{{ customer_profile.user.referral_profile.is_agent }}"
                         }
                     ]
                 },
@@ -30,12 +59,13 @@ def create_referral_flow():
                         "to_step": "show_agent_options",
                         "priority": 1,
                         "condition_config": {
-                            "type": "variable_exists",
-                            "variable_name": "flow_context.has_account"
+                            "type": "variable_equals",
+                            "variable_name": "flow_context.is_agent",
+                            "value": True
                         }
                     },
                     {
-                        "to_step": "prompt_to_create_account",
+                        "to_step": "not_an_agent_message",
                         "priority": 2,
                         "condition_config": {"type": "always_true"}
                     }
@@ -202,11 +232,20 @@ def create_referral_flow():
                 "transitions": []
             },
             {
-                "name": "prompt_to_create_account",
+                "name": "not_logged_in_message",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "You need to have an account to become an agent. Type 'register' to create one!"}
+                    "text": {"body": "Please log in first to access the Agent Program. Type 'login' to sign in."}
+                },
+                "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "not_an_agent_message",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "You are not currently enrolled as an agent. Please contact support to be designated as an agent."}
                 },
                 "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
             },
