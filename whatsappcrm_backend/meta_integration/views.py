@@ -724,7 +724,7 @@ class WhatsAppFlowEndpointView(View):
         last_name = (data.get('last_name') or '').strip()
         gender = (data.get('gender') or '').strip()
         date_of_birth = (data.get('date_of_birth') or '').strip()
-        referral_code = (data.get('referral_code') or '').strip() or None
+        agent_code = (data.get('agent_code') or '').strip()
 
         # --- Validation ---
         if not first_name or not last_name:
@@ -804,6 +804,26 @@ class WhatsAppFlowEndpointView(View):
                     }
                 }
 
+        # Validate agent code — required and must exist in the database
+        if not agent_code:
+            return {
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Agent code is required. Please enter a valid agent code.",
+                    "is_error": True
+                }
+            }
+
+        from referrals.models import ReferralProfile as _ReferralProfile
+        if not _ReferralProfile.objects.filter(referral_code__iexact=agent_code).exists():
+            return {
+                "screen": "REGISTER",
+                "data": {
+                    "error_message": "Invalid agent code. Please check the code and try again.",
+                    "is_error": True
+                }
+            }
+
         # Normalise gender to model choices: M / F / O
         gender_map = {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F', 'o': 'O', 'other': 'O'}
         normalised_gender = gender_map.get(gender.lower(), None) if gender else None
@@ -862,20 +882,21 @@ class WhatsAppFlowEndpointView(View):
                         if update_fields:
                             profile.save(update_fields=update_fields)
 
-                    # Process referral code if provided
-                    if referral_code:
-                        try:
-                            from referrals.utils import link_referral
-                            link_referral(new_user=user, referral_code=referral_code)
-                            logger.info(
-                                f"WhatsApp Flow register: Linked referral code '{referral_code}' "
-                                f"to user '{username}'."
-                            )
-                        except Exception as ref_exc:
-                            logger.warning(
-                                f"WhatsApp Flow register: Could not apply referral code "
-                                f"'{referral_code}' for user '{username}': {ref_exc}"
-                            )
+                    # Link agent code to the new user's referral profile.
+                    # Code was validated against the DB before account creation,
+                    # so this should succeed unless a race condition or DB error occurs.
+                    try:
+                        from referrals.utils import link_referral
+                        link_referral(new_user=user, referral_code=agent_code)
+                        logger.info(
+                            f"WhatsApp Flow register: Linked agent code '{agent_code}' "
+                            f"to user '{username}'."
+                        )
+                    except Exception as ref_exc:
+                        logger.warning(
+                            f"WhatsApp Flow register: Could not apply agent code "
+                            f"'{agent_code}' for user '{username}': {ref_exc}"
+                        )
 
                     # Start a session so the user is immediately logged in
                     session, _ = ContactSession.objects.get_or_create(contact=contact)
