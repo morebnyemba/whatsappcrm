@@ -724,7 +724,7 @@ class WhatsAppFlowEndpointView(View):
         last_name = (data.get('last_name') or '').strip()
         gender = (data.get('gender') or '').strip()
         date_of_birth = (data.get('date_of_birth') or '').strip()
-        agent_code = (data.get('agent_code') or '').strip()
+        agent_code = (data.get('agent_code') or '').strip() or None
 
         # --- Validation ---
         if not first_name or not last_name:
