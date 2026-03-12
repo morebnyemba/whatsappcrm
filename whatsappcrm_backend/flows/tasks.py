@@ -109,6 +109,125 @@ def process_flow_for_message_task(message_id: int):
         logger.error(f"Critical error in process_flow_for_message_task for message {message_id}: {e}", exc_info=True)
 
 
+@shared_task(queue='celery', priority=9)
+def trigger_post_flow_action_task(contact_id: int, trigger_keyword: str = 'hi'):
+    """
+    Automatically triggers the next flow for a contact after they complete a
+    WhatsApp UI flow (e.g. login or registration).  A synthetic incoming
+    message is created and processed through the flow engine so the user
+    receives the follow-up prompt (e.g. the main menu) without having to
+    type anything.
+
+    Args:
+        contact_id:      Primary-key of the Contact to message.
+        trigger_keyword: Keyword used to select the next flow (default: 'hi',
+                         which matches the Welcome Flow).
+    """
+    from django.utils import timezone
+
+    messages_to_send = []
+
+    try:
+        with transaction.atomic():
+            contact = Contact.objects.select_related('associated_app_config').get(pk=contact_id)
+
+            # Build a synthetic incoming message that mimics the user typing the
+            # trigger keyword.  We store it as direction='in' so it fits the normal
+            # message model but mark it as a system-generated trigger.
+            synthetic_message_data = {'type': 'text', 'text': {'body': trigger_keyword}}
+            synthetic_message = Message.objects.create(
+                contact=contact,
+                direction='in',
+                message_type='text',
+                content_payload=synthetic_message_data,
+                status='received',
+                timestamp=timezone.now(),
+            )
+
+            logger.info(
+                f"trigger_post_flow_action_task: triggering '{trigger_keyword}' for "
+                f"contact {contact.whatsapp_id} (id={contact_id})"
+            )
+
+            actions_to_perform = process_message_for_flow(contact, synthetic_message_data, synthetic_message)
+
+            if not actions_to_perform:
+                logger.info(
+                    f"trigger_post_flow_action_task: no actions generated for "
+                    f"contact {contact.whatsapp_id}."
+                )
+                return
+
+            config_to_use = getattr(contact, 'associated_app_config', None)
+            if not config_to_use:
+                try:
+                    config_to_use = MetaAppConfig.objects.get_active_config()
+                except MetaAppConfig.DoesNotExist:
+                    logger.error(
+                        f"trigger_post_flow_action_task: no active MetaAppConfig for "
+                        f"contact {contact.whatsapp_id}."
+                    )
+                    return
+
+            dispatch_countdown = 0
+            for action in actions_to_perform:
+                if action.get('type') == 'send_whatsapp_message':
+                    recipient_wa_id = action.get('recipient_wa_id', contact.whatsapp_id)
+
+                    from conversations.services import get_or_create_contact_by_wa_id
+                    recipient_contact, _ = get_or_create_contact_by_wa_id(
+                        wa_id=recipient_wa_id,
+                        name='Unknown',
+                    )
+                    if not recipient_contact:
+                        logger.error(
+                            f"trigger_post_flow_action_task: failed to get/create recipient "
+                            f"contact for {recipient_wa_id}"
+                        )
+                        continue
+
+                    outgoing_msg = Message.objects.create(
+                        contact=recipient_contact,
+                        direction='out',
+                        message_type=action.get('message_type'),
+                        content_payload=action.get('data'),
+                        status='pending_dispatch',
+                        timestamp=timezone.now(),
+                        triggered_by_flow_step_id=getattr(
+                            getattr(contact, 'flow_state', None), 'current_step_id', None
+                        ),
+                    )
+
+                    messages_to_send.append({
+                        'msg_id': outgoing_msg.id,
+                        'config_id': config_to_use.id,
+                        'countdown': dispatch_countdown,
+                        'recipient_wa_id': recipient_wa_id,
+                    })
+                    dispatch_countdown += 2
+
+            def queue_messages():
+                for msg_info in messages_to_send:
+                    send_whatsapp_message_task.apply_async(
+                        args=[msg_info['msg_id'], msg_info['config_id']],
+                        countdown=msg_info['countdown'],
+                    )
+                    logger.info(
+                        f"trigger_post_flow_action_task: queued message {msg_info['msg_id']} "
+                        f"to {msg_info['recipient_wa_id']} (delay {msg_info['countdown']}s)"
+                    )
+
+            transaction.on_commit(queue_messages)
+
+    except Contact.DoesNotExist:
+        logger.error(f"trigger_post_flow_action_task: Contact id={contact_id} not found.")
+    except Exception as exc:
+        logger.error(
+            f"trigger_post_flow_action_task: error for contact id={contact_id}: {exc}",
+            exc_info=True,
+        )
+
+
 @shared_task(name="flows.cleanup_idle_conversations_task")
 def cleanup_idle_conversations_task():
     """
