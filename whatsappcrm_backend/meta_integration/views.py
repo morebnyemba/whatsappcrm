@@ -686,6 +686,12 @@ class WhatsAppFlowEndpointView(View):
                     }
                 }
 
+            # Automatically send the main menu after login so the user does not
+            # have to type anything.  A short countdown gives Meta time to close
+            # the flow UI before the first outbound message arrives.
+            from flows.tasks import trigger_post_flow_action_task
+            trigger_post_flow_action_task.apply_async(args=[contact.id], countdown=3)
+
             return {
                 "screen": "COMPLETE",
                 "data": {}
@@ -804,6 +810,7 @@ class WhatsAppFlowEndpointView(View):
 
         # --- Create account ---
         try:
+            linked_contact = None  # track the contact for post-flow auto-trigger
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -817,6 +824,7 @@ class WhatsAppFlowEndpointView(View):
             if flow_token:
                 try:
                     contact = Contact.objects.get(whatsapp_id=flow_token)
+                    linked_contact = contact
                     # Create or update customer profile
                     profile, created = CustomerProfile.objects.get_or_create(
                         contact=contact,
@@ -881,6 +889,13 @@ class WhatsAppFlowEndpointView(View):
                         f"WhatsApp Flow register: Contact with whatsapp_id '{flow_token}' not found. "
                         f"User created but not linked to a contact."
                     )
+
+            # Automatically send the main menu after registration so the user
+            # does not have to type anything.  Only triggered when a contact was
+            # successfully linked and a session was started.
+            if linked_contact is not None:
+                from flows.tasks import trigger_post_flow_action_task
+                trigger_post_flow_action_task.apply_async(args=[linked_contact.id], countdown=3)
 
             return {
                 "screen": "COMPLETE",
