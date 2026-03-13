@@ -54,6 +54,7 @@ def _build_login_prompt_action(recipient_wa_id: str, body_text: str) -> dict:
         'data': {
             'type': 'button',
             'body': {'text': body_text},
+            'footer': {'text': 'Tap Login if you already have an account, or Register to create one.'},
             'action': {
                 'buttons': [
                     {'type': 'reply', 'reply': {'id': 'prompt_login', 'title': 'Login'}},
@@ -1793,9 +1794,12 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                     .order_by('-updated_at').first()
                 )
                 screen = 'LOGIN'
-                cta = 'Login'
-                header = 'Login'
-                body_text = 'Please enter your credentials to log in.'
+                cta = 'Login Now'
+                header = 'Welcome Back'
+                body_text = (
+                    '\U0001f511 *Login to BetBlitz*\n\n'
+                    'Enter your username and password to access your account and continue.'
+                )
             else:
                 wa_flow = (
                     _WhatsAppFlow.objects
@@ -1804,9 +1808,12 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                     .order_by('-updated_at').first()
                 )
                 screen = 'REGISTER'
-                cta = 'Register'
-                header = 'Register'
-                body_text = 'Create your account to get started.'
+                cta = 'Create Account'
+                header = 'New Account'
+                body_text = (
+                    '\U0001f195 *Register for BetBlitz*\n\n'
+                    'Create your free account in seconds. You will need an *Agent Code* from your referrer to complete sign-up.'
+                )
 
             if wa_flow:
                 logger.info(
@@ -1881,8 +1888,10 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
                 )
                 actions_to_perform.append(_build_login_prompt_action(
                     contact.whatsapp_id,
-                    '\U0001f512 You need to be logged in to access this feature.\n\n'
-                    'Please login or register to continue.'
+                    '\U0001f512 *Login Required*\n\n'
+                    'You need to be logged in to access this feature.\n\n'
+                    'If you have an account, tap *Login* below.\n'
+                    'New here? Tap *Register* to create a free account.'
                 ))
                 return actions_to_perform
         # --- End session security check ---
@@ -1962,7 +1971,10 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             )
             actions_to_perform.append(_build_login_prompt_action(
                 contact.whatsapp_id,
-                'Welcome! \U0001f44b Please login or register to get started.'
+                '\U0001f44b *Welcome to BetBlitz!*\n\n'
+                'To place bets, manage your account, or access any features, you need to be logged in.\n\n'
+                'Already have an account? Tap *Login*.\n'
+                'New user? Tap *Register* to sign up — you\'ll need an agent referral code.'
             ))
     return actions_to_perform
 
@@ -2649,7 +2661,9 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
             from conversations.models import ContactSession
             session_expired_prompt = _build_login_prompt_action(
                 contact.whatsapp_id,
-                '\U0001f512 Your session has expired. Please login again to continue.'
+                '\U0001f512 *Session Expired*\n\n'
+                'Your session has timed out for security reasons.\n\n'
+                'Please tap *Login* to sign back in and continue where you left off.'
             )
             try:
                 session = ContactSession.objects.get(contact=contact)

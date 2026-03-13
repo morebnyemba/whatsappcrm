@@ -12,6 +12,7 @@ def create_referral_flow():
         "description": "Interactive menu for agents to get their code, check referrals, and view earnings.",
         "trigger_keywords": ["refer", "refer a friend", "referral", "agent", "agent program"],
         "is_active": True,
+        "requires_login": True,
         "steps": [
             {
                 "name": "check_if_user_has_account",

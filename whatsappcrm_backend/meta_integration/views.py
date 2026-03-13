@@ -531,7 +531,21 @@ class WhatsAppFlowEndpointView(View):
             response_data = self._process_body(body)
         except Exception as e:
             logger.error(f"WhatsApp Flow endpoint: Unhandled error processing body: {e}", exc_info=True)
-            response_data = {"data": {"error": "An error occurred."}}
+            # Fall back to the last known screen so Meta can display a meaningful error
+            # instead of a generic "something went wrong" overlay.
+            fallback_screen = body.get('screen', '') if isinstance(body, dict) else ''
+            if not fallback_screen or fallback_screen not in ('LOGIN', 'REGISTER'):
+                # data_exchange requests come from an already-open form screen.
+                # Default to REGISTER since it has both fields (error_message, is_error)
+                # defined; LOGIN uses the same data contract.
+                fallback_screen = 'REGISTER' if body.get('action') == 'data_exchange' else 'LOGIN'
+            response_data = {
+                "screen": fallback_screen,
+                "data": {
+                    "error_message": "An internal error occurred. Please try again.",
+                    "is_error": True,
+                },
+            }
 
         try:
             encrypted_response = encrypt_flow_response(response_data, aes_key, iv)
@@ -814,22 +828,22 @@ class WhatsAppFlowEndpointView(View):
                 }
             }
 
-        from referrals.models import ReferralProfile as _ReferralProfile
-        if not _ReferralProfile.objects.filter(referral_code__iexact=agent_code, is_agent=True).exists():
-            return {
-                "screen": "REGISTER",
-                "data": {
-                    "error_message": "Invalid agent code. Please check the code and try again.",
-                    "is_error": True
-                }
-            }
-
         # Normalise gender to model choices: M / F / O
         gender_map = {'m': 'M', 'male': 'M', 'f': 'F', 'female': 'F', 'o': 'O', 'other': 'O'}
         normalised_gender = gender_map.get(gender.lower(), None) if gender else None
 
         # --- Create account ---
         try:
+            from referrals.models import ReferralProfile as _ReferralProfile
+            if not _ReferralProfile.objects.filter(referral_code__iexact=agent_code, is_agent=True).exists():
+                return {
+                    "screen": "REGISTER",
+                    "data": {
+                        "error_message": "Invalid agent code. Please check the code and try again.",
+                        "is_error": True
+                    }
+                }
+
             linked_contact = None  # track the contact for post-flow auto-trigger
             user = User.objects.create_user(
                 username=username,
