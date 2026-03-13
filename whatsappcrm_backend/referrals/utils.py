@@ -76,8 +76,10 @@ def get_referrer_details_from_code(referral_code: str) -> dict:
 
 def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction):
     """
-    Applies a percentage-based referral bonus to the new user and the referrer
-    based on the amount of the first deposit.
+    Applies a percentage-based referral bonus to the new (referred) user only,
+    based on the amount of their first deposit.
+    Agents earn commission exclusively via award_agent_commission() when a
+    referred user loses a bet — they receive no bonus at signup or first deposit.
     This is an internal function called by check_and_apply_first_deposit_bonus.
     """
     profile = get_or_create_referral_profile(new_user)
@@ -88,31 +90,27 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
     if first_deposit_amount <= 0:
         return {"success": False, "message": "First deposit amount is zero or less."}
 
-    # Calculate the bonus amount for each person from the settings
+    # Calculate the bonus amount for the new user from the settings
     settings = ReferralSettings.load()
     bonus_amount = first_deposit_amount * settings.bonus_percentage_each
 
     referrer_user = profile.referred_by
 
     with transaction.atomic():
-        # Use the add_funds method from UserWallet for proper transaction logging
+        # Credit only the new (referred) user — agents earn via bet-loss commission only
         new_user.wallet.add_funds(bonus_amount, description=f"Referral bonus from {referrer_user.username}", transaction_type='BONUS')
-        referrer_user.wallet.add_funds(bonus_amount, description=f"Referral bonus for referring {new_user.username}", transaction_type='BONUS')
-        
+
         profile.referral_bonus_applied = True
         profile.save(update_fields=['referral_bonus_applied'])
 
-    logger.info(f"Applied referral bonus of ${bonus_amount:.2f} to {new_user.username} and referrer {referrer_user.username} based on a deposit of ${first_deposit_amount:.2f}")
+    logger.info(f"Applied referral bonus of ${bonus_amount:.2f} to {new_user.username} based on a deposit of ${first_deposit_amount:.2f}")
 
     bonus_percentage_display = f"{settings.bonus_percentage_each:.2%}"
-    # Send notifications via Celery tasks
-    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} ({bonus_percentage_display}) referral bonus from your friend {referrer_user.username}! As a thank you, they've received a bonus too."
+    # Notify the new user only
+    new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} ({bonus_percentage_display}) referral bonus on your first deposit!"
     send_bonus_notification_task.delay(user_id=new_user.id, message=new_user_message)
 
-    referrer_message = f"🎉 Great news! Your friend {new_user.username} made their first deposit of ${first_deposit_amount:.2f}. As a thank you, you've both received a ${bonus_amount:.2f} ({bonus_percentage_display}) bonus!"
-    send_bonus_notification_task.delay(user_id=referrer_user.id, message=referrer_message)
-
-    return {"success": True, "message": f"Successfully applied a ${bonus_amount:.2f} bonus to you and your friend!"}
+    return {"success": True, "message": f"Successfully applied a ${bonus_amount:.2f} bonus to your account!"}
 
 def check_and_apply_first_deposit_bonus(user: User):
     """
@@ -179,9 +177,20 @@ def award_agent_commission(ticket):
 
     agent_user = profile.referred_by
 
-    # Prevent duplicate commission for the same ticket
-    if AgentEarning.objects.filter(agent_profile__user=agent_user, bet_ticket=ticket).exists():
+    # Only award commission to admin-designated agents
+    try:
+        agent_profile = ReferralProfile.objects.get(user=agent_user)
+    except ReferralProfile.DoesNotExist:
+        logger.debug(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
+        return
+
+    # Prevent duplicate commission for the same ticket (early exit before is_agent check)
+    if AgentEarning.objects.filter(agent_profile=agent_profile, bet_ticket=ticket).exists():
         logger.info(f"{log_prefix} Commission already awarded to agent {agent_user.username}. Skipping.")
+        return
+
+    if not agent_profile.is_agent:
+        logger.debug(f"{log_prefix} User {agent_user.username} is not a designated agent. Skipping commission.")
         return
 
     settings = ReferralSettings.load()
@@ -195,12 +204,6 @@ def award_agent_commission(ticket):
 
     if commission_amount <= 0:
         logger.debug(f"{log_prefix} Commission amount is zero or negative. Skipping.")
-        return
-
-    try:
-        agent_profile = ReferralProfile.objects.get(user=agent_user)
-    except ReferralProfile.DoesNotExist:
-        logger.error(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
         return
 
     with transaction.atomic():

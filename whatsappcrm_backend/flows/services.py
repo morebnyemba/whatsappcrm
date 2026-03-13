@@ -1484,13 +1484,19 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         user = contact.customerprofile.user
                         if user:
                             referral_profile = get_or_create_referral_profile(user)
+                            if not referral_profile.is_agent:
+                                logger.warning(f"Step '{step.name}': User {user.username} is not a designated agent. Cannot generate referral code.")
+                                current_step_context[action_item_root.output_variable_name] = ""
+                                continue
                             code = referral_profile.referral_code
                             current_step_context[action_item_root.output_variable_name] = code
                             logger.info(f"Generated and saved referral code '{code}' to context variable '{action_item_root.output_variable_name}'.")
                         else:
                             logger.error(f"Step '{step.name}': Cannot generate referral code, no User linked to CustomerProfile for contact {contact.id}.")
+                            current_step_context[action_item_root.output_variable_name] = ""
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot generate referral code, CustomerProfile does not exist for contact {contact.id}.")
+                        current_step_context[action_item_root.output_variable_name] = ""
                 
                 elif action_type == ActionType.GET_TOTAL_REFERRALS:
                     if not REFERRALS_ENABLED:
@@ -1585,6 +1591,10 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         if user:
                             from referrals.models import AgentEarning
                             agent_profile = get_or_create_referral_profile(user)
+                            if not agent_profile.is_agent:
+                                logger.warning(f"Step '{step.name}': User {user.username} is not a designated agent. Cannot get agent earnings.")
+                                current_step_context[action_item_root.output_variable_name] = {}
+                                continue
                             total_earnings = agent_profile.total_earnings
                             total_referrals = ReferralProfile.objects.filter(referred_by=user).count()
                             agent_settings = ReferralSettings.load()

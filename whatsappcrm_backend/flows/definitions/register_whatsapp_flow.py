@@ -9,7 +9,7 @@ via Meta's Flow JSON schema.  The backend data-exchange endpoint at
 
 Screens:
     1. REGISTER  – collects username, email, password, confirm password,
-                   first name, last name, date of birth, gender, referral code
+                   first name, last name, date of birth, gender, and required agent code
     2. COMPLETE  – terminal screen confirming registration
 """
 
@@ -120,11 +120,11 @@ REGISTER_WHATSAPP_FLOW = {
                             },
                             {
                                 "type": "TextInput",
-                                "name": "referral_code",
-                                "label": "Referral Code (Optional)",
-                                "required": False,
+                                "name": "agent_code",
+                                "label": "Agent Code",
+                                "required": True,
                                 "input-type": "text",
-                                "helper-text": "Enter a referral code if you have one"
+                                "helper-text": "Enter your agent's referral code"
                             },
                             {
                                 "type": "Footer",
@@ -140,7 +140,7 @@ REGISTER_WHATSAPP_FLOW = {
                                         "confirm_password": "${form.confirm_password}",
                                         "gender": "${form.gender}",
                                         "date_of_birth": "${form.date_of_birth}",
-                                        "referral_code": "${form.referral_code}",
+                                        "agent_code": "${form.agent_code}",
                                         "action": "register"
                                     }
                                 }

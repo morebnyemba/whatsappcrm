@@ -17,13 +17,18 @@ def _generate_code():
 class ReferralProfile(models.Model):
     """
     Stores agent/referral information for a user, linked to the main User model.
-    Each user with a referral code acts as an agent who can earn commission
-    when users they referred lose bets.
+    A user must be explicitly designated as an agent by an administrator
+    (is_agent=True) before they can share their code or earn commission.
     """
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='referral_profile'
+    )
+    # Whether this user is an active, admin-designated agent.
+    is_agent = models.BooleanField(
+        default=False,
+        help_text="Designate this user as an active agent. Only admin can set this."
     )
     # The user's unique agent code to share with others.
     referral_code = models.CharField(

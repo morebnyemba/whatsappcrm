@@ -6,10 +6,13 @@ from .models import ReferralProfile, ReferralSettings, AgentEarning
 class ReferralProfileAdmin(admin.ModelAdmin):
     """
     Admin view for the ReferralProfile model (Agent Profile).
+    Set is_agent=True to designate a user as an active agent who can
+    share their code and earn commission on referred users' lost bets.
     """
-    list_display = ('user', 'referral_code', 'get_referred_by_username', 'referral_bonus_applied', 'get_total_earnings')
+    list_display = ('user', 'is_agent', 'referral_code', 'get_referred_by_username', 'referral_bonus_applied', 'get_total_earnings')
+    list_editable = ('is_agent',)
     search_fields = ('user__username', 'referral_code', 'referred_by__username')
-    list_filter = ('referral_bonus_applied',)
+    list_filter = ('is_agent', 'referral_bonus_applied',)
     raw_id_fields = ('user', 'referred_by')
     readonly_fields = ('referral_code',)
 

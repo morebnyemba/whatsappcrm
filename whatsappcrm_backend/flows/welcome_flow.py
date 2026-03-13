@@ -29,7 +29,6 @@ def create_welcome_flow():
                                     {
                                         "title": "Services",
                                         "rows": [
-                                            {"id": "welcome_register", "title": "Register (New Users)", "description": "Sign up for a new BetBlitz account"},
                                             {"id": "welcome_betting", "title": "Betting", "description": "Explore matches, odds, and place your bets"},
                                             {"id": "welcome_account", "title": "Account Management", "description": "Manage your funds, deposits, and withdrawals"},
                                             {"id": "welcome_agent_program", "title": "Agent Program", "description": "Earn commission when your referrals lose bets"},
@@ -53,7 +52,6 @@ def create_welcome_flow():
                     }
                 },
                 "transitions": [
-                    {"to_step": "switch_to_registration", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_register"}},
                     {"to_step": "switch_to_betting", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_betting"}},
                     {"to_step": "switch_to_account_management", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_account"}},
                     {"to_step": "switch_to_agent_program", "condition_config": {"type": "interactive_reply_id_equals", "value": "welcome_agent_program"}},
@@ -63,14 +61,6 @@ def create_welcome_flow():
                 ]
             },
             # --- Switch Flow Actions ---
-            {
-                "name": "switch_to_registration",
-                "step_type": "action",
-                "config": {
-                    "actions_to_run": [{"action_type": "switch_flow", "trigger_keyword_template": "register"}]
-                },
-                "transitions": [] # No transitions, as the flow will be switched
-            },
             {
                 "name": "switch_to_betting",
                 "step_type": "action",
