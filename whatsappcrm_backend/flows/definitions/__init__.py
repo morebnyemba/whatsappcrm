@@ -10,6 +10,7 @@ from flows.withdrawal_flow import create_withdrawal_flow
 from flows.get_fixtures_flow import create_get_fixtures_flow
 from flows.view_results_flow import create_view_results_flow
 from flows.account_management_flow import create_account_management_flow
+from referrals.flows import create_referral_flow
 
 # WhatsApp UI flow definitions (WhatsAppFlow with Meta JSON schema)
 from flows.definitions.login_whatsapp_flow import (
@@ -31,6 +32,7 @@ TRADITIONAL_FLOW_CREATORS = [
     create_get_fixtures_flow,
     create_view_results_flow,
     create_account_management_flow,
+    create_referral_flow,
 ]
 
 WHATSAPP_UI_FLOWS = [

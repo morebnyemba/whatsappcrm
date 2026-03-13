@@ -36,11 +36,11 @@ REGISTER_WHATSAPP_FLOW = {
                 "children": [
                     {
                         "type": "TextHeading",
-                        "text": "Register"
+                        "text": "Create Your Account"
                     },
                     {
                         "type": "TextBody",
-                        "text": "Create your account to get started."
+                        "text": "Fill in the details below to get started. You will need a valid *Agent Code* from your referrer to complete registration."
                     },
                     {
                         "type": "TextBody",
