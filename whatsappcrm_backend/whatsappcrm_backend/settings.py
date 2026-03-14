@@ -24,7 +24,10 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-fallback-key-for-de
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True' # Default to True for dev if not set
 
-ALLOWED_HOSTS_STRING = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,popular-real-squirrel.ngrok-free.app')
+ALLOWED_HOSTS_STRING = os.getenv(
+    'DJANGO_ALLOWED_HOSTS',
+    'localhost,127.0.0.1,84.247.170.77,popular-real-squirrel.ngrok-free.app'
+)
 ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_STRING.split(',') if host.strip()]
 
 # --- CSRF Trusted Origins ---
@@ -314,8 +317,8 @@ JAZZMIN_UI_TWEAKS = {
 # Example .env content (should be in a separate .env file at project root):
 # DJANGO_SECRET_KEY="your-actual-strong-secret-key-here"
 # DJANGO_DEBUG="True" # Set to "False" for production
-# DJANGO_ALLOWED_HOSTS="localhost,127.0.0.1,yourdomain.com,popular-real-squirrel.ngrok-free.app"
-# CSRF_TRUSTED_ORIGINS="http://localhost:5173,https://popular-real-squirrel.ngrok-free.app"
+# DJANGO_ALLOWED_HOSTS="localhost,127.0.0.1,84.247.170.77,yourdomain.com,popular-real-squirrel.ngrok-free.app"
+# CSRF_TRUSTED_ORIGINS="http://localhost:5173,https://84.247.170.77,https://popular-real-squirrel.ngrok-free.app"
 # CORS_ALLOWED_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1,https://popular-real-squirrel.ngrok-free.app"
 # CELERY_BROKER_URL="redis://localhost:6379/0"
 # CELERY_RESULT_BACKEND="redis://localhost:6379/1"
