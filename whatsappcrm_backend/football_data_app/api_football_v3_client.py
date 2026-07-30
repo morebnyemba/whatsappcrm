@@ -235,11 +235,12 @@ class APIFootballV3Client:
         date_to: Optional[str] = None,
         team_id: Optional[int] = None,
         status: Optional[str] = None,
-        timezone: str = "UTC"
+        timezone: str = "UTC",
+        ids: Optional[List[int]] = None,
     ) -> List[dict]:
         """
         Get fixtures/matches.
-        
+
         Args:
             fixture_id: Specific fixture ID
             league_id: League ID to filter fixtures
@@ -250,12 +251,18 @@ class APIFootballV3Client:
             team_id: Filter by team ID
             status: Fixture status (e.g., 'NS', 'LIVE', 'FT')
             timezone: Timezone for dates (default: UTC)
-            
+            ids: Batch of fixture IDs (max 20) fetched in one request — use this
+                to refresh several specific fixtures (e.g. for scores/settlement)
+                instead of one request per fixture.
+
         Returns:
             List of fixture dictionaries from response['response']
         """
         params = {'timezone': timezone}
-        
+
+        if ids:
+            # API-Football expects fixture ids joined by '-', max 20 per request.
+            params['ids'] = '-'.join(str(i) for i in ids[:20])
         if fixture_id:
             params['id'] = fixture_id
         if league_id:
@@ -314,6 +321,30 @@ class APIFootballV3Client:
         response = self._request('fixtures', {'live': 'all'})
         return response.get('response', [])
 
+    def _request_all_pages(self, endpoint: str, params: Optional[Dict] = None, max_pages: int = 50) -> List[dict]:
+        """
+        Fetch every page of a paginated endpoint and return the concatenated
+        `response` arrays. API-Football paginates some endpoints (notably /odds)
+        at 10 results per page; each page is one billable request, so callers
+        should scope params (league+season+date) to keep the page count small.
+        `max_pages` is a safety cap against runaway pagination.
+        """
+        params = dict(params or {})
+        aggregated: List[dict] = []
+        page = 1
+        while page <= max_pages:
+            params['page'] = page
+            data = self._request(endpoint, params)
+            aggregated.extend(data.get('response', []))
+            paging = data.get('paging', {}) or {}
+            total_pages = paging.get('total', 1) or 1
+            if page >= total_pages:
+                break
+            page += 1
+        else:
+            logger.warning(f"Reached max_pages={max_pages} for '{endpoint}' with params {params}; results may be truncated.")
+        return aggregated
+
     def get_odds(
         self,
         fixture_id: Optional[int] = None,
@@ -321,24 +352,33 @@ class APIFootballV3Client:
         season: Optional[int] = None,
         date: Optional[str] = None,
         bookmaker_id: Optional[int] = None,
-        bet_id: Optional[int] = None
+        bet_id: Optional[int] = None,
+        paginate: bool = False,
+        max_pages: int = 50,
     ) -> List[dict]:
         """
         Get odds for fixtures.
-        
+
         Args:
-            fixture_id: Specific fixture ID
-            league_id: League ID to filter
-            season: Season year
-            date: Specific date (YYYY-MM-DD)
-            bookmaker_id: Filter by bookmaker ID
-            bet_id: Filter by bet type ID
-            
+            fixture_id: Specific fixture ID (returns a single fixture's odds).
+            league_id: League ID to filter (requires season). Combine with `date`
+                and paginate=True to fetch every fixture's odds for a league-day
+                in one paginated call instead of one call per fixture.
+            season: Season year.
+            date: Specific date (YYYY-MM-DD).
+            bookmaker_id: Filter by bookmaker ID.
+            bet_id: Filter by bet type ID.
+            paginate: When True, fetch and concatenate all pages (needed for
+                bulk league/date queries, which return 10 fixtures per page).
+            max_pages: Safety cap on pages fetched when paginate=True.
+
         Returns:
-            List of odds dictionaries from response['response']
+            List of odds dictionaries from response['response'] (across all pages
+            when paginate=True). Each item includes its own 'fixture' object, so a
+            bulk response can be grouped back to individual fixtures.
         """
         params = {}
-        
+
         if fixture_id:
             params['fixture'] = fixture_id
         if league_id:
@@ -351,7 +391,10 @@ class APIFootballV3Client:
             params['bookmaker'] = bookmaker_id
         if bet_id:
             params['bet'] = bet_id
-            
+
+        if paginate:
+            return self._request_all_pages('odds', params, max_pages=max_pages)
+
         response = self._request('odds', params)
         return response.get('response', [])
 

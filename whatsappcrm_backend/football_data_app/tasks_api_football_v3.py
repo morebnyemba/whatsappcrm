@@ -30,6 +30,9 @@ API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES = getattr(settings, 'API_FOOTBALL_V3_
 API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES = getattr(settings, 'API_FOOTBALL_V3_ASSUMED_COMPLETION_MINUTES', 120)
 API_FOOTBALL_V3_MAX_EVENT_RETRIES = getattr(settings, 'API_FOOTBALL_V3_MAX_EVENT_RETRIES', 3)
 API_FOOTBALL_V3_EVENT_RETRY_DELAY = getattr(settings, 'API_FOOTBALL_V3_EVENT_RETRY_DELAY', 300)
+# Safety cap on /odds pagination per (league, day) bulk fetch. Each page is one
+# billable request; a single league-day rarely exceeds a couple of pages.
+API_FOOTBALL_V3_MAX_ODDS_PAGES = getattr(settings, 'API_FOOTBALL_V3_MAX_ODDS_PAGES', 25)
 
 # Setup command reference for consistent messaging
 LEAGUE_SETUP_COMMAND = "python manage.py football_league_setup_v3"
@@ -588,27 +591,15 @@ def fetch_events_for_league_v3_task(self, league_id: int):
                         fixture_ids_for_odds.append(fixture.id)
             
             logger.info(f"Successfully processed {events_processed_count} fixtures in database transaction")
-            
-            # Immediately dispatch odds fetching for scheduled fixtures
+
+            # Odds are no longer fetched here per-fixture. They are fetched in
+            # bulk per league-day by dispatch_odds_fetching_after_events_v3_task
+            # (the chord callback), which runs once after all leagues' events are
+            # in and de-duplicates via last_odds_update staleness — far fewer API
+            # requests and no double-fetch race.
             if fixture_ids_for_odds:
-                logger.info(f"Dispatching odds fetching tasks for {len(fixture_ids_for_odds)} scheduled fixtures...")
-                try:
-                    # Create all task signatures
-                    odds_tasks = [fetch_odds_for_single_event_v3_task.s(fid) for fid in fixture_ids_for_odds]
-                    
-                    # Dispatch in batches to avoid overwhelming the queue
-                    batch_size = 50
-                    for i in range(0, len(odds_tasks), batch_size):
-                        batch = odds_tasks[i:i + batch_size]
-                        group(batch).apply_async()
-                    
-                    logger.info(f"Successfully dispatched {len(odds_tasks)} odds fetching tasks in {(len(odds_tasks) + batch_size - 1) // batch_size} batch(es)")
-                except Exception as e:
-                    logger.error(f"Failed to dispatch odds fetching tasks: {e}", exc_info=True)
-                    # Don't fail the entire task if odds dispatching fails
-            else:
-                logger.info("No scheduled fixtures to fetch odds for")
-        
+                logger.info(f"{len(fixture_ids_for_odds)} scheduled fixture(s) will get bulk odds via the odds-dispatch callback.")
+
         # Update league's last fetch timestamp
         league.last_fetched_events = timezone.now()
         league.save(update_fields=['last_fetched_events'])
@@ -664,46 +655,43 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     logger.info(f"Querying fixtures that need odds updates...")
     logger.info(f"Criteria: SCHEDULED status, match_date in next {API_FOOTBALL_V3_LEAD_TIME_DAYS} days, odds older than {API_FOOTBALL_V3_UPCOMING_STALENESS_MINUTES} minutes")
     
-    # Get fixtures that need odds updates (only v3 fixtures)
-    # Convert to list once to avoid duplicate queries
-    fixture_ids_to_update = list(FootballFixture.objects.filter(
+    # Fixtures needing odds, with the (league, day) they belong to. Odds are
+    # fetched in bulk per league-day, so we only need the distinct pairs — not
+    # one task per fixture.
+    fixtures_needing_odds = FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
         api_id__startswith='v3_'  # Only v3 fixtures
-    ).values_list('id', flat=True))
-    
-    fixture_count = len(fixture_ids_to_update)
-    
-    # Log more details about what we found
-    total_scheduled = FootballFixture.objects.filter(
-        status=FootballFixture.FixtureStatus.SCHEDULED,
-        match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
-        api_id__startswith='v3_'
-    ).count()
-    logger.info(f"Total scheduled v3 fixtures in date range: {total_scheduled}")
-    logger.info(f"Fixtures needing odds update: {fixture_count}")
-    
-    if not fixture_ids_to_update:
+    ).values_list('league_id', 'match_date')
+
+    # Group by the fixture's UTC day: fixtures are ingested with timezone=UTC and
+    # the /odds `date` filter is likewise evaluated in UTC (the client sends no
+    # timezone), so a UTC day keeps the bulk query aligned with what we stored.
+    league_day_pairs = set()
+    for league_id, match_date in fixtures_needing_odds:
+        if match_date:
+            utc_day = timezone.localtime(match_date, timezone.utc).strftime('%Y-%m-%d')
+            league_day_pairs.add((league_id, utc_day))
+
+    fixture_count = len(fixtures_needing_odds)
+    logger.info(f"Fixtures needing odds update: {fixture_count} across {len(league_day_pairs)} league-day group(s)")
+
+    if not league_day_pairs:
         logger.info("No fixtures require an odds update at this time.")
         logger.info("="*80)
         logger.info("TASK END: dispatch_odds_fetching_after_events_v3_task - No odds updates needed")
         logger.info("="*80)
         return
-    
-    logger.info(f"Found {fixture_count} fixtures requiring odds updates")
-    logger.info(f"Creating {fixture_count} individual odds fetching tasks...")
-    
-    tasks = [fetch_odds_for_single_event_v3_task.s(fixture_id) for fixture_id in fixture_ids_to_update]
-    
-    if tasks:
-        group(tasks).apply_async()
-        logger.info(f"Successfully dispatched {len(tasks)} odds fetching tasks to the queue")
-        logger.info("Tasks will fetch odds for each fixture in parallel")
-        logger.info("="*80)
-        logger.info("TASK END: dispatch_odds_fetching_after_events_v3_task - SUCCESS")
-        logger.info(f"Dispatched {len(tasks)} odds fetch tasks")
-        logger.info("="*80)
+
+    # One bulk request-set per league-day instead of one request per fixture.
+    tasks = [fetch_odds_for_league_date_v3_task.s(league_id, day) for league_id, day in league_day_pairs]
+    group(tasks).apply_async()
+    logger.info(f"Dispatched {len(tasks)} bulk odds task(s) for {fixture_count} fixtures "
+                f"(was 1 task/fixture; now 1 task/league-day).")
+    logger.info("="*80)
+    logger.info("TASK END: dispatch_odds_fetching_after_events_v3_task - SUCCESS")
+    logger.info("="*80)
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='cpu_heavy')
@@ -766,6 +754,85 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         raise self.retry(exc=e)
     except Exception as e:
         logger.error(f"TASK ERROR: Unexpected error for fixture {fixture_id}: {e}", exc_info=True)
+        raise self.retry(exc=e)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='cpu_heavy')
+def fetch_odds_for_league_date_v3_task(self, league_pk: int, date_str: str):
+    """
+    Fetch odds in bulk for every fixture of one league on one day.
+
+    API-Football's /odds endpoint returns odds for many fixtures when queried by
+    league + season + date (paginated at 10 per page). This replaces the old
+    one-request-per-fixture approach: a league-day with N fixtures now costs a
+    couple of paginated requests instead of N requests — a large quota saving.
+    """
+    jitter_delay = random.uniform(0.5, 2.0)
+    time.sleep(jitter_delay)
+    logger.info(f"TASK START: fetch_odds_for_league_date_v3_task - league_pk={league_pk}, date={date_str}")
+
+    try:
+        league = League.objects.get(id=league_pk)
+        if not league.api_id or not league.api_id.startswith('v3_'):
+            logger.warning(f"League {league_pk} is not a v3 league; skipping bulk odds.")
+            return {"league_pk": league_pk, "date": date_str, "status": "skipped"}
+        api_league_id = int(league.api_id.replace('v3_', ''))
+        season = get_current_season()
+
+        client = APIFootballV3Client()
+        odds_items = client.get_odds(
+            league_id=api_league_id,
+            season=season,
+            date=date_str,
+            paginate=True,
+            max_pages=API_FOOTBALL_V3_MAX_ODDS_PAGES,
+        )
+        logger.info(f"Bulk odds returned {len(odds_items)} item(s) for league '{league.name}' on {date_str}")
+
+        # Group the bulk response by API fixture id.
+        items_by_fixture = {}
+        for item in odds_items:
+            fid = (item.get('fixture') or {}).get('id')
+            if fid is not None:
+                items_by_fixture.setdefault(int(fid), []).append(item)
+
+        if not items_by_fixture:
+            logger.info(f"No odds available for league '{league.name}' on {date_str}.")
+            return {"league_pk": league_pk, "date": date_str, "status": "no_odds", "fixtures": 0}
+
+        # Map our stored fixtures for this league-day in one query.
+        api_ids = [f"v3_{fid}" for fid in items_by_fixture.keys()]
+        fixtures = {
+            int(f.api_id.replace('v3_', '')): f
+            for f in FootballFixture.objects.filter(api_id__in=api_ids)
+        }
+
+        processed = 0
+        for api_fid, items in items_by_fixture.items():
+            fixture = fixtures.get(api_fid)
+            if not fixture:
+                continue  # Odds for a fixture we don't track; ignore.
+            try:
+                with transaction.atomic():
+                    fixture_for_update = FootballFixture.objects.select_for_update().get(id=fixture.id)
+                    _process_api_football_v3_odds_data(fixture_for_update, items)
+                    fixture_for_update.last_odds_update = timezone.now()
+                    fixture_for_update.save(update_fields=['last_odds_update'])
+                processed += 1
+            except Exception as e:
+                logger.error(f"Failed to process bulk odds for fixture {fixture.id}: {e}", exc_info=True)
+
+        logger.info(f"TASK END: fetch_odds_for_league_date_v3_task - processed odds for {processed} fixture(s)")
+        return {"league_pk": league_pk, "date": date_str, "status": "success", "fixtures": processed}
+
+    except League.DoesNotExist:
+        logger.error(f"League {league_pk} not found for bulk odds fetch.")
+        return {"league_pk": league_pk, "date": date_str, "status": "error", "message": "League not found"}
+    except APIFootballV3Exception as e:
+        logger.error(f"API-Football v3 error during bulk odds fetch (league {league_pk}, {date_str}): {e}")
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.error(f"Unexpected error during bulk odds fetch (league {league_pk}, {date_str}): {e}", exc_info=True)
         raise self.retry(exc=e)
 
 
