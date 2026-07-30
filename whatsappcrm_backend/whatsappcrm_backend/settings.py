@@ -146,6 +146,15 @@ MEDIA_ROOT = BASE_DIR / 'media'  # Uses bind mount in docker-compose.yml for ngi
 # This MUST be set to your actual domain in production (e.g., 'https://yourdomain.com')
 SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000')
 
+# Bet settlement notifications.
+# Plain-text messages only deliver inside WhatsApp's 24h customer-service window;
+# a bet settled after that window needs an approved template. When
+# BET_SETTLEMENT_TEMPLATE_NAME is set, settlement notifications are sent as that
+# template (body params, in order: ticket id, outcome phrase, amount, new
+# balance); otherwise they fall back to a plain-text message.
+BET_SETTLEMENT_TEMPLATE_NAME = os.getenv('BET_SETTLEMENT_TEMPLATE_NAME', '')
+BET_SETTLEMENT_TEMPLATE_LANG = os.getenv('BET_SETTLEMENT_TEMPLATE_LANG', 'en_US')
+
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {
     "default": {

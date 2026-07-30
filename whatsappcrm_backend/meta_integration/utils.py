@@ -122,6 +122,27 @@ def create_text_message_data(text_body: str, preview_url: bool = False) -> dict:
     """Creates the data payload for a simple text message."""
     return {"body": text_body, "preview_url": preview_url}
 
+def create_template_message_data(name: str, language_code: str = "en_US", body_parameters: list = None) -> dict:
+    """
+    Creates the data payload for a template message.
+
+    Template messages are required to reach a user outside WhatsApp's 24-hour
+    customer-service window (e.g. a bet settled days after it was placed).
+
+    Args:
+        name: the approved template's name (as registered in Meta Business Manager).
+        language_code: the template's language code (e.g. 'en_US').
+        body_parameters: ordered list of strings substituted into the template
+            body's {{1}}, {{2}}, ... placeholders.
+    """
+    data = {"name": name, "language": {"code": language_code}}
+    if body_parameters:
+        data["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": str(p)} for p in body_parameters],
+        }]
+    return data
+
 def create_interactive_reply_buttons_data(body_text: str, buttons: list, header: dict = None, footer_text: str = None) -> dict:
     """
     Creates the data payload for an interactive message with reply buttons.
