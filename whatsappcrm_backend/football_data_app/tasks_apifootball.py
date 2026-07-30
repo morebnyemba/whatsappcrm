@@ -20,7 +20,7 @@ from customer_data.models import Bet, BetTicket
 from .utils import settle_ticket
 from .apifootball_client import APIFootballClient, APIFootballException
 
-from meta_integration.utils import send_whatsapp_message, create_text_message_data
+from meta_integration.utils import send_whatsapp_message, create_text_message_data, create_template_message_data
 
 logger = logging.getLogger(__name__)
 
@@ -1058,31 +1058,50 @@ def send_bet_ticket_settlement_notification_task(self, ticket_id: int, new_statu
             return
         
         contact = ticket.user.customer_profile.contact
-        
+        balance = ticket.user.wallet.balance
+
         if new_status == 'WON':
+            outcome_phrase = "a WINNER 🎉"
+            amount = Decimal(winnings)
             message_body = (
                 f"🎉 Congratulations! Your bet ticket (ID: {ticket.id}) has WON!\n\n"
-                f"Amount Won: ${Decimal(winnings):.2f}\n"
-                f"Your wallet has been credited. New balance: ${ticket.user.wallet.balance:.2f}."
+                f"Amount Won: ${amount:.2f}\n"
+                f"Your wallet has been credited. New balance: ${balance:.2f}."
             )
         elif new_status == 'LOST':
+            outcome_phrase = "not a winner this time 😔"
+            amount = Decimal('0.00')
             message_body = (
                 f"😔 Unfortunately, your bet ticket (ID: {ticket.id}) has lost.\n\n"
-                f"Better luck next time! Type 'fixtures' to see upcoming matches."
+                f"Better luck next time! Reply 'bet' to see upcoming matches."
             )
         elif new_status == 'REFUNDED':
+            outcome_phrase = "refunded (push/void)"
+            amount = Decimal(winnings)
             message_body = (
                 f"ℹ️ Your bet ticket (ID: {ticket.id}) has been refunded.\n\n"
-                f"The match result was a push/void. Your stake of ${Decimal(winnings):.2f} has been returned to your wallet.\n"
-                f"New balance: ${ticket.user.wallet.balance:.2f}"
+                f"The match result was a push/void. Your stake of ${amount:.2f} has been returned to your wallet.\n"
+                f"New balance: ${balance:.2f}"
             )
         else:
             logger.warning(f"Unhandled status '{new_status}' for ticket {ticket_id}.")
             return
-        
-        message_data = create_text_message_data(text_body=message_body)
-        send_whatsapp_message(to_phone_number=contact.whatsapp_id, message_type='text', data=message_data)
-        logger.info(f"Sent settlement notification to {contact.whatsapp_id} for ticket {ticket_id}.")
+
+        # Prefer an approved template so the notification also delivers outside
+        # WhatsApp's 24h customer-service window; fall back to text when no
+        # template is configured.
+        template_name = getattr(settings, 'BET_SETTLEMENT_TEMPLATE_NAME', '')
+        if template_name:
+            message_data = create_template_message_data(
+                name=template_name,
+                language_code=getattr(settings, 'BET_SETTLEMENT_TEMPLATE_LANG', 'en_US'),
+                body_parameters=[str(ticket.id), outcome_phrase, f"{amount:.2f}", f"{balance:.2f}"],
+            )
+            send_whatsapp_message(to_phone_number=contact.whatsapp_id, message_type='template', data=message_data)
+        else:
+            message_data = create_text_message_data(text_body=message_body)
+            send_whatsapp_message(to_phone_number=contact.whatsapp_id, message_type='text', data=message_data)
+        logger.info(f"Sent settlement notification to {contact.whatsapp_id} for ticket {ticket_id} (status={new_status}).")
     
     except BetTicket.DoesNotExist:
         logger.error(f"BetTicket {ticket_id} not found for notification.")

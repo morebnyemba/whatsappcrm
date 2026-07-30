@@ -33,13 +33,27 @@ class FootballFixtureSerializer(serializers.ModelSerializer):
     home_team = serializers.CharField(source='home_team.name', read_only=True)
     away_team = serializers.CharField(source='away_team.name', read_only=True)
     markets = serializers.SerializerMethodField()
+    prediction = serializers.SerializerMethodField()
 
     class Meta:
         model = FootballFixture
         fields = [
             'id', 'league', 'home_team', 'away_team', 'match_date', 'status',
-            'home_team_score', 'away_team_score', 'markets',
+            'home_team_score', 'away_team_score', 'markets', 'prediction',
         ]
+
+    def get_prediction(self, obj):
+        pred = getattr(obj, 'prediction', None)
+        if pred is None:
+            return None
+        return {
+            'prob_home': round(pred.prob_home, 4),
+            'prob_draw': round(pred.prob_draw, 4),
+            'prob_away': round(pred.prob_away, 4),
+            'favored': pred.favored_side,
+            'method': pred.method,
+            'data_points': pred.data_points,
+        }
 
     def get_markets(self, obj):
         # One representative (most recently updated) active market per category,

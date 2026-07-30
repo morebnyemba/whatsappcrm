@@ -105,7 +105,7 @@ ASGI_APPLICATION = 'whatsappcrm_backend.asgi.application' # For Celery with Djan
 DB_ENGINE_DEFAULT = 'django.db.backends.postgresql'
 DB_NAME_DEFAULT = 'whatsapp_crm_dev'  # The database name you created
 DB_USER_DEFAULT = 'crm_user'          # The user you created
-DB_PASSWORD_DEFAULT = 'kayden'            # It's best to set this in your .env file
+DB_PASSWORD_DEFAULT = ''                 # Set DB_PASSWORD in your .env file (no password is committed here)
 DB_HOST_DEFAULT = 'localhost'           # Or '127.0.0.1'
 DB_PORT_DEFAULT = '5432'                # Default PostgreSQL port
 
@@ -145,6 +145,22 @@ MEDIA_ROOT = BASE_DIR / 'media'  # Uses bind mount in docker-compose.yml for ngi
 # Site URL for generating absolute URLs (required for WhatsApp media links)
 # This MUST be set to your actual domain in production (e.g., 'https://yourdomain.com')
 SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000')
+
+# Bet settlement notifications.
+# Plain-text messages only deliver inside WhatsApp's 24h customer-service window;
+# a bet settled after that window needs an approved template. When
+# BET_SETTLEMENT_TEMPLATE_NAME is set, settlement notifications are sent as that
+# template (body params, in order: ticket id, outcome phrase, amount, new
+# balance); otherwise they fall back to a plain-text message.
+BET_SETTLEMENT_TEMPLATE_NAME = os.getenv('BET_SETTLEMENT_TEMPLATE_NAME', '')
+BET_SETTLEMENT_TEMPLATE_LANG = os.getenv('BET_SETTLEMENT_TEMPLATE_LANG', 'en_US')
+
+# AI layer (Phase 2). The conversational assistant answers questions from real
+# DB data and works without an LLM (keyword intents + templated answers). When
+# GEMINI_API_KEY is set, Gemini is used only to phrase answers/explanations —
+# never to place bets or invent odds/results/balances.
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
 
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {

@@ -9,8 +9,18 @@ from .models import (
     MarketCategory,
     Market,
     MarketOutcome,
-    Configuration
+    Configuration,
+    FixturePrediction,
 )
+
+
+@admin.register(FixturePrediction)
+class FixturePredictionAdmin(admin.ModelAdmin):
+    """Admin view for model-generated fixture predictions (read-only, advisory)."""
+    list_display = ('fixture', 'prob_home', 'prob_draw', 'prob_away', 'method', 'data_points', 'computed_at')
+    list_filter = ('method',)
+    search_fields = ('fixture__home_team__name', 'fixture__away_team__name')
+    readonly_fields = ('computed_at',)
 
 @admin.register(League)
 class LeagueAdmin(admin.ModelAdmin):
