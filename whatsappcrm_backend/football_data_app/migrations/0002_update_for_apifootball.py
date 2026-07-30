@@ -1,10 +1,11 @@
 # Generated migration for APIFootball integration
 
+from django.apps import apps as global_apps
 from django.db import migrations, models
 
 
 def _add_configuration_fields_if_missing(apps, schema_editor):
-    Configuration = apps.get_model('football_data_app', 'Configuration')
+    Configuration = global_apps.get_model('football_data_app', 'Configuration')
     table = Configuration._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
@@ -26,7 +27,7 @@ def _add_configuration_fields_if_missing(apps, schema_editor):
 
 
 def _remove_configuration_fields_if_present(apps, schema_editor):
-    Configuration = apps.get_model('football_data_app', 'Configuration')
+    Configuration = global_apps.get_model('football_data_app', 'Configuration')
     table = Configuration._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
@@ -48,7 +49,7 @@ def _remove_configuration_fields_if_present(apps, schema_editor):
 
 
 def _add_league_fields_if_missing(apps, schema_editor):
-    League = apps.get_model('football_data_app', 'League')
+    League = global_apps.get_model('football_data_app', 'League')
     table = League._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
@@ -70,7 +71,7 @@ def _add_league_fields_if_missing(apps, schema_editor):
 
 
 def _remove_league_fields_if_present(apps, schema_editor):
-    League = apps.get_model('football_data_app', 'League')
+    League = global_apps.get_model('football_data_app', 'League')
     table = League._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
@@ -92,7 +93,7 @@ def _remove_league_fields_if_present(apps, schema_editor):
 
 
 def _add_team_fields_if_missing(apps, schema_editor):
-    Team = apps.get_model('football_data_app', 'Team')
+    Team = global_apps.get_model('football_data_app', 'Team')
     table = Team._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
@@ -107,7 +108,7 @@ def _add_team_fields_if_missing(apps, schema_editor):
 
 
 def _remove_team_fields_if_present(apps, schema_editor):
-    Team = apps.get_model('football_data_app', 'Team')
+    Team = global_apps.get_model('football_data_app', 'Team')
     table = Team._meta.db_table
 
     with schema_editor.connection.cursor() as cursor:
