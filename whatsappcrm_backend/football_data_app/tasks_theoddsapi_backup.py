@@ -225,25 +225,138 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     now = timezone.now()
     stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
 
-    # Get a list of fixture IDs that need an odds update.
-    fixture_ids_to_update = FootballFixture.objects.filter(
+    # Fixtures needing odds, grouped by league. The Odds API's /sports/{sport}/odds
+    # endpoint returns every requested event's featured-market odds in a single
+    # request (cost = markets x regions, regardless of event count), so we fetch
+    # one bulk call per league instead of one call per fixture.
+    leagues_needing_odds = set(FootballFixture.objects.filter(
         models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
         status=FootballFixture.FixtureStatus.SCHEDULED,
         match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS))
-    ).values_list('id', flat=True)
+    ).values_list('league_id', flat=True))
 
-    if not fixture_ids_to_update:
+    if not leagues_needing_odds:
         logger.info("No fixtures require an odds update at this time.")
         return
 
-    # Create a group of tasks, one for each fixture.
-    tasks = [fetch_odds_for_single_event_task.s(fixture_id) for fixture_id in fixture_ids_to_update]
+    tasks = [fetch_odds_for_league_bulk_task.s(league_id) for league_id in leagues_needing_odds]
+    group(tasks).apply_async()
+    logger.info(f"Dispatched {len(tasks)} bulk odds task(s) (one per league; was one per fixture).")
 
-    if tasks:
-        group(tasks).apply_async()
-        logger.info(f"Dispatched {len(tasks)} individual odds fetching tasks for fixtures.")
-    else:
-        logger.info("No odds fetching tasks were dispatched (possibly all fixtures up-to-date or no upcoming).")
+
+def _apply_odds_event(fixture_for_update, odds_data):
+    """
+    Apply one event's odds payload to a locked fixture: sync team names, replace
+    the markets for the bookmakers present in the payload, and stamp
+    last_odds_update. Shared by the single-event and bulk odds tasks so their
+    behaviour is identical.
+    """
+    api_home_team_name = odds_data.get('home_team')
+    api_away_team_name = odds_data.get('away_team')
+    team_fields_to_update = []
+
+    if api_home_team_name and fixture_for_update.home_team.name != api_home_team_name:
+        correct_home_team, _ = Team.objects.get_or_create(name=api_home_team_name)
+        fixture_for_update.home_team = correct_home_team
+        team_fields_to_update.append('home_team')
+
+    if api_away_team_name and fixture_for_update.away_team.name != api_away_team_name:
+        correct_away_team, _ = Team.objects.get_or_create(name=api_away_team_name)
+        fixture_for_update.away_team = correct_away_team
+        team_fields_to_update.append('away_team')
+
+    bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
+    if bookmaker_keys_in_response:
+        Market.objects.filter(
+            fixture=fixture_for_update,
+            bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response,
+        ).delete()
+
+    for bookmaker_data in odds_data.get('bookmakers', []):
+        _process_bookmaker_data(fixture_for_update, bookmaker_data)
+
+    fixture_for_update.last_odds_update = timezone.now()
+    fixture_for_update.save(update_fields=['last_odds_update'] + team_fields_to_update)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=300)
+def fetch_odds_for_league_bulk_task(self, league_id: int):
+    """
+    Fetch featured-market odds for all of a league's fixtures-needing-odds in one
+    request via /sports/{sport}/odds with an eventIds batch (The Odds API).
+
+    This replaces one request per fixture. Note: the bulk /odds endpoint serves
+    only featured markets (h2h, totals, spreads) — the additional markets from
+    THE_ODDS_API_ADDITIONAL_MARKETS are only available via the per-event endpoint,
+    so they are intentionally not fetched on this cost-optimized path.
+    """
+    time.sleep(random.uniform(0.5, 2.0))
+    try:
+        league = League.objects.get(id=league_id)
+    except League.DoesNotExist:
+        logger.error(f"[BulkOdds] League {league_id} not found.")
+        return {"league_id": league_id, "status": "error", "message": "League not found"}
+
+    now = timezone.now()
+    stale_cutoff = now - timedelta(minutes=ODDS_UPCOMING_STALENESS_MINUTES)
+    fixtures = list(FootballFixture.objects.filter(
+        models.Q(last_odds_update__isnull=True) | models.Q(last_odds_update__lt=stale_cutoff),
+        league=league,
+        status=FootballFixture.FixtureStatus.SCHEDULED,
+        match_date__range=(now, now + timedelta(days=ODDS_LEAD_TIME_DAYS)),
+    ))
+    if not fixtures:
+        return {"league_id": league_id, "status": "no_fixtures", "fixtures": 0}
+
+    fixtures_by_event = {f.api_id: f for f in fixtures if f.api_id}
+    event_ids = list(fixtures_by_event.keys())
+
+    try:
+        client = TheOddsAPIClient()
+        # The Odds API caps eventIds per request; chunk to be safe.
+        events = []
+        for i in range(0, len(event_ids), 40):
+            chunk = event_ids[i:i + 40]
+            events.extend(client.get_odds(
+                sport_key=league.api_id,
+                regions=DEFAULT_ODDS_API_REGIONS,
+                markets=DEFAULT_ODDS_API_MARKETS,
+                event_ids=chunk,
+                bookmakers=PREFERRED_ODDS_API_BOOKMAKERS,
+            ) or [])
+
+        processed = 0
+        seen_event_ids = set()
+        for event in events:
+            event_id = event.get('id')
+            fixture = fixtures_by_event.get(event_id)
+            if not fixture:
+                continue
+            seen_event_ids.add(event_id)
+            try:
+                with transaction.atomic():
+                    fixture_for_update = FootballFixture.objects.select_for_update().select_related('home_team', 'away_team').get(id=fixture.id)
+                    _apply_odds_event(fixture_for_update, event)
+                processed += 1
+            except Exception as e:
+                logger.error(f"[BulkOdds] Failed to process odds for fixture {fixture.id}: {e}", exc_info=True)
+
+        # Stamp fixtures that returned no odds so we don't re-query them immediately.
+        for event_id, fixture in fixtures_by_event.items():
+            if event_id not in seen_event_ids:
+                FootballFixture.objects.filter(id=fixture.id).update(last_odds_update=now)
+
+        logger.info(f"[BulkOdds] League '{league.name}': processed odds for {processed}/{len(fixtures)} fixture(s) in "
+                    f"{(len(event_ids) + 39) // 40} request(s).")
+        return {"league_id": league_id, "status": "success", "fixtures": processed}
+
+    except TheOddsAPIException as e:
+        logger.exception(f"[BulkOdds] API error for league {league_id}: {e}")
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception(f"[BulkOdds] Unexpected error for league {league_id}: {e}")
+        raise self.retry(exc=e)
+
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=300)
 def fetch_odds_for_single_event_task(self, fixture_id: int):
@@ -288,49 +401,8 @@ def fetch_odds_for_single_event_task(self, fixture_id: int):
         with transaction.atomic():
             # Re-fetch fixture with lock to prevent race conditions during update
             fixture_for_update = FootballFixture.objects.select_for_update().select_related('home_team', 'away_team').get(id=fixture.id)
-
-            # --- TEAM NAME SYNC FIX ---
-            # The odds endpoint is the source of truth for team names used in market outcomes.
-            # This ensures that fixture team names match the names in the odds data (e.g., "Man Utd" vs "Manchester United").
-            api_home_team_name = odds_data.get('home_team')
-            api_away_team_name = odds_data.get('away_team')
-            team_fields_to_update = []
-
-            if api_home_team_name and fixture_for_update.home_team.name != api_home_team_name:
-                logger.warning(f"[TeamSync] Mismatch for fixture {fixture.id}: DB home team '{fixture_for_update.home_team.name}' vs API odds home team '{api_home_team_name}'. Syncing.")
-                correct_home_team, _ = Team.objects.get_or_create(name=api_home_team_name)
-                fixture_for_update.home_team = correct_home_team
-                team_fields_to_update.append('home_team')
-            
-            if api_away_team_name and fixture_for_update.away_team.name != api_away_team_name:
-                logger.warning(f"[TeamSync] Mismatch for fixture {fixture.id}: DB away team '{fixture_for_update.away_team.name}' vs API odds away team '{api_away_team_name}'. Syncing.")
-                correct_away_team, _ = Team.objects.get_or_create(name=api_away_team_name)
-                fixture_for_update.away_team = correct_away_team
-                team_fields_to_update.append('away_team')
-            # --- END TEAM NAME SYNC FIX ---
-            # Get a list of bookmaker keys present in the new API data
-            bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
-
-            # Delete markets for this fixture from bookmakers that are in the API response.
-            # This ensures we are replacing their data with the latest, without touching
-            # data from other bookmakers not in this specific API response.
-            if bookmaker_keys_in_response:
-                deleted_count, _ = Market.objects.filter(
-                    fixture=fixture_for_update,
-                    bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response
-                ).delete()
-                logger.debug(
-                    f"[SingleEventOdds] Cleared {deleted_count} existing market(s) for fixture {fixture.id} "
-                    f"from bookmakers: {bookmaker_keys_in_response}."
-                )
-
-            for bookmaker_data in odds_data.get('bookmakers', []):
-                _process_bookmaker_data(fixture_for_update, bookmaker_data)
-
-            fixture_for_update.last_odds_update = timezone.now()
-            fields_to_save = ['last_odds_update'] + team_fields_to_update
-            fixture_for_update.save(update_fields=fields_to_save)
-            logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}. Updated fields: {fields_to_save}")
+            _apply_odds_event(fixture_for_update, odds_data)
+            logger.info(f"[SingleEventOdds] SUCCESS - Successfully processed and saved odds for fixture {fixture.id}.")
             return {"fixture_id": fixture.id, "status": "success"}
 
     except FootballFixture.DoesNotExist:
