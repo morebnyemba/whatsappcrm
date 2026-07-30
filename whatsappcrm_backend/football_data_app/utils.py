@@ -687,7 +687,10 @@ def settle_ticket(ticket_id: int):
     Triggers a notification to the user if the status changes.
     """
     # --- Local Imports to Prevent Circular Dependency ---
-    from football_data_app.models import BetTicket
+    # BetTicket lives in customer_data, not football_data_app; importing it from
+    # the wrong module previously raised ImportError and broke the entire
+    # settlement + notification pipeline whenever a fixture was settled.
+    from customer_data.models import BetTicket
     from .tasks import send_bet_ticket_settlement_notification_task
 
     log_prefix = f"[Settle Ticket - ID: {ticket_id}]"
