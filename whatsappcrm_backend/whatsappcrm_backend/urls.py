@@ -25,6 +25,7 @@ urlpatterns = [
     path('crm-api/conversations/', include('conversations.urls', namespace='conversations_api')),
     path('crm-api/paynow-integration/', include('paynow_integration.urls', namespace='paynow_integration_api')),
 path('crm-api/customer-data/', include('customer_data.urls', namespace='customer_data_api')),
+path('crm-api/football/', include('football_data_app.urls', namespace='football_data_api')),
 path('crm-api/stats/', include('stats.urls', namespace='stats_api')),
     # API endpoints for 'flows' application
     # This includes DRF APIs for Flows, FlowSteps, etc. (e.g., /crm-api/flows/flows/)
