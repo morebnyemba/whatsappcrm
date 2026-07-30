@@ -1,18 +1,15 @@
 # whatsappcrm_backend/football_data_app/ai_gateway.py
 """
-LLM gateway for the conversational betting assistant (Phase 2).
+Conversational assistant gateway for BetBlitz (Phase 2).
 
-A single entry point that turns a user's free-form WhatsApp question into a
-structured intent and answers it **from real database data** — never inventing
-odds, results, or balances. An optional Gemini call is used only to (a) classify
-ambiguous questions and (b) phrase answers/prediction explanations in natural
-language; when no GEMINI_API_KEY is configured the gateway falls back to
-keyword-based intent detection and templated answers, so it is fully functional
-(and testable) without the LLM.
-
-Hard rule: bet placement never goes through free-text LLM output. This gateway
-only reads and explains; placing a bet always routes through the confirmable
-tap flow (betting_flow.py).
+Design constraints:
+- The LLM (Gemini) is used ONLY as an intent matcher, and ONLY as a fallback:
+  keyword matching runs first, and Gemini is consulted just to map a free-form
+  question to one of a fixed set of intent labels when the keywords don't match.
+- The LLM never generates user-facing text. Every answer is templated from real
+  database data — no invented odds, results, or balances.
+- Bet placement never routes through the assistant; it always goes through the
+  confirmable tap flow (betting_flow.py).
 """
 from __future__ import annotations
 
@@ -27,29 +24,31 @@ logger = logging.getLogger(__name__)
 INTENT_BALANCE = 'balance'
 INTENT_LAST_TICKET = 'last_ticket'
 INTENT_OPEN_BETS = 'open_bets'
-INTENT_TIP = 'tip'
 INTENT_HELP = 'help'
+
+ALL_INTENTS = (INTENT_BALANCE, INTENT_LAST_TICKET, INTENT_OPEN_BETS, INTENT_HELP)
 
 _KEYWORDS = {
     INTENT_BALANCE: ('balance', 'wallet', 'how much', 'funds', 'money'),
     INTENT_LAST_TICKET: ('last ticket', 'last bet', 'my ticket', 'how is my', "how's my", 'did i win', 'result'),
     INTENT_OPEN_BETS: ('open bet', 'open ticket', 'pending', 'my bets', 'active bet'),
-    INTENT_TIP: ('best bet', 'tip', 'prediction', 'who will win', 'recommend', 'favourite', 'favorite', 'tonight'),
     INTENT_HELP: ('help', 'how do', 'what can you'),
 }
 
 
-def classify_intent(text: str) -> str:
-    """Keyword-based intent classification (LLM-free baseline)."""
+def _keyword_intent(text: str) -> str | None:
+    """Keyword-based intent match. Returns None when nothing matches."""
     t = (text or '').lower()
-    for intent, kws in _KEYWORDS.items():
-        if any(k in t for k in kws):
+    for intent in (INTENT_BALANCE, INTENT_LAST_TICKET, INTENT_OPEN_BETS):
+        if any(k in t for k in _KEYWORDS[intent]):
             return intent
-    return INTENT_HELP
+    if any(k in t for k in _KEYWORDS[INTENT_HELP]):
+        return INTENT_HELP
+    return None
 
 
 class GeminiGateway:
-    """Thin wrapper around the Gemini REST API with graceful degradation."""
+    """Thin Gemini wrapper used solely for fallback intent classification."""
 
     def __init__(self):
         self.api_key = getattr(settings, 'GEMINI_API_KEY', '') or ''
@@ -59,25 +58,47 @@ class GeminiGateway:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
-    def generate(self, prompt: str, system: str = None, timeout: int = 15) -> str | None:
-        """Call Gemini for a short natural-language completion. Returns None on any failure."""
+    def match_intent(self, text: str, timeout: int = 10) -> str | None:
+        """
+        Map free text to one of ALL_INTENTS using the LLM. Returns a valid intent
+        label or None. The model is constrained to output only a label; anything
+        outside ALL_INTENTS is rejected so the LLM can never inject free-form text.
+        """
         if not self.enabled:
             return None
         try:
             import requests
             url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                    f"{self.model}:generateContent?key={self.api_key}")
-            parts = []
-            if system:
-                parts.append({"text": system})
-            parts.append({"text": prompt})
-            resp = requests.post(url, json={"contents": [{"parts": parts}]}, timeout=timeout)
+            system = (
+                "You are an intent classifier for a sports-betting assistant. "
+                "Respond with EXACTLY ONE of these labels and nothing else: "
+                + ", ".join(ALL_INTENTS) + "."
+            )
+            prompt = f"{system}\n\nUser message: {text!r}\nLabel:"
+            resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=timeout)
             resp.raise_for_status()
-            data = resp.json()
-            return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        except Exception as e:
-            logger.warning(f"Gemini generate failed, falling back: {e}")
+            label = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip().lower()
+            # Only accept a recognised label; never surface raw model text.
+            for intent in ALL_INTENTS:
+                if intent in label:
+                    return intent
             return None
+        except Exception as e:
+            logger.warning(f"Gemini intent match failed, using keyword result: {e}")
+            return None
+
+
+def classify_intent(text: str) -> str:
+    """
+    Keyword matching first; Gemini only as a fallback intent matcher when the
+    keywords don't resolve. Defaults to HELP.
+    """
+    intent = _keyword_intent(text)
+    if intent is not None:
+        return intent
+    llm_intent = GeminiGateway().match_intent(text)
+    return llm_intent or INTENT_HELP
 
 
 def _user_from_contact(contact):
@@ -86,13 +107,8 @@ def _user_from_contact(contact):
 
 
 def answer_question(contact, text: str) -> str:
-    """
-    Answer a free-form question from DB data. LLM (if configured) is used only to
-    phrase the answer; the facts always come from the database.
-    """
+    """Answer a free-form question from DB data (templated; never LLM-generated)."""
     from customer_data.models import UserWallet, BetTicket
-    from .models import FootballFixture
-    from .predictions import prediction_sentence
 
     user = _user_from_contact(contact)
     intent = classify_intent(text)
@@ -120,34 +136,7 @@ def answer_question(contact, text: str) -> str:
         return (f"You have {n} open bet{'s' if n != 1 else ''}. Reply *bet* then *My bets* to see them."
                 if n else "You have no open bets right now. Reply *bet* to place one.")
 
-    if intent == INTENT_TIP:
-        # Surface a model prediction for the soonest upcoming fixture that has one.
-        from django.utils import timezone
-        fixture = (
-            FootballFixture.objects
-            .filter(status=FootballFixture.FixtureStatus.SCHEDULED,
-                    match_date__gte=timezone.now(), prediction__isnull=False)
-            .select_related('home_team', 'away_team', 'prediction')
-            .order_by('match_date')
-            .first()
-        )
-        if not fixture:
-            return ("I don't have a model prediction ready yet. Reply *bet* to browse matches and odds — "
-                    "and remember, bets can lose, so only stake what you can afford.")
-        sentence = prediction_sentence(fixture) or "No strong lean."
-        base = (f"For {fixture.home_team.name} vs {fixture.away_team.name}: {sentence}. "
-                f"This is a statistical estimate, not a guarantee — please bet responsibly.")
-        gateway = GeminiGateway()
-        if gateway.enabled:
-            phrased = gateway.generate(
-                prompt=f"Rewrite this betting insight in one friendly, responsible sentence, "
-                       f"without inventing any numbers: {base}",
-                system="You are a responsible betting assistant. Never invent odds, results, or amounts.",
-            )
-            if phrased:
-                return phrased
-        return base
-
     # INTENT_HELP / default
     return ("I'm your BetBlitz assistant 🤖. Ask me things like *what's my balance*, "
-            "*how's my last ticket*, or *any tips tonight*. To place a bet, reply *bet*.")
+            "*how's my last ticket*, or *any open bets*. To place a bet, reply *bet*. "
+            "Please gamble responsibly.")

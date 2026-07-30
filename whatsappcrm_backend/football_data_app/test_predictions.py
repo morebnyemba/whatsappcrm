@@ -51,13 +51,12 @@ class PredictionModelTests(TestCase):
         pred = P.compute_prediction(self.fixture)
         self.assertGreater(pred.prob_home, pred.prob_away)
 
-    def test_save_and_sentence(self):
+    def test_save_persists_prediction(self):
         obj = P.save_prediction(self.fixture)
         self.assertIsNotNone(obj)
         self.assertEqual(obj.favored_side, 'home')
         self.fixture.refresh_from_db()
-        sentence = P.prediction_sentence(self.fixture)
-        self.assertIn('Strong FC', sentence)
+        self.assertIsNotNone(getattr(self.fixture, 'prediction', None))
 
     def test_no_history_returns_prediction_with_priors(self):
         # A fixture between brand-new teams still yields a valid (prior-based) prediction.
@@ -74,12 +73,19 @@ class PredictionModelTests(TestCase):
 
 
 class AiGatewayIntentTests(TestCase):
-    def test_intent_classification(self):
+    def test_keyword_intent_classification(self):
         self.assertEqual(AI.classify_intent("what's my balance?"), AI.INTENT_BALANCE)
         self.assertEqual(AI.classify_intent("how's my last ticket doing"), AI.INTENT_LAST_TICKET)
-        self.assertEqual(AI.classify_intent("any tips tonight"), AI.INTENT_TIP)
-        self.assertEqual(AI.classify_intent("blah blah"), AI.INTENT_HELP)
+        self.assertEqual(AI.classify_intent("any open bets?"), AI.INTENT_OPEN_BETS)
 
-    def test_gateway_disabled_without_key(self):
+    def test_unmatched_defaults_to_help_without_llm(self):
+        # No API key -> Gemini disabled -> falls back to HELP, never raises or
+        # returns free-form text.
         with self.settings(GEMINI_API_KEY=''):
             self.assertFalse(AI.GeminiGateway().enabled)
+            self.assertEqual(AI.classify_intent("what's the weather like"), AI.INTENT_HELP)
+
+    def test_llm_only_returns_known_labels(self):
+        # The matcher must reject anything outside the fixed intent set.
+        with self.settings(GEMINI_API_KEY=''):
+            self.assertIsNone(AI.GeminiGateway().match_intent("anything"))

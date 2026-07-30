@@ -34,6 +34,7 @@ BETTING_UX_ACTIONS = {
     'browse_fixtures', 'open_fixture', 'open_market', 'select_outcome',
     'view_slip', 'clear_slip', 'remove_last_selection', 'set_stake',
     'place_slip', 'my_bets', 'view_ticket',
+    'rg_menu', 'rg_self_exclude', 'rg_set_deposit_limit', 'rg_set_stake_limit',
 }
 
 QUICK_STAKES = ('10', '50', '100')
@@ -258,5 +259,45 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
         msg = "\n".join(lines)[:4096]
         flow_context['ticket_detail_message'] = msg
         return _ok(msg, ticket_detail_message=msg, route='shown')
+
+    # ------------------------------------------------- responsible gambling
+    if action_type in ('rg_menu', 'rg_self_exclude', 'rg_set_deposit_limit', 'rg_set_stake_limit'):
+        if not user:
+            return _fail("You need an account to manage safer-gambling settings.", route='no_user')
+        from customer_data import compliance
+        from decimal import Decimal, InvalidOperation
+
+        if action_type == 'rg_menu':
+            summary = compliance.limits_summary(user)
+            flow_context['rg_summary'] = summary
+            return _ok(summary, rg_summary=summary, route='shown')
+
+        if action_type == 'rg_self_exclude':
+            days = _parse_selection(selection, 'excl') or selection
+            try:
+                days = int(days)
+            except (TypeError, ValueError):
+                return _fail("Please choose a valid self-exclusion period.", route='invalid')
+            compliance.set_self_exclusion(user, days)
+            msg = (f"🛡️ You have been self-excluded for {days} day(s). Betting and deposits are "
+                   f"blocked during this time. Take care.")
+            return _ok(msg, rg_message=msg, route='done')
+
+        # rg_set_deposit_limit / rg_set_stake_limit accept a typed amount (0 = remove)
+        raw = selection if selection is not None else stake
+        try:
+            value = Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            return _fail("Please enter a valid amount (e.g. 100), or 0 to remove.", route='invalid')
+        remove = value <= 0
+        if action_type == 'rg_set_deposit_limit':
+            compliance.set_daily_deposit_limit(user, None if remove else value)
+            what = "daily deposit limit"
+        else:
+            compliance.set_daily_stake_limit(user, None if remove else value)
+            what = "daily stake limit"
+        msg = (f"✅ Your {what} has been removed." if remove
+               else f"✅ Your {what} is now ${value:.2f}.")
+        return _ok(msg, rg_message=msg, route='done')
 
     return _fail(f"Unsupported betting action: {action_type}", route='unsupported')

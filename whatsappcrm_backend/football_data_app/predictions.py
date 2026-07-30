@@ -152,19 +152,3 @@ def save_prediction(fixture: FootballFixture) -> Optional["FixturePrediction"]:
         ),
     )
     return obj
-
-
-def prediction_sentence(fixture: FootballFixture, prediction=None) -> Optional[str]:
-    """Plain-language one-liner for the fixture detail card, or None if no prediction."""
-    prediction = prediction or getattr(fixture, 'prediction', None)
-    if prediction is None:
-        return None
-    side = prediction.favored_side
-    if side == 'home':
-        who, pct = fixture.home_team.name, prediction.prob_home
-    elif side == 'away':
-        who, pct = fixture.away_team.name, prediction.prob_away
-    else:
-        return f"📊 Model: too close to call — draw {prediction.prob_draw:.0%}"
-    confidence = "" if prediction.data_points >= 10 else " (limited data)"
-    return f"📊 Model favours {who} {pct:.0%}{confidence}"

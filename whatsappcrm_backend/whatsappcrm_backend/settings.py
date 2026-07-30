@@ -162,6 +162,14 @@ BET_SETTLEMENT_TEMPLATE_LANG = os.getenv('BET_SETTLEMENT_TEMPLATE_LANG', 'en_US'
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
 
+# Responsible gambling / compliance.
+# RG_MIN_AGE gates a user's first bet on age (derived from date_of_birth).
+# RG_REQUIRE_KYC additionally requires KYC verification before betting; it is
+# off by default because verification is operator-driven (enabling it blocks
+# betting until users are marked verified).
+RG_MIN_AGE = int(os.getenv('RG_MIN_AGE', '18'))
+RG_REQUIRE_KYC = os.getenv('RG_REQUIRE_KYC', 'False') == 'True'
+
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {
     "default": {

@@ -2,7 +2,7 @@
 from django.contrib import admin, messages
 from django.db import transaction
 from django.utils import timezone
-from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet, PendingWithdrawal
+from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet, PendingWithdrawal, ResponsibleGamblingControls
 from .utils import process_manual_deposit_approval, process_withdrawal_approval
 from football_data_app.models import FootballFixture
 from football_data_app.tasks import settle_fixture_pipeline_task
@@ -22,6 +22,15 @@ class CustomerProfileAdmin(admin.ModelAdmin):
         ('Personal Information', {'fields': ('first_name', 'last_name', 'email', 'gender', 'date_of_birth')}),
         ('Metadata', {'fields': ('acquisition_source', 'created_at', 'updated_at', 'last_updated_from_conversation')}),
     )
+
+@admin.register(ResponsibleGamblingControls)
+class ResponsibleGamblingControlsAdmin(admin.ModelAdmin):
+    """Staff view to set self-exclusion, deposit/stake limits and KYC status."""
+    list_display = ('user', 'kyc_verified', 'self_excluded_until', 'daily_deposit_limit', 'daily_stake_limit', 'updated_at')
+    list_filter = ('kyc_verified',)
+    search_fields = ('user__username', 'user__email')
+    readonly_fields = ('created_at', 'updated_at')
+
 
 @admin.register(UserWallet)
 class UserWalletAdmin(admin.ModelAdmin):

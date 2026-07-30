@@ -303,6 +303,40 @@ class Bet(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+class ResponsibleGamblingControls(models.Model):
+    """
+    Per-user responsible-gambling controls: self-exclusion, deposit/stake limits
+    and KYC status. Enforced at the deposit and bet-placement chokepoints
+    (see customer_data/compliance.py). Age is derived from
+    CustomerProfile.date_of_birth.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='rg_controls')
+    self_excluded_until = models.DateTimeField(
+        null=True, blank=True,
+        help_text="If set and in the future, the user cannot bet or deposit until this time.")
+    daily_deposit_limit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Maximum total deposits per 24h. Blank means no limit.")
+    daily_stake_limit = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Maximum total stakes per 24h. Blank means no limit.")
+    kyc_verified = models.BooleanField(default=False, help_text="Whether the user has passed identity/age (KYC) verification.")
+    kyc_verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"RG controls for {self.user.username}"
+
+    def is_self_excluded(self):
+        from django.utils import timezone
+        return bool(self.self_excluded_until and self.self_excluded_until > timezone.now())
+
+    class Meta:
+        verbose_name = "Responsible Gambling Controls"
+        verbose_name_plural = "Responsible Gambling Controls"
+
+
 # Signal to create wallet when user is created
 @receiver(post_save, sender=User)
 def create_user_wallet(sender, instance, created, **kwargs):
