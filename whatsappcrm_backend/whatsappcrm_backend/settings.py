@@ -155,6 +155,13 @@ SITE_URL = os.getenv('SITE_URL', 'http://localhost:8000')
 BET_SETTLEMENT_TEMPLATE_NAME = os.getenv('BET_SETTLEMENT_TEMPLATE_NAME', '')
 BET_SETTLEMENT_TEMPLATE_LANG = os.getenv('BET_SETTLEMENT_TEMPLATE_LANG', 'en_US')
 
+# AI layer (Phase 2). The conversational assistant answers questions from real
+# DB data and works without an LLM (keyword intents + templated answers). When
+# GEMINI_API_KEY is set, Gemini is used only to phrase answers/explanations —
+# never to place bets or invent odds/results/balances.
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+
 # WhiteNoise configuration for efficient static file serving in production
 STORAGES = {
     "default": {

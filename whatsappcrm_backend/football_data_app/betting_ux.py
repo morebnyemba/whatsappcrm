@@ -205,7 +205,16 @@ def build_markets_screen(fixture_id: int) -> Optional[dict]:
         })
 
     header = f"{fixture.home_team.name} vs {fixture.away_team.name}"
-    body = f"*{_truncate(header, 60)}*\n{_kickoff_label(fixture)}\n\nChoose a market:"
+    body = f"*{_truncate(header, 60)}*\n{_kickoff_label(fixture)}"
+    # Advisory model prediction, if one has been computed for this fixture.
+    try:
+        from .predictions import prediction_sentence
+        sentence = prediction_sentence(fixture)
+        if sentence:
+            body += f"\n{sentence}"
+    except Exception:
+        pass
+    body += "\n\nChoose a market:"
     sections = [{'title': 'Markets', 'rows': rows}] if rows else []
     return {
         'fixture': fixture,

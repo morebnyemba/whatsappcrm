@@ -157,6 +157,39 @@ class MarketOutcome(models.Model):
         verbose_name_plural = _("Market Outcomes")
         ordering = ['market', 'outcome_name']
         
+class FixturePrediction(models.Model):
+    """
+    Model-generated win/draw/loss probabilities for a fixture.
+
+    Produced by a statistical model (see predictions.py) from historical results
+    already ingested via the football data API. Surfaced as plain-language copy
+    in the WhatsApp fixture detail card. This is advisory only and never feeds
+    bet placement or overrides real odds.
+    """
+    fixture = models.OneToOneField(FootballFixture, on_delete=models.CASCADE, related_name='prediction')
+    prob_home = models.FloatField(help_text="Probability the home team wins (0-1).")
+    prob_draw = models.FloatField(help_text="Probability of a draw (0-1).")
+    prob_away = models.FloatField(help_text="Probability the away team wins (0-1).")
+    expected_home_goals = models.FloatField(null=True, blank=True)
+    expected_away_goals = models.FloatField(null=True, blank=True)
+    method = models.CharField(max_length=30, default='poisson', help_text="Model used, e.g. 'poisson'.")
+    data_points = models.IntegerField(default=0, help_text="Number of historical matches the estimate is based on (confidence).")
+    computed_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Prediction for {self.fixture}: {self.prob_home:.0%}/{self.prob_draw:.0%}/{self.prob_away:.0%}"
+
+    @property
+    def favored_side(self) -> str:
+        """'home', 'draw' or 'away' — whichever the model rates most likely."""
+        return max((('home', self.prob_home), ('draw', self.prob_draw), ('away', self.prob_away)),
+                   key=lambda x: x[1])[0]
+
+    class Meta:
+        verbose_name = _("Fixture Prediction")
+        verbose_name_plural = _("Fixture Predictions")
+
+
 class Configuration(models.Model):
     """Configuration for football data API providers."""
     
