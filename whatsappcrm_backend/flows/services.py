@@ -132,7 +132,17 @@ class InteractiveButton(BasePydanticConfig):
     reply: InteractiveButtonReply
 
 class InteractiveButtonAction(BasePydanticConfig):
-    buttons: List[InteractiveButton] = Field(..., min_items=1, max_items=3)
+    # `buttons` may be omitted when `buttons_from` names a flow-context variable
+    # holding a pre-built list of button dicts (used for dynamically-generated
+    # tap options, e.g. betting outcomes). Exactly one must be provided.
+    buttons: Optional[List[InteractiveButton]] = Field(default=None, max_items=3)
+    buttons_from: Optional[str] = None
+
+    @root_validator(pre=False, skip_on_failure=True)
+    def check_buttons_source(cls, values):
+        if not values.get('buttons') and not values.get('buttons_from'):
+            raise ValueError("InteractiveButtonAction requires either 'buttons' or 'buttons_from'.")
+        return values
 
 class InteractiveHeader(BasePydanticConfig):
     type: Literal["text", "video", "image", "document"]
@@ -156,7 +166,17 @@ class InteractiveListSection(BasePydanticConfig):
 
 class InteractiveListAction(BasePydanticConfig):
     button: str = Field(..., min_length=1, max_length=20)
-    sections: List[InteractiveListSection] = Field(..., min_items=1)
+    # `sections` may be omitted when `sections_from` names a flow-context variable
+    # holding a pre-built list of section dicts (used for dynamically-generated
+    # lists, e.g. the fixture browser). Exactly one must be provided.
+    sections: Optional[List[InteractiveListSection]] = Field(default=None)
+    sections_from: Optional[str] = None
+
+    @root_validator(pre=False, skip_on_failure=True)
+    def check_sections_source(cls, values):
+        if not values.get('sections') and not values.get('sections_from'):
+            raise ValueError("InteractiveListAction requires either 'sections' or 'sections_from'.")
+        return values
 
 class InteractiveFlowActionParameters(BasePydanticConfig):
     flow_message_version: str = Field(..., min_length=1)
@@ -397,9 +417,10 @@ class PerformWithdrawalConfig(BasePydanticConfig):
 
 class HandleBettingActionConfig(BasePydanticConfig):
     action_type: Literal["handle_betting_action"] = "handle_betting_action"
-    betting_action: str # e.g., 'view_matches', 'create_new_ticket', 'add_bet_to_ticket', 'place_ticket', 'view_my_tickets', 'check_wallet_balance'
+    betting_action: str # e.g., 'view_matches', 'browse_fixtures', 'open_fixture', 'place_slip', 'my_bets', 'check_wallet_balance'
     stake_template: Optional[Union[float, str]] = None # Can be a direct float or template (for place_ticket)
     market_outcome_id_template: Optional[str] = None # Template for outcome ID (for add_bet_to_ticket)
+    selection_template: Optional[str] = None # Template for the tapped interactive reply id (guided tap-driven flow)
     raw_bet_string_template: Optional[str] = None # Template for raw betting string (for place_ticket)
     # Additional parameters might be needed here if specific betting actions require them, e.g.:
     league_code_template: Optional[str] = None # Template for league code (for view_matches/view_results via betting action)
@@ -653,6 +674,47 @@ def _resolve_value(template_value: Any, flow_context: dict, contact: Contact) ->
     elif isinstance(template_value, list):
         return [_resolve_value(item, flow_context, contact) for item in template_value]
     return template_value # Return non-string, non-dict, non-list values as is
+
+def _inject_dynamic_interactive_content(interactive_dict: dict, flow_context: dict, contact: Contact, step=None) -> dict:
+    """
+    Splice dynamically-generated list sections or reply buttons into an interactive
+    payload. When a list action carries `sections_from` (or a button action carries
+    `buttons_from`), the value names a flow-context variable holding a ready-built
+    list of section/button dicts. This lets an action step generate a variable number
+    of rows (fixtures, markets, outcomes, slip items) that a static Pydantic config
+    cannot express, while the surrounding question/send_message step stays declarative.
+
+    Meta caps interactive lists at 10 rows per section; we defensively trim to that.
+    """
+    step_name = getattr(step, 'name', '?')
+    try:
+        action = interactive_dict.get('action')
+        if not isinstance(action, dict):
+            return interactive_dict
+
+        if 'sections_from' in action:
+            var_path = action.pop('sections_from')
+            sections = _get_value_from_context_or_contact(var_path, flow_context, contact)
+            if not isinstance(sections, list) or not sections:
+                logger.warning(f"Step '{step_name}': sections_from '{var_path}' resolved to empty/invalid; sending a placeholder row.")
+                sections = [{"rows": [{"id": "none_available", "title": "None available"}]}]
+            # Trim each section to Meta's 10-row limit as a safety net.
+            for section in sections:
+                if isinstance(section, dict) and isinstance(section.get('rows'), list) and len(section['rows']) > 10:
+                    section['rows'] = section['rows'][:10]
+            action['sections'] = sections
+
+        if 'buttons_from' in action:
+            var_path = action.pop('buttons_from')
+            buttons = _get_value_from_context_or_contact(var_path, flow_context, contact)
+            if not isinstance(buttons, list) or not buttons:
+                logger.warning(f"Step '{step_name}': buttons_from '{var_path}' resolved to empty/invalid; sending a placeholder button.")
+                buttons = [{"type": "reply", "reply": {"id": "none_available", "title": "None available"}}]
+            action['buttons'] = buttons[:3]  # Meta caps reply buttons at 3.
+    except Exception as e:
+        logger.error(f"Step '{step_name}': error injecting dynamic interactive content: {e}", exc_info=True)
+    return interactive_dict
+
 
 def _resolve_template_components(components_config: list, flow_context: dict, contact: Contact) -> list:
     """
@@ -1075,6 +1137,13 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                 # Access interactive payload dictionary to allow resolution
                 interactive_payload_dict = interactive_payload_obj.model_dump(exclude_none=True, by_alias=True)
                 resolved_interactive_dict = _resolve_value(interactive_payload_dict, current_step_context, contact)
+                # Support dynamically-generated list sections / buttons sourced from a
+                # flow-context variable. A preceding action step builds the rows/buttons
+                # (e.g. the fixture browser or bet-slip) and stores them in context; here
+                # we splice them into the payload in place of the static structure.
+                resolved_interactive_dict = _inject_dynamic_interactive_content(
+                    resolved_interactive_dict, current_step_context, contact, step
+                )
                 logger.debug(f"Step '{step.name}': Resolved interactive payload: {json.dumps(resolved_interactive_dict, indent=2)}")
                 final_api_data_structure = resolved_interactive_dict
 
@@ -1446,6 +1515,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         resolved_stake = None # Ensure it's None if invalid
 
                     resolved_market_outcome_id = _resolve_value(action_item_root.market_outcome_id_template, current_step_context, contact) if hasattr(action_item_root, 'market_outcome_id_template') else None
+                    resolved_selection = _resolve_value(action_item_root.selection_template, current_step_context, contact) if getattr(action_item_root, 'selection_template', None) else None
                     resolved_ticket_id = _resolve_value(action_item_root.ticket_id_template, current_step_context, contact) if hasattr(action_item_root, 'ticket_id_template') else None
                     resolved_raw_bet_string = _resolve_value(action_item_root.raw_bet_string_template, current_step_context, contact) if hasattr(action_item_root, 'raw_bet_string_template') else None
                     
@@ -1461,6 +1531,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         flow_context=current_step_context, # Pass context directly for internal updates by betting action
                         stake=resolved_stake,
                         market_outcome_id=resolved_market_outcome_id,
+                        selection=resolved_selection, # Tapped interactive reply id (guided tap-driven flow)
                         ticket_id=resolved_ticket_id, # Pass the resolved ticket_id
                         raw_bet_string=resolved_raw_bet_string,
                         # Pass data fetching params
