@@ -11,6 +11,7 @@ from customer_data.utils import create_or_get_customer_account, get_customer_wal
 from .models import FootballFixture, MarketOutcome # Import FootballFixture directly
 from .football_engine import FootballEngine # Retained for other specific engine operations if any
 from .utils import get_formatted_football_data, parse_betting_string, generate_fixtures_pdf
+from .betting_flow_actions import BETTING_UX_ACTIONS, handle_betting_ux_action
 from typing import Optional, List
 from django.utils import timezone # For footer timestamp in view_my_tickets
 from django.conf import settings
@@ -30,6 +31,7 @@ def handle_football_betting_action(
     stake: float = None,
     market_outcome_id: str = None,
     ticket_id: str = None,
+    selection: str = None, # Tapped interactive reply id for the guided tap-driven flow
     raw_bet_string: str = None, # For place_ticket and parse_and_confirm_ticket
     league_code: Optional[str] = None,
     days_ahead: int = 10,
@@ -69,6 +71,18 @@ def handle_football_betting_action(
         
         customer_profile = account_info.get('customer_profile')
         user_wallet = account_info.get('wallet')
+
+        # New tap-driven betting UX (fixture browser, market/outcome pickers,
+        # bet slip, staking, placement, my bets) is handled in a dedicated module.
+        if action_type in BETTING_UX_ACTIONS:
+            return handle_betting_ux_action(
+                contact=contact,
+                action_type=action_type,
+                flow_context=flow_context,
+                user=getattr(customer_profile, 'user', None),
+                selection=selection,
+                stake=stake,
+            )
 
         if action_type == 'view_matches':
             # Generate PDF instead of text

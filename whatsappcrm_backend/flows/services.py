@@ -417,9 +417,10 @@ class PerformWithdrawalConfig(BasePydanticConfig):
 
 class HandleBettingActionConfig(BasePydanticConfig):
     action_type: Literal["handle_betting_action"] = "handle_betting_action"
-    betting_action: str # e.g., 'view_matches', 'create_new_ticket', 'add_bet_to_ticket', 'place_ticket', 'view_my_tickets', 'check_wallet_balance'
+    betting_action: str # e.g., 'view_matches', 'browse_fixtures', 'open_fixture', 'place_slip', 'my_bets', 'check_wallet_balance'
     stake_template: Optional[Union[float, str]] = None # Can be a direct float or template (for place_ticket)
     market_outcome_id_template: Optional[str] = None # Template for outcome ID (for add_bet_to_ticket)
+    selection_template: Optional[str] = None # Template for the tapped interactive reply id (guided tap-driven flow)
     raw_bet_string_template: Optional[str] = None # Template for raw betting string (for place_ticket)
     # Additional parameters might be needed here if specific betting actions require them, e.g.:
     league_code_template: Optional[str] = None # Template for league code (for view_matches/view_results via betting action)
@@ -1514,6 +1515,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         resolved_stake = None # Ensure it's None if invalid
 
                     resolved_market_outcome_id = _resolve_value(action_item_root.market_outcome_id_template, current_step_context, contact) if hasattr(action_item_root, 'market_outcome_id_template') else None
+                    resolved_selection = _resolve_value(action_item_root.selection_template, current_step_context, contact) if getattr(action_item_root, 'selection_template', None) else None
                     resolved_ticket_id = _resolve_value(action_item_root.ticket_id_template, current_step_context, contact) if hasattr(action_item_root, 'ticket_id_template') else None
                     resolved_raw_bet_string = _resolve_value(action_item_root.raw_bet_string_template, current_step_context, contact) if hasattr(action_item_root, 'raw_bet_string_template') else None
                     
@@ -1529,6 +1531,7 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         flow_context=current_step_context, # Pass context directly for internal updates by betting action
                         stake=resolved_stake,
                         market_outcome_id=resolved_market_outcome_id,
+                        selection=resolved_selection, # Tapped interactive reply id (guided tap-driven flow)
                         ticket_id=resolved_ticket_id, # Pass the resolved ticket_id
                         raw_bet_string=resolved_raw_bet_string,
                         # Pass data fetching params
