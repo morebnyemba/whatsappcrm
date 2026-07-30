@@ -89,3 +89,11 @@ class AiGatewayIntentTests(TestCase):
         # The matcher must reject anything outside the fixed intent set.
         with self.settings(GEMINI_API_KEY=''):
             self.assertIsNone(AI.GeminiGateway().match_intent("anything"))
+
+    def test_generation_falls_back_to_facts_without_key(self):
+        # With no LLM configured, phrase() must return the factual answer verbatim
+        # (facts are never dropped or invented).
+        with self.settings(GEMINI_API_KEY=''):
+            fact = "💰 Your wallet balance is $12.34."
+            self.assertEqual(AI.phrase(fact), fact)
+            self.assertIsNone(AI.GeminiGateway().generate("hi"))

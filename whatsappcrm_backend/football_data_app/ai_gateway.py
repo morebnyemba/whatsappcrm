@@ -3,11 +3,13 @@
 Conversational assistant gateway for BetBlitz (Phase 2).
 
 Design constraints:
-- The LLM (Gemini) is used ONLY as an intent matcher, and ONLY as a fallback:
-  keyword matching runs first, and Gemini is consulted just to map a free-form
-  question to one of a fixed set of intent labels when the keywords don't match.
-- The LLM never generates user-facing text. Every answer is templated from real
-  database data — no invented odds, results, or balances.
+- Intent is resolved by keyword matching first, then (as a fallback) by the LLM
+  mapping the message to one of a fixed set of intent labels.
+- The factual answer is always computed from real database data. The LLM may
+  then GENERATE the natural-language wording, but it is grounded: it is given the
+  facts and instructed not to add, remove, or change any numbers, names, or
+  facts — so it never invents odds, results, or balances. Without an API key the
+  gateway returns the templated answer directly.
 - Bet placement never routes through the assistant; it always goes through the
   confirmable tap flow (betting_flow.py).
 """
@@ -88,6 +90,52 @@ class GeminiGateway:
             logger.warning(f"Gemini intent match failed, using keyword result: {e}")
             return None
 
+    def generate(self, prompt: str, system: str = None, timeout: int = 15) -> str | None:
+        """Generate a short natural-language completion. Returns None on any failure."""
+        if not self.enabled:
+            return None
+        try:
+            import requests
+            url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+                   f"{self.model}:generateContent?key={self.api_key}")
+            parts = []
+            if system:
+                parts.append({"text": system})
+            parts.append({"text": prompt})
+            resp = requests.post(url, json={"contents": [{"parts": parts}]}, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        except Exception as e:
+            logger.warning(f"Gemini generate failed, using templated answer: {e}")
+            return None
+
+
+# System instruction that keeps generation grounded in the DB facts it is given.
+_GROUNDING_SYSTEM = (
+    "You are BetBlitz, a friendly, responsible sports-betting assistant on WhatsApp. "
+    "Rewrite the given message in a natural, concise way (at most two short sentences). "
+    "You MUST NOT add, remove, or change any numbers, names, amounts, statuses, or facts, "
+    "and you MUST NOT invent odds, results, predictions, or balances. Keep any emoji. "
+    "Never tell the user what to bet on."
+)
+
+
+def phrase(answer: str, question: str = None) -> str:
+    """
+    Optionally have the LLM generate the wording for an already-computed, factual
+    answer. The facts come from `answer` (DB-sourced); the LLM only rephrases and
+    is instructed not to change them. Falls back to `answer` verbatim when the LLM
+    is disabled or fails.
+    """
+    gateway = GeminiGateway()
+    if not gateway.enabled:
+        return answer
+    prompt = f"Message to rewrite:\n{answer}"
+    if question:
+        prompt = f"The user asked: {question!r}\n\n{prompt}"
+    generated = gateway.generate(prompt=prompt, system=_GROUNDING_SYSTEM)
+    return generated or answer
+
 
 def classify_intent(text: str) -> str:
     """
@@ -106,22 +154,21 @@ def _user_from_contact(contact):
     return getattr(profile, 'user', None) if profile else None
 
 
-def answer_question(contact, text: str) -> str:
-    """Answer a free-form question from DB data (templated; never LLM-generated)."""
+def _factual_answer(contact, text: str) -> str:
+    """Compute the answer strictly from database data (no LLM)."""
     from customer_data.models import UserWallet, BetTicket
 
     user = _user_from_contact(contact)
     intent = classify_intent(text)
 
+    if intent in (INTENT_BALANCE, INTENT_LAST_TICKET, INTENT_OPEN_BETS) and not user:
+        return "I couldn't find your account. Reply *menu* to get started."
+
     if intent == INTENT_BALANCE:
-        if not user:
-            return "I couldn't find your account. Reply *menu* to get started."
         wallet, _ = UserWallet.objects.get_or_create(user=user)
         return f"💰 Your wallet balance is ${Decimal(wallet.balance):.2f}."
 
     if intent == INTENT_LAST_TICKET:
-        if not user:
-            return "I couldn't find your account. Reply *menu* to get started."
         ticket = BetTicket.objects.filter(user=user).order_by('-created_at').first()
         if not ticket:
             return "You have no bets yet. Reply *bet* to place your first one!"
@@ -130,8 +177,6 @@ def answer_question(contact, text: str) -> str:
                 f"Stake ${float(ticket.total_stake):.2f}, potential payout ${float(ticket.potential_winnings):.2f}.")
 
     if intent == INTENT_OPEN_BETS:
-        if not user:
-            return "I couldn't find your account. Reply *menu* to get started."
         n = BetTicket.objects.filter(user=user, status__in=['PENDING', 'PLACED']).count()
         return (f"You have {n} open bet{'s' if n != 1 else ''}. Reply *bet* then *My bets* to see them."
                 if n else "You have no open bets right now. Reply *bet* to place one.")
@@ -140,3 +185,13 @@ def answer_question(contact, text: str) -> str:
     return ("I'm your BetBlitz assistant 🤖. Ask me things like *what's my balance*, "
             "*how's my last ticket*, or *any open bets*. To place a bet, reply *bet*. "
             "Please gamble responsibly.")
+
+
+def answer_question(contact, text: str) -> str:
+    """
+    Answer a free-form question. The facts are computed from the database, then
+    the LLM (when configured) generates the natural-language wording, grounded so
+    it cannot change any facts. Falls back to the templated answer otherwise.
+    """
+    answer = _factual_answer(contact, text)
+    return phrase(answer, question=text)
