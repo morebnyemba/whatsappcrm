@@ -236,6 +236,12 @@ def perform_deposit(
             return {"success": False, "message": "No linked user account found for this contact."}
         wallet = UserWallet.objects.get(user=profile.user)
 
+        # Responsible-gambling gating: self-exclusion and daily deposit limit.
+        from customer_data import compliance
+        within, message = compliance.check_deposit_within_limit(profile.user, amount)
+        if not within:
+            return {"success": False, "message": message}
+
         # Generate a unique internal reference for the transaction
         transaction_reference = f"DEP-{profile.id}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
 

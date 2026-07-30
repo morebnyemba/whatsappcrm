@@ -73,6 +73,15 @@ def process_bet_ticket_submission(
             # This ensures the balance check and deduction are atomic.
             user_wallet = UserWallet.objects.select_for_update().get(user=customer_profile.user)
 
+            # Responsible-gambling gating: self-exclusion, age, KYC, daily stake limit.
+            from customer_data import compliance
+            allowed, message = compliance.check_can_bet(customer_profile.user)
+            if not allowed:
+                return {"success": False, "message": message}
+            within, message = compliance.check_stake_within_limit(customer_profile.user, stake)
+            if not within:
+                return {"success": False, "message": message}
+
             # Check for sufficient funds
             if user_wallet.balance < Decimal(str(stake)):
                 return {

@@ -114,6 +114,7 @@ def create_betting_flow():
                 {"to_step": "do_my_bets", "condition_config": _id("menu:mybets")},
                 {"to_step": "do_view_slip", "condition_config": _id("menu:slip")},
                 {"to_step": "do_balance", "condition_config": _id("menu:balance")},
+                {"to_step": "do_rg_menu", "condition_config": _id("menu:safer")},
             ],
         ),
         # -------------------------------------------------------- browse fixtures
@@ -313,6 +314,69 @@ def create_betting_flow():
               [{"to_step": "main_menu", "condition_config": _ALWAYS}]),
         _text("ticket_error", "Sorry, that ticket could not be found.",
               [{"to_step": "main_menu", "condition_config": _ALWAYS}]),
+        # ------------------------------------------------- safer gambling (RG)
+        _betting_action(
+            "do_rg_menu", "rg_menu",
+            transitions=[{"to_step": "show_rg_menu", "condition_config": _ALWAYS}],
+        ),
+        _list_question(
+            "show_rg_menu",
+            body="{{ flow_context.rg_summary }}",
+            button="Options",
+            sections_var="flow_context.__rg_sections",  # static, injected below
+            save_var="rg_choice",
+            header="Safer Gambling",
+            transitions=[
+                {"to_step": "ask_exclude", "condition_config": _id("rg:exclude")},
+                {"to_step": "ask_deposit_limit", "condition_config": _id("rg:deplimit")},
+                {"to_step": "ask_stake_limit", "condition_config": _id("rg:stakelimit")},
+                {"to_step": "main_menu", "condition_config": _id("nav:menu")},
+            ],
+        ),
+        _buttons_question(
+            "ask_exclude",
+            body="Take a break — you won't be able to bet or deposit during this period. Choose a length:",
+            buttons=[("excl:1", "24 hours"), ("excl:7", "7 days"), ("excl:30", "30 days")],
+            save_var="excl_choice",
+            transitions=[{"to_step": "do_exclude", "condition_config": _ALWAYS}],
+        ),
+        _betting_action(
+            "do_exclude", "rg_self_exclude",
+            selection_template="{{ flow_context.excl_choice }}",
+            transitions=[{"to_step": "show_rg_result", "condition_config": _ALWAYS}],
+        ),
+        {
+            "name": "ask_deposit_limit",
+            "step_type": "question",
+            "config": {
+                "message_config": {"message_type": "text",
+                                   "text": {"body": "Enter your daily deposit limit in dollars (e.g. 100), or 0 to remove it:"}},
+                "reply_config": {"save_to_variable": "deposit_limit_reply", "expected_type": "any"},
+            },
+            "transitions": [{"to_step": "do_deposit_limit", "condition_config": _ALWAYS}],
+        },
+        _betting_action(
+            "do_deposit_limit", "rg_set_deposit_limit",
+            selection_template="{{ flow_context.deposit_limit_reply }}",
+            transitions=[{"to_step": "show_rg_result", "condition_config": _ALWAYS}],
+        ),
+        {
+            "name": "ask_stake_limit",
+            "step_type": "question",
+            "config": {
+                "message_config": {"message_type": "text",
+                                   "text": {"body": "Enter your daily stake limit in dollars (e.g. 50), or 0 to remove it:"}},
+                "reply_config": {"save_to_variable": "stake_limit_reply", "expected_type": "any"},
+            },
+            "transitions": [{"to_step": "do_stake_limit", "condition_config": _ALWAYS}],
+        },
+        _betting_action(
+            "do_stake_limit", "rg_set_stake_limit",
+            selection_template="{{ flow_context.stake_limit_reply }}",
+            transitions=[{"to_step": "show_rg_result", "condition_config": _ALWAYS}],
+        ),
+        _text("show_rg_result", "{{ flow_context.rg_message }}",
+              [{"to_step": "main_menu", "condition_config": _ALWAYS}]),
         # -------------------------------------------------------------- balance
         _betting_action("do_balance", "check_wallet_balance",
                         transitions=[{"to_step": "show_balance", "condition_config": _ALWAYS}]),
@@ -345,6 +409,19 @@ def create_betting_flow():
                     {"id": "menu:mybets", "title": "🎫 My bets", "description": "View your open and settled bets"},
                     {"id": "menu:slip", "title": "🧾 Bet slip", "description": "Review your current selections"},
                     {"id": "menu:balance", "title": "💰 Balance", "description": "Check your wallet balance"},
+                    {"id": "menu:safer", "title": "🛡️ Safer gambling", "description": "Limits, breaks and self-exclusion"},
+                ],
+            }]
+        if step["name"] == "show_rg_menu":
+            action = step["config"]["message_config"]["interactive"]["action"]
+            action.pop("sections_from", None)
+            action["sections"] = [{
+                "title": "Safer gambling",
+                "rows": [
+                    {"id": "rg:deplimit", "title": "💵 Deposit limit", "description": "Set a daily deposit limit"},
+                    {"id": "rg:stakelimit", "title": "🎯 Stake limit", "description": "Set a daily stake limit"},
+                    {"id": "rg:exclude", "title": "⏸️ Take a break", "description": "Self-exclude for a period"},
+                    {"id": "nav:menu", "title": "🏠 Back to menu", "description": "Return to the main menu"},
                 ],
             }]
 
