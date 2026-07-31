@@ -2,6 +2,12 @@
 
 A comprehensive WhatsApp Business CRM solution with automated conversational flows, customer management, and betting/payment integrations. Built with Django REST Framework backend and React (Vite) frontend, containerized with Docker for easy deployment.
 
+> **🚀 Deploying?** See **[DEPLOY.md](DEPLOY.md)** for a full walkthrough. Quick start:
+> ```bash
+> git clone https://github.com/morebnyemba/whatsappcrm.git && cd whatsappcrm
+> ./deploy.sh   # interactive: installs Docker if needed, generates secrets, starts the stack
+> ```
+
 > **🆘 App Not Starting?** See [APP_START_FIX.md](APP_START_FIX.md) for quick database reset commands and troubleshooting steps.
 
 ## 🏗️ Architecture Overview
@@ -160,8 +166,10 @@ The `football_data_app` uses **API-Football v3** from [api-football.com](https:/
 
 ## 🔧 Getting Started
 
+> 💡 **The fastest way to deploy is the interactive [`deploy.sh`](deploy.sh) script — see [DEPLOY.md](DEPLOY.md).** It installs Docker if missing, auto-generates secrets, writes `.env`, and starts the stack. The manual steps below are the alternative if you prefer to configure things yourself.
+
 ### Prerequisites
-- Docker & Docker Compose
+- Docker & Docker Compose (or let [`deploy.sh`](DEPLOY.md) install them)
 - Git
 
 ### Quick Start
@@ -541,6 +549,8 @@ docker compose exec backend python manage.py migrate
 - **CORS errors**: Verify `CORS_ALLOWED_ORIGINS` in `.env` includes your frontend URL
 
 ## 📦 Production Deployment
+
+> See **[DEPLOY.md](DEPLOY.md)** for the full production walkthrough (secrets, post-deploy Meta/Paynow config, scheduling the football tasks, and security hardening). `./deploy.sh` automates steps 1–2 below.
 
 1. Update `.env` with production values
 2. Run `docker compose up -d --build`
