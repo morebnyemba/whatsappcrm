@@ -7,7 +7,8 @@
 # setup (migrations, flow definitions, football leagues, admin user).
 #
 # Highlights:
-#   • Preflight checks (bash version, required files, Docker & daemon, ports).
+#   • Preflight checks, and INSTALLS missing prerequisites (Docker Engine +
+#     Compose) on Linux/macOS with your consent, then starts the daemon.
 #   • Every value is validated; you are re-prompted until it is valid.
 #   • Re-running pre-fills answers from your existing .env (edit-in-place).
 #   • Secrets are auto-generated; manual entry is hidden.
@@ -19,6 +20,7 @@
 #     -y, --yes            Non-interactive: accept defaults / existing values,
 #                          generate any missing secrets, and proceed.
 #         --no-start       Configure .env only; do not touch Docker.
+#         --no-install     Do not install anything; only check prerequisites.
 #         --regenerate     Force-generate new secrets (ignore existing ones).
 #         --env-file PATH  Write to PATH instead of ./.env.
 #     -h, --help           Show this help and exit.
@@ -46,6 +48,8 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ASSUME_YES=0
 DO_START=1
 REGEN=0
+DO_INSTALL=1
+DOCKER_SUDO=""
 
 abort() { printf '\n%s✗ Cancelled. No changes were made.%s\n' "$RED" "$RST" >&2; exit 130; }
 on_err() { local rc=$?; err "Unexpected failure (exit $rc) at line ${1:-?}. Existing files were left as-is (any backup is noted above)."; exit "$rc"; }
@@ -61,6 +65,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes)        ASSUME_YES=1 ;;
     --no-start)      DO_START=0 ;;
+    --no-install)    DO_INSTALL=0 ;;
     --regenerate)    REGEN=1 ;;
     --env-file)      shift; [ $# -gt 0 ] || { err "--env-file needs a path"; exit 2; }; ENV_FILE="$1" ;;
     --env-file=*)    ENV_FILE="${1#*=}" ;;
@@ -193,9 +198,131 @@ confirm() {
   esac
 }
 
-compose() { if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi; }
 have() { command -v "$1" >/dev/null 2>&1; }
+compose() {
+  if $DOCKER_SUDO docker compose version >/dev/null 2>&1; then $DOCKER_SUDO docker compose "$@";
+  else $DOCKER_SUDO docker-compose "$@"; fi
+}
 port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3>&- 3<&-; return 0; } || return 1; }
+
+# --- Prerequisite installation ---------------------------------------------
+os_family() { case "$(uname -s)" in Linux) echo linux;; Darwin) echo darwin;; *) echo other;; esac; }
+
+# Resolve a way to run privileged commands. Sets SUDO ("" if root, "sudo" if
+# available). Returns non-zero if elevation is impossible.
+SUDO=""
+resolve_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then SUDO=""; return 0; fi
+  if have sudo; then SUDO="sudo"; return 0; fi
+  return 1
+}
+
+pkg_mgr() {
+  if have apt-get; then echo apt; elif have dnf; then echo dnf; elif have yum; then echo yum
+  elif have apk; then echo apk; elif have brew; then echo brew; else echo none; fi
+}
+pkg_install() {
+  case "$(pkg_mgr)" in
+    apt)  $SUDO apt-get update -y && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y "$@" ;;
+    dnf)  $SUDO dnf install -y "$@" ;;
+    yum)  $SUDO yum install -y "$@" ;;
+    apk)  $SUDO apk add --no-cache "$@" ;;
+    brew) brew install "$@" ;;
+    *)    return 1 ;;
+  esac
+}
+
+start_docker_daemon() {
+  docker info >/dev/null 2>&1 && return 0
+  case "$(os_family)" in
+    linux)  have systemctl && $SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true ;;
+    darwin) open -a Docker >/dev/null 2>&1 || true ;;
+  esac
+  local i
+  for i in $(seq 1 "${DOCKER_START_WAIT:-30}"); do docker info >/dev/null 2>&1 && return 0; sleep 2; done
+  return 1
+}
+
+install_docker() {
+  local fam; fam="$(os_family)"
+  if [ "$fam" = "darwin" ]; then
+    if have brew; then
+      info "Installing Docker Desktop via Homebrew (this can take a while)…"
+      brew install --cask docker || return 1
+      open -a Docker >/dev/null 2>&1 || true
+      return 0
+    fi
+    err "On macOS, install Docker Desktop from https://www.docker.com/products/docker-desktop then re-run."
+    return 1
+  fi
+  if [ "$fam" != "linux" ]; then err "Automatic Docker install is only supported on Linux and macOS."; return 1; fi
+  if ! resolve_sudo; then err "Installing Docker needs root privileges. Re-run as root, or install 'sudo'."; return 1; fi
+
+  have curl || pkg_install curl ca-certificates >/dev/null 2>&1 || true
+  if have curl; then
+    info "Installing Docker Engine via the official get.docker.com script…"
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && $SUDO sh /tmp/get-docker.sh || return 1
+    rm -f /tmp/get-docker.sh
+  else
+    info "Installing Docker via the distro package manager…"
+    pkg_install docker.io docker-compose-plugin 2>/dev/null || pkg_install docker docker-compose 2>/dev/null || pkg_install docker || return 1
+  fi
+
+  start_docker_daemon || true
+  # Let the current user run docker without sudo in future sessions.
+  if [ "$(id -u)" -ne 0 ] && have usermod; then $SUDO usermod -aG docker "${USER:-$(id -un)}" >/dev/null 2>&1 || true; fi
+  return 0
+}
+
+ensure_compose() {
+  $DOCKER_SUDO docker compose version >/dev/null 2>&1 && return 0
+  have docker-compose && return 0
+  info "Installing the docker compose plugin…"
+  resolve_sudo || true
+  pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose 2>/dev/null || true
+  $DOCKER_SUDO docker compose version >/dev/null 2>&1 || have docker-compose
+}
+
+# Ensure docker + compose + a running daemon, installing if permitted. Returns
+# non-zero (caller falls back to config-only) if the stack can't be made ready.
+ensure_docker_stack() {
+  if ! have docker; then
+    if [ "$DO_INSTALL" = 1 ] && { [ "$ASSUME_YES" = 1 ] || confirm "Docker is not installed. Install it now (needs root/sudo)?" "y"; }; then
+      install_docker || { warn "Docker installation failed."; return 1; }
+      have docker || { warn "Docker still not found after install."; return 1; }
+      ok "Docker installed."
+    else
+      warn "Docker not found; will configure .env only. Install Docker, then: docker compose up -d --build"
+      return 1
+    fi
+  else
+    ok "docker present"
+  fi
+
+  # Determine whether we need sudo to talk to the daemon this session (e.g. the
+  # group change from a fresh install hasn't taken effect yet).
+  if ! docker info >/dev/null 2>&1; then
+    start_docker_daemon || true
+  fi
+  if ! docker info >/dev/null 2>&1 && resolve_sudo && [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1; then
+    DOCKER_SUDO="$SUDO"
+    warn "Using sudo for docker in this session (log out/in to use docker without sudo)."
+  fi
+  if ! $DOCKER_SUDO docker info >/dev/null 2>&1; then
+    err "Docker daemon is not reachable. Start Docker and re-run."
+    return 1
+  fi
+  ok "docker daemon running"
+
+  if ! ensure_compose; then err "docker compose is unavailable and could not be installed."; return 1; fi
+  ok "docker compose available"
+
+  local p
+  for p in "${DJANGO_PORT_LOCAL:-8000}" 5432 6379; do
+    port_in_use "$p" && warn "port $p is already in use — the stack may fail to bind it"
+  done
+  return 0
+}
 
 # ===========================================================================
 # Preflight
@@ -215,19 +342,15 @@ preflight() {
     if [ -e "$SCRIPT_DIR/$f" ]; then ok "found $f"; else err "missing $f — run this from the repository root"; fatal=1; fi
   done
 
+  [ "$fatal" = 0 ] || { err "Preflight failed. Resolve the issues above and re-run."; exit 1; }
+
+  # Docker/compose: install & start if permitted, else fall back to config-only.
   if [ "$DO_START" = 1 ]; then
-    if have docker; then ok "docker present"; else warn "docker not found — will configure .env only"; DO_START=0; fi
-    if [ "$DO_START" = 1 ]; then
-      if docker info >/dev/null 2>&1; then ok "docker daemon running"; else err "docker daemon not reachable (is Docker running / do you need sudo?)"; fatal=1; fi
-      if compose version >/dev/null 2>&1; then ok "docker compose available"; else err "docker compose not available"; fatal=1; fi
-      local p
-      for p in "${DJANGO_PORT_LOCAL:-8000}" 5432 6379; do
-        if port_in_use "$p"; then warn "port $p is already in use — the stack may fail to bind it"; fi
-      done
+    if ! ensure_docker_stack; then
+      DO_START=0
+      warn "Continuing in configuration-only mode (no containers will be started)."
     fi
   fi
-
-  [ "$fatal" = 0 ] || { err "Preflight failed. Resolve the issues above and re-run."; exit 1; }
 }
 
 # ===========================================================================
