@@ -127,9 +127,19 @@ There are **two separate web frontends** and one API, on three subdomains:
 `CORS_ALLOWED_ORIGINS` (`app.`/`admin.`), `CSRF_TRUSTED_ORIGINS` and `SITE_URL`
 (`https://api.<domain>`) from the base domain you enter.
 
+**Building the two frontends** (each is a static build; set the API base to `api.<domain>`):
+
+```bash
+# Player portal → app.<domain>
+cd player-portal && VITE_API_BASE_URL=https://api.<domain> npm ci && npm run build   # outputs dist/
+
+# Admin CRM → admin.<domain>
+cd whatsapp-crm-frontend && VITE_API_BASE_URL=https://api.<domain> npm ci && npm run build
+```
+
 **DNS / TLS / routing:** point all three subdomains at the host, and in your
 reverse proxy (e.g. Nginx Proxy Manager) route `app.` and `admin.` to their
-static frontend builds and `api.` to the backend (port 8000), each with TLS.
+static `dist/` builds and `api.` to the backend (port 8000), each with TLS.
 
 ## 4. Post-deploy configuration
 
