@@ -20,7 +20,7 @@ class MediaAssetViewSet(viewsets.ModelViewSet):
     """
     queryset = MediaAsset.objects.all().order_by('-created_at')
     serializer_class = MediaAssetSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -162,7 +162,7 @@ class MediaAssetViewSet(viewsets.ModelViewSet):
         return Response(response_data, status=status.HTTP_200_OK, headers=headers)
 
 
-    @action(detail=True, methods=['post'], url_path='sync-with-whatsapp', permission_classes=[permissions.IsAuthenticated])
+    @action(detail=True, methods=['post'], url_path='sync-with-whatsapp', permission_classes=[permissions.IsAdminUser])
     def manual_sync_media_asset(self, request, pk=None):
         """
         Custom action to MANUALLY trigger the synchronization of a specific MediaAsset

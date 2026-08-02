@@ -103,6 +103,34 @@ docker compose down         # stop (add -v to also drop volumes/data)
 
 ---
 
+## 3b. Domains & surfaces
+
+There are **two separate web frontends** and one API, on three subdomains:
+
+| Subdomain | Serves | Who |
+|-----------|--------|-----|
+| `app.<domain>` | **Player portal** (their matches, tickets, wallet, profile) | Players |
+| `admin.<domain>` | **Admin CRM** (flows, contacts, conversations, media, settings) | Staff |
+| `api.<domain>` | Django backend (`/crm-api/…`) | both frontends |
+
+- The backend enforces this split: CRM/admin endpoints require **staff** (`is_staff`);
+  the betting endpoints (`/crm-api/football/…`) are **player-scoped** to the
+  requesting user. A player token cannot read CRM data.
+- **Admin login** (`admin.<domain>`): staff username + password (create with
+  `createsuperuser`).
+- **Player login** (`app.<domain>`): **WhatsApp one-time code** — players have no
+  password. The portal calls:
+  - `POST /crm-api/auth/player/request-otp/` `{ "phone": "2637…" }` → code sent on WhatsApp.
+  - `POST /crm-api/auth/player/verify-otp/` `{ "phone": "2637…", "code": "123456" }` → JWT.
+
+`deploy.sh` (production mode) derives `ALLOWED_HOSTS` (`api.<domain>`),
+`CORS_ALLOWED_ORIGINS` (`app.`/`admin.`), `CSRF_TRUSTED_ORIGINS` and `SITE_URL`
+(`https://api.<domain>`) from the base domain you enter.
+
+**DNS / TLS / routing:** point all three subdomains at the host, and in your
+reverse proxy (e.g. Nginx Proxy Manager) route `app.` and `admin.` to their
+static frontend builds and `api.` to the backend (port 8000), each with TLS.
+
 ## 4. Post-deploy configuration
 
 These are done once in the **Django admin** (`/admin/`, log in with the

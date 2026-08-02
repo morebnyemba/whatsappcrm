@@ -24,7 +24,7 @@ class FlowViewSet(viewsets.ModelViewSet):
     queryset = Flow.objects.all().prefetch_related('steps').order_by('-updated_at', 'name')
     serializer_class = FlowSerializer
     # TODO: Replace with more granular permissions for production
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def perform_create(self, serializer):
         """
@@ -71,7 +71,7 @@ class FlowStepViewSet(viewsets.ModelViewSet):
     queryset = FlowStep.objects.select_related('flow').all().order_by('flow__name', 'created_at') # Default ordering from model Meta is also good
     serializer_class = FlowStepSerializer
     # TODO: Replace with more granular permissions
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def get_queryset(self):
         """
@@ -152,7 +152,7 @@ class FlowTransitionViewSet(viewsets.ModelViewSet):
     queryset = FlowTransition.objects.select_related('current_step__flow', 'next_step__flow').all() # Default order from model Meta
     serializer_class = FlowTransitionSerializer
     # TODO: Replace with more granular permissions
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -227,7 +227,7 @@ class WhatsAppFlowViewSet(viewsets.ModelViewSet):
     """
     queryset = WhatsAppFlow.objects.select_related('meta_app_config', 'flow_definition').all()
     serializer_class = WhatsAppFlowSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def perform_create(self, serializer):
         try:
@@ -412,7 +412,7 @@ class WhatsAppFlowResponseViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = WhatsAppFlowResponse.objects.select_related('whatsapp_flow', 'contact').all()
     serializer_class = WhatsAppFlowResponseSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def get_queryset(self):
         queryset = super().get_queryset()

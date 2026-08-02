@@ -28,7 +28,7 @@ class IsAdminOrUpdateOnly(permissions.BasePermission): # Example, adjust as need
 class CustomerProfileViewSet(viewsets.ModelViewSet):
     queryset = CustomerProfile.objects.select_related('contact').all()
     serializer_class = CustomerProfileSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrUpdateOnly]
+    permission_classes = [permissions.IsAdminUser]
     
     # CustomerProfile's PK is contact_id
     # DRF ModelViewSet will use 'pk' from URL by default.
