@@ -38,7 +38,7 @@ class ContactViewSet(viewsets.ModelViewSet):
     - Authenticated users can list/retrieve (permissions can be refined).
     """
     queryset = Contact.objects.all().order_by('-last_seen')
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [permissions.IsAdminUser]
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -68,7 +68,7 @@ class ContactViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-    @action(detail=True, methods=['get'], url_path='messages', permission_classes=[permissions.IsAuthenticated])
+    @action(detail=True, methods=['get'], url_path='messages', permission_classes=[permissions.IsAdminUser])
     def list_messages_for_contact(self, request, pk=None):
         contact = get_object_or_404(Contact, pk=pk)
         messages_queryset = Message.objects.filter(contact=contact).select_related('contact').order_by('-timestamp')
@@ -81,7 +81,7 @@ class ContactViewSet(viewsets.ModelViewSet):
         serializer = MessageListSerializer(messages_queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
-    @action(detail=True, methods=['post'], url_path='toggle-block', permission_classes=[permissions.IsAuthenticated, IsAdminOrReadOnly])
+    @action(detail=True, methods=['post'], url_path='toggle-block', permission_classes=[permissions.IsAdminUser])
     def toggle_block_status(self, request, pk=None):
         contact = get_object_or_404(Contact, pk=pk)
         contact.is_blocked = not contact.is_blocked
@@ -90,7 +90,7 @@ class ContactViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='toggle-flow-disable', 
-            permission_classes=[permissions.IsAuthenticated]) # Or IsAdminOrReadOnly if only staff can do this
+            permission_classes=[permissions.IsAdminUser]) # Or IsAdminOrReadOnly if only staff can do this
     def toggle_flow_disable(self, request, pk=None):
         contact = self.get_object()
         contact.flow_execution_disabled = not contact.flow_execution_disabled
@@ -112,7 +112,7 @@ class MessageViewSet(
     viewsets.GenericViewSet
 ):
     queryset = Message.objects.all().select_related('contact').order_by('-timestamp')
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly] 
+    permission_classes = [permissions.IsAdminUser] 
 
     def get_serializer_class(self):
         if self.action == 'list':

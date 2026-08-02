@@ -337,6 +337,28 @@ class ResponsibleGamblingControls(models.Model):
         verbose_name_plural = "Responsible Gambling Controls"
 
 
+class PlayerLoginOTP(models.Model):
+    """
+    A short-lived one-time code sent to a player over WhatsApp so they can log in
+    to the player web portal (players have no web password). The code itself is
+    stored hashed; only the hash is ever persisted.
+    """
+    contact = models.ForeignKey('conversations.Contact', on_delete=models.CASCADE, related_name='login_otps')
+    code_hash = models.CharField(max_length=255)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveIntegerField(default=0)
+    consumed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_valid(self):
+        from django.utils import timezone as _tz
+        return (not self.consumed) and self.expires_at > _tz.now()
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['contact', 'consumed', 'expires_at'])]
+
+
 # Signal to create wallet when user is created
 @receiver(post_save, sender=User)
 def create_user_wallet(sender, instance, created, **kwargs):

@@ -376,12 +376,16 @@ info "Mode: $MODE"
 
 DOMAIN=""
 if [ "$MODE" = "production" ]; then
-  ask DOMAIN "Public domain (e.g. betblitz.co.zw, no scheme)" "" v_domain
+  info "Subdomain layout: app.<domain> = player portal, admin.<domain> = admin CRM, api.<domain> = backend."
+  ask DOMAIN "Base domain (e.g. betblitz.co.zw, no scheme)" "" v_domain
   DOMAIN="${ANSWERS[DOMAIN]}"; unset 'ANSWERS[DOMAIN]'
 fi
 if [ -n "$DOMAIN" ]; then
-  d_site="https://$DOMAIN"; d_hosts="$DOMAIN,www.$DOMAIN"
-  d_csrf="https://$DOMAIN,https://www.$DOMAIN"; d_cors="https://$DOMAIN,https://www.$DOMAIN"
+  # Backend is served at api.<domain>; the two frontends (app./admin.) call it.
+  d_site="https://api.$DOMAIN"
+  d_hosts="api.$DOMAIN,$DOMAIN"
+  d_csrf="https://app.$DOMAIN,https://admin.$DOMAIN,https://api.$DOMAIN"
+  d_cors="https://app.$DOMAIN,https://admin.$DOMAIN"
 else
   d_site="http://localhost:8000"; d_hosts="localhost,127.0.0.1"
   d_csrf="http://localhost:5173,http://127.0.0.1:5173"; d_cors="http://localhost:5173,http://127.0.0.1:5173"

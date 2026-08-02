@@ -39,6 +39,8 @@ path('crm-api/stats/', include('stats.urls', namespace='stats_api')),
 
     # JWT Token Endpoints for authentication from your React Vite frontend
     # Your frontend will POST to 'token_obtain_pair' with username/password
+    # Player web login via WhatsApp one-time code (for the player portal).
+    path('crm-api/auth/player/', include('customer_data.player_auth')),
     path('crm-api/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     # Your frontend will POST to 'token_refresh' with a valid refresh token
     path('crm-api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
