@@ -1,0 +1,22 @@
+{
+  "name": "betblitz-player-portal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "BetBlitz player portal (app.<domain>) — read-only view of matches, tickets and wallet; login via WhatsApp one-time code.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
+  }
+}
