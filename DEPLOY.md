@@ -178,6 +178,20 @@ superuser you created):
    docker compose exec backend python manage.py football_league_setup_v3
    ```
 
+5. **Publish the WhatsApp UI Flows** (login, register, and the native **betting**
+   Flow) to Meta. Requires a MetaAppConfig with a `flow_private_key_pem` set:
+
+   ```bash
+   docker compose exec backend python manage.py load_flow_definitions   # loads flow JSON into the DB
+   docker compose exec backend python manage.py sync_whatsapp_flows      # creates/updates/publishes them on Meta
+   ```
+
+   Once the `bet_whatsapp` Flow is published, players can open the native
+   browse-and-bet Flow by sending **`bet form`** (or `place bet`) on WhatsApp;
+   if it isn't published yet, that falls back to the conversational betting flow
+   (`bet`). The Flow's data-exchange endpoint is
+   `…/crm-api/meta/flow-endpoint/<phone_number_id>/`.
+
 ---
 
 ## 5. Common management commands

@@ -638,6 +638,7 @@ class WhatsAppFlowService:
         header_text: str = None,
         footer_text: str = None,
         flow_token: str = None,
+        flow_action: str = "navigate",
     ) -> Dict[str, Any]:
         """
         Creates the interactive message payload for sending a WhatsApp Flow.
@@ -664,7 +665,7 @@ class WhatsAppFlowService:
                     "flow_token": flow_token or "",
                     "flow_id": flow_id,
                     "flow_cta": flow_cta,
-                    "flow_action": "navigate",
+                    "flow_action": flow_action,
                     "flow_action_payload": {
                         "screen": screen
                     }
