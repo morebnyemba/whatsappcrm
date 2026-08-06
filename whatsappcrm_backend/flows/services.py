@@ -1848,7 +1848,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
     # Launch the native betting WhatsApp Flow on a keyword or a "launch_bet_flow"
     # tap, if it has been published to Meta. Falls through to the conversational
     # betting flow ("bet") when the UI flow isn't available.
-    if message_text_body in ('bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
+    if message_text_body in ('bet', 'play', 'bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
         from .models import WhatsAppFlow as _WhatsAppFlow
         from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
         app_config = getattr(contact, 'associated_app_config', None)
