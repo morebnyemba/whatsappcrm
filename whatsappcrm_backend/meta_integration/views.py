@@ -614,6 +614,11 @@ class WhatsAppFlowEndpointView(View):
         flow_action_payload = body.get('flow_action_payload', {}) or {}
         screen_hint = flow_action_payload.get('screen', '')
 
+        # Native betting Flow: first screen is dynamic (list of fixtures).
+        if screen_hint.startswith('BET_'):
+            from football_data_app.bet_flow_handler import init_screen
+            return init_screen()
+
         if screen_hint == 'REGISTER':
             return {
                 "screen": "REGISTER",
@@ -642,6 +647,11 @@ class WhatsAppFlowEndpointView(View):
         flow_token = body.get('flow_token')
 
         logger.info(f"WhatsApp Flow data_exchange: screen={screen}, flow_token={flow_token}")
+
+        # Native betting Flow screens (BET_BROWSE / BET_MARKETS / ...).
+        from football_data_app.bet_flow_handler import is_bet_screen, handle_data_exchange
+        if is_bet_screen(screen):
+            return handle_data_exchange(screen, data, flow_token)
 
         if screen == 'LOGIN':
             return self._handle_login_screen(data, flow_token)
