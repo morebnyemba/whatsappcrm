@@ -89,8 +89,9 @@ Environment overrides: `DOCKER_START_WAIT` (daemon-ready attempts, default 30).
 | `celery_io_worker` | Celery worker, `celery` queue (I/O, gevent) |
 | `celery_cpu_worker` | Celery worker, `cpu_heavy` queue (data/settlement) |
 | `celery_beat` | Celery beat scheduler (django-celery-beat) |
-| `frontend` | React/Vite dashboard build |
-| `nginx_proxy` | Reverse proxy / TLS / media |
+| `frontend` | Admin CRM (React/Vite) — served at `admin.<domain>` |
+| `player_portal` | Player portal (React/Vite) — served at `app.<domain>` |
+| `nginx_proxy` | Reverse proxy / TLS / media — routes the three subdomains |
 
 Manage it:
 
@@ -127,19 +128,44 @@ There are **two separate web frontends** and one API, on three subdomains:
 `CORS_ALLOWED_ORIGINS` (`app.`/`admin.`), `CSRF_TRUSTED_ORIGINS` and `SITE_URL`
 (`https://api.<domain>`) from the base domain you enter.
 
-**Building the two frontends** (each is a static build; set the API base to `api.<domain>`):
+**The stack serves everything itself — no manual frontend build.** Both portals
+are built inside the Docker stack (`player-portal` and `whatsapp-crm-frontend`
+services) with their API base baked in from `SITE_URL` (`https://api.<domain>`),
+and the bundled `nginx_proxy` terminates TLS and routes each subdomain:
 
-```bash
-# Player portal → app.<domain>
-cd player-portal && VITE_API_BASE_URL=https://api.<domain> npm ci && npm run build   # outputs dist/
+- `app.<domain>` → player portal container
+- `admin.<domain>` → admin CRM container
+- `api.<domain>` → Django backend (`/crm-api/…`, `/static/`, `/media/`, Meta webhook & Flow endpoint)
+- apex + `www` → redirect to `app.<domain>`
 
-# Admin CRM → admin.<domain>
-cd whatsapp-crm-frontend && VITE_API_BASE_URL=https://api.<domain> npm ci && npm run build
-```
+`deploy.sh` renders `nginx_proxy/nginx.conf` from `nginx_proxy/nginx.conf.template`
+for your domain automatically.
 
-**DNS / TLS / routing:** point all three subdomains at the host, and in your
-reverse proxy (e.g. Nginx Proxy Manager) route `app.` and `admin.` to their
-static `dist/` builds and `api.` to the backend (port 8000), each with TLS.
+**DNS:** create **A records** pointing all names at the host — `api.`, `app.`,
+`admin.` (required), plus the apex and `www` (optional). See the DNS table in
+the README/quickstart.
+
+### TLS / SSL (Let's Encrypt, automated)
+
+When you run `deploy.sh` in production with a domain, it offers to obtain
+Let's Encrypt certificates:
+
+1. Renders the Nginx config and drops a **temporary self-signed cert** so Nginx
+   can start on `:443`.
+2. Brings up the stack, then runs **certbot** (webroot, in a one-shot
+   `certbot/certbot` container) to issue **one SAN certificate** covering
+   `api.`, `app.`, `admin.`, apex and `www`.
+3. Reloads Nginx and installs a **daily auto-renewal** cron
+   (`/etc/cron.d/betblits-certbot-renew`) that renews and reloads Nginx.
+
+Prerequisites at issuance time: the three subdomains must already resolve to the
+host, and ports **80** and **443** must be open. Use the **STAGING** option first
+(the script asks) to verify DNS without burning Let's Encrypt rate limits, then
+re-run with `--regenerate` for the real certificate. If certbot fails, the stack
+keeps serving with the temporary cert; fix DNS/ports and re-run `./deploy.sh`.
+
+To re-run just the SSL step later, run `./deploy.sh` again — it detects an
+existing valid certificate and skips issuance unless you pass `--regenerate`.
 
 ## 4. Post-deploy configuration
 
@@ -150,7 +176,7 @@ superuser you created):
    ID**, **verify token**, and mark it active. Then point the Meta webhook at:
 
    ```
-   https://<your-domain>/crm-api/meta/webhook/
+   https://api.<domain>/crm-api/meta/webhook/
    ```
 
    (Use the same verify token you set in MetaAppConfig.) The webhook signature is
@@ -158,7 +184,7 @@ superuser you created):
 
 2. **Paynow** (optional) — add integration ID/key in the admin if you accept
    real-money deposits/withdrawals. IPN endpoint:
-   `https://<your-domain>/crm-api/customer-data/paynow/ipn/`.
+   `https://api.<domain>/crm-api/customer-data/paynow/ipn/`.
 
 3. **Schedule the football tasks** — under **Periodic Tasks** (django-celery-beat)
    create schedules for:

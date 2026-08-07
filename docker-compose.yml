@@ -58,16 +58,28 @@ services:
         condition: service_healthy # Wait for Redis to be healthy
     restart: unless-stopped
 
+  # Admin CRM (served at admin.<domain>). Static build; API base baked in at
+  # build time from SITE_URL (https://api.<domain>).
   frontend:
-    build: ./whatsapp-crm-frontend
+    build:
+      context: ./whatsapp-crm-frontend
+      args:
+        VITE_API_BASE_URL: ${SITE_URL:-http://localhost:8000}
     container_name: whatsappcrm_frontend_app
-    # command: (For production, this should serve static files, not run a dev server)
-    # ports: (e.g. "3000:3000" if dev server runs on 3000)
-    volumes:
-      - ./whatsapp-crm-frontend:/app
-      - /app/node_modules # Persist node_modules
     depends_on:
-      - backend # Or nginx_proxy if it serves the frontend
+      - backend
+    restart: unless-stopped
+
+  # Player portal (served at app.<domain>). Static build; API base baked in at
+  # build time from SITE_URL (https://api.<domain>).
+  player_portal:
+    build:
+      context: ./player-portal
+      args:
+        VITE_API_BASE_URL: ${SITE_URL:-http://localhost:8000}
+    container_name: whatsappcrm_player_portal
+    depends_on:
+      - backend
     restart: unless-stopped
 
   celery_io_worker:
@@ -148,6 +160,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - player_portal
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]

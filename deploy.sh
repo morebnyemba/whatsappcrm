@@ -50,6 +50,9 @@ DO_START=1
 REGEN=0
 DO_INSTALL=1
 DOCKER_SUDO=""
+DO_SSL=0
+SSL_EMAIL=""
+SSL_STAGING=0
 
 abort() { printf '\n%s✗ Cancelled. No changes were made.%s\n' "$RED" "$RST" >&2; exit 130; }
 on_err() { local rc=$?; err "Unexpected failure (exit $rc) at line ${1:-?}. Existing files were left as-is (any backup is noted above)."; exit "$rc"; }
@@ -99,6 +102,7 @@ v_domain() { [ -z "$1" ] || [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$
 # A value safe to write unquoted in .env (no whitespace, #, quotes, backslash, $).
 v_safe()  { [ -z "$1" ] || [[ ! "$1" =~ [[:space:]\#\"\'\\\$\`] ]] || { err "  contains characters that aren't allowed here"; return 1; }; }
 v_ident() { [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { err "  must start with a letter/underscore, then letters/digits/underscore"; return 1; }; }
+v_email() { [ -z "$1" ] || [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { err "  must be a valid email address, or blank"; return 1; }; }
 
 # ---------------------------------------------------------------------------
 # Secret generation (URL/shell-safe; passwords are alnum for use inside URLs).
@@ -324,6 +328,86 @@ ensure_docker_stack() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Nginx config + Let's Encrypt SSL (production, when a domain is set)
+# ---------------------------------------------------------------------------
+# Render nginx_proxy/nginx.conf from the template for the chosen base domain,
+# wiring api./app./admin. + apex to the backend and the two frontends.
+render_nginx_conf() {
+  local tpl="$SCRIPT_DIR/nginx_proxy/nginx.conf.template"
+  local out="$SCRIPT_DIR/nginx_proxy/nginx.conf"
+  if [ ! -f "$tpl" ]; then warn "nginx template missing ($tpl); leaving nginx.conf unchanged."; return 0; fi
+  sed "s/__DOMAIN__/$DOMAIN/g" "$tpl" > "$out"
+  ok "Rendered nginx_proxy/nginx.conf for $DOMAIN (api./app./admin./apex)."
+}
+
+ensure_openssl() { have openssl || { info "Installing openssl…"; resolve_sudo || true; pkg_install openssl >/dev/null 2>&1 || true; }; have openssl; }
+
+# True if a real (Let's Encrypt / staging) cert already exists for the domain.
+ssl_have_real_cert() {
+  local live="/etc/letsencrypt/live/$DOMAIN/fullchain.pem" issuer
+  $SUDO test -s "$live" 2>/dev/null || return 1
+  issuer="$($SUDO openssl x509 -in "$live" -noout -issuer 2>/dev/null || true)"
+  case "$issuer" in *"Let's Encrypt"*|*"(STAGING)"*|*"Fake LE"*|*"R3"*|*"E1"*|*"R10"*|*"R11"*) return 0;; *) return 1;; esac
+}
+
+# Create a short-lived self-signed cert so Nginx can start on :443 before the
+# real certificate is issued (webroot issuance then needs Nginx serving :80).
+ssl_bootstrap_dummy() {
+  local live="/etc/letsencrypt/live/$DOMAIN"
+  $SUDO mkdir -p "$live" /var/www/letsencrypt || return 1
+  if $SUDO test -s "$live/fullchain.pem" 2>/dev/null; then return 0; fi
+  ensure_openssl || { warn "openssl unavailable; cannot bootstrap SSL."; return 1; }
+  info "Creating a temporary self-signed certificate so Nginx can start…"
+  $SUDO openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+    -keyout "$live/privkey.pem" -out "$live/fullchain.pem" \
+    -subj "/CN=$DOMAIN" >/dev/null 2>&1 || { warn "Could not create bootstrap certificate."; return 1; }
+}
+
+# Obtain the real certificate (webroot) and reload Nginx.
+ssl_issue() {
+  local email_flag staging_flag
+  if [ -n "$SSL_EMAIL" ]; then email_flag=(--email "$SSL_EMAIL"); else email_flag=(--register-unsafely-without-email); fi
+  if [ "$SSL_STAGING" = 1 ]; then staging_flag=(--staging); else staging_flag=(); fi
+  # Clear the bootstrap lineage so certbot writes a fresh, real one.
+  $SUDO rm -rf "/etc/letsencrypt/live/$DOMAIN" "/etc/letsencrypt/archive/$DOMAIN" "/etc/letsencrypt/renewal/$DOMAIN.conf" 2>/dev/null || true
+  info "Requesting a Let's Encrypt certificate for api./app./admin./$DOMAIN (and www)…"
+  if $DOCKER_SUDO docker run --rm \
+        -v /etc/letsencrypt:/etc/letsencrypt \
+        -v /var/www/letsencrypt:/var/www/letsencrypt \
+        certbot/certbot certonly --webroot -w /var/www/letsencrypt \
+        --cert-name "$DOMAIN" \
+        -d "api.$DOMAIN" -d "app.$DOMAIN" -d "admin.$DOMAIN" -d "$DOMAIN" -d "www.$DOMAIN" \
+        "${email_flag[@]}" --agree-tos --no-eff-email --non-interactive "${staging_flag[@]}"; then
+    ok "Certificate obtained."
+    ( cd "$SCRIPT_DIR" && compose exec -T nginx_proxy nginx -s reload ) >/dev/null 2>&1 \
+      || ( cd "$SCRIPT_DIR" && compose restart nginx_proxy ) >/dev/null 2>&1 || true
+    ok "Nginx reloaded with the new certificate."
+    return 0
+  fi
+  warn "Certbot failed — Nginx keeps serving the temporary self-signed certificate."
+  warn "Check that api./app./admin.$DOMAIN resolve to THIS host and ports 80/443 are open, then re-run ./deploy.sh."
+  return 1
+}
+
+# Install a daily renewal (webroot) that reloads Nginx after each renewal.
+ssl_install_renewal() {
+  if [ ! -d /etc/cron.d ]; then
+    warn "No /etc/cron.d on this host — set up 'certbot renew' yourself for auto-renewal."
+    return 0
+  fi
+  local cron="/etc/cron.d/betblits-certbot-renew"
+  $SUDO tee "$cron" >/dev/null <<CRON
+# Auto-renew Let's Encrypt certificates for $DOMAIN and reload Nginx.
+# Managed by deploy.sh — safe to edit the schedule.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 3 * * * root docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/www/letsencrypt:/var/www/letsencrypt certbot/certbot renew --webroot -w /var/www/letsencrypt --quiet && docker exec whatsappcrm_nginx_proxy nginx -s reload >/dev/null 2>&1
+CRON
+  $SUDO chmod 644 "$cron" 2>/dev/null || true
+  ok "Installed auto-renewal (daily) → $cron"
+}
+
 # ===========================================================================
 # Preflight
 # ===========================================================================
@@ -496,6 +580,12 @@ mv "$tmp_env" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 ok "Wrote $ENV_FILE (permissions 600)"
 
+# Render the Nginx config for the domain (production) regardless of whether we
+# start now, so the committed default always matches the chosen domain.
+if [ "$MODE" = "production" ] && [ -n "$DOMAIN" ]; then
+  render_nginx_conf
+fi
+
 # --- 10. Start the stack ----------------------------------------------------
 if [ "$DO_START" != 1 ]; then
   say ""; ok "Configuration complete. Start it with:  cd $SCRIPT_DIR && docker compose up -d --build"
@@ -506,6 +596,22 @@ title "10) Start the stack"
 if ! confirm "Build and start the Docker stack now (docker compose up -d --build)?" "y"; then
   say ""; ok "Configuration complete. Start it later with:  cd $SCRIPT_DIR && docker compose up -d --build"
   exit 0
+fi
+
+# For a production domain, ask about Let's Encrypt certificates so Nginx can
+# serve HTTPS from first start (the Nginx config was rendered above).
+if [ "$MODE" = "production" ] && [ -n "$DOMAIN" ]; then
+  if confirm "Obtain Let's Encrypt SSL certificates for $DOMAIN now?" "y"; then
+    info "DNS for api.$DOMAIN, app.$DOMAIN and admin.$DOMAIN must already point to THIS host, with ports 80/443 open."
+    ask SSL_EMAIL_ANS "  Email for renewal & expiry notices (blank to skip)" "" v_email
+    SSL_EMAIL="${ANSWERS[SSL_EMAIL_ANS]:-}"; unset 'ANSWERS[SSL_EMAIL_ANS]'
+    if confirm "  Use STAGING (test) certificates first? (avoids rate limits while verifying DNS)" "n"; then SSL_STAGING=1; fi
+    if ! resolve_sudo && [ "$(id -u)" -ne 0 ]; then
+      warn "SSL setup needs root/sudo to write /etc/letsencrypt; skipping certificate issuance."
+    else
+      ssl_bootstrap_dummy && DO_SSL=1 || warn "Could not prepare SSL; continuing without HTTPS certificates."
+    fi
+  fi
 fi
 
 info "Building and starting containers…"
@@ -523,6 +629,17 @@ for _ in $(seq 1 40); do
   sleep 3
 done
 if [ "$ready" = 1 ]; then ok "Backend is responding."; else warn "Backend did not report ready in time; check 'docker compose logs backend'."; fi
+
+# --- 10b. SSL certificates --------------------------------------------------
+if [ "$DO_SSL" = 1 ]; then
+  title "10b) SSL certificates"
+  if ssl_have_real_cert && [ "$REGEN" != 1 ]; then
+    ok "A valid certificate already exists for $DOMAIN — skipping issuance (use --regenerate to force)."
+    ( cd "$SCRIPT_DIR" && compose exec -T nginx_proxy nginx -s reload ) >/dev/null 2>&1 || true
+  else
+    if ssl_issue; then ssl_install_renewal; fi
+  fi
+fi
 
 run_mgmt() { ( cd "$SCRIPT_DIR" && compose exec -T backend python manage.py "$@" ); }
 
@@ -545,9 +662,18 @@ fi
 title "Done 🎉"
 ok "BetBlitz is deployed."
 say ""
+if [ -n "$DOMAIN" ]; then
+  info "Your surfaces:"
+  say "  • Player portal:  https://app.$DOMAIN"
+  say "  • Admin CRM:      https://admin.$DOMAIN"
+  say "  • Backend/API:    https://api.$DOMAIN"
+  if [ "$DO_SSL" = 1 ]; then say "  • TLS: Let's Encrypt (auto-renews daily via /etc/cron.d/betblits-certbot-renew)."; fi
+  say ""
+fi
 info "Next steps:"
 say "  • Django admin → add a MetaAppConfig (WhatsApp access token, phone-number ID, verify token)."
 say "  • Point the Meta webhook at  ${ANSWERS[SITE_URL]}/crm-api/meta/webhook/"
+say "  • Set the Flow endpoint URI to  ${ANSWERS[SITE_URL]}/crm-api/meta/flow-endpoint/<phone_number_id>/"
 say "  • If you use Paynow, add its credentials in the admin."
 say "  • Schedule the football update & score/settlement tasks (django-celery-beat, in the admin)."
 say ""
