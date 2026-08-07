@@ -469,7 +469,7 @@ if [ "$MODE" = "production" ]; then
   elif [ -n "${EXISTING[DJANGO_ALLOWED_HOSTS]:-}" ]; then
     dom_default="$(printf '%s' "${EXISTING[DJANGO_ALLOWED_HOSTS]}" | sed -E 's#^api\.##; s#,.*$##')"
   fi
-  case "$dom_default" in localhost*|127.0.0.1*|"") dom_default="";; esac
+  case "$dom_default" in localhost*|127.0.0.1*|""|*yourdomain*|example.com|example.org|*ngrok*) dom_default="";; esac
   ask DOMAIN "Base domain (e.g. betblits.com, no scheme)" "$dom_default" v_domain
   DOMAIN="${ANSWERS[DOMAIN]}"; unset 'ANSWERS[DOMAIN]'
 fi
@@ -479,6 +479,10 @@ if [ -n "$DOMAIN" ]; then
   d_hosts="api.$DOMAIN,$DOMAIN"
   d_csrf="https://app.$DOMAIN,https://admin.$DOMAIN,https://api.$DOMAIN"
   d_cors="https://app.$DOMAIN,https://admin.$DOMAIN"
+  # These four are fully derived from the domain. Drop any stale .env values so
+  # the prompt defaults track the domain just entered (not an old placeholder).
+  unset 'EXISTING[SITE_URL]' 'EXISTING[DJANGO_ALLOWED_HOSTS]' \
+        'EXISTING[CSRF_TRUSTED_ORIGINS]' 'EXISTING[CORS_ALLOWED_ORIGINS]'
 else
   d_site="http://localhost:8000"; d_hosts="localhost,127.0.0.1"
   d_csrf="http://localhost:5173,http://127.0.0.1:5173"; d_cors="http://localhost:5173,http://127.0.0.1:5173"
