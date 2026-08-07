@@ -20,19 +20,32 @@ _ERR = {
     "is_error": {"type": "boolean", "__example__": False},
 }
 _OPTION_EXAMPLE = [{"id": "1", "title": "Example", "description": ""}]
+# Meta requires dynamic data-source arrays to declare their item object schema
+# (id/title/description), not a bare {"type": "object"}.
+_OPTION_ITEMS = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+    },
+}
 _SLIP = {"slip": {"type": "string", "__example__": ""}}
 
 BET_WHATSAPP_FLOW = {
     "version": "6.0",
     "data_api_version": "3.0",
+    # Forward-only DAG (Meta rejects backward edges; back navigation uses the
+    # device back button). BET_MENU is the entry screen (no inbound edges);
+    # BET_SUCCESS and BET_DONE are terminal.
     "routing_model": {
         "BET_MENU": ["BET_BROWSE", "BET_SLIP", "BET_MYBETS", "BET_SAFER", "BET_DONE"],
         "BET_BROWSE": ["BET_MARKETS"],
-        "BET_MARKETS": ["BET_OUTCOMES", "BET_BROWSE"],
-        "BET_OUTCOMES": ["BET_STAKE", "BET_SLIP", "BET_BROWSE"],
-        "BET_STAKE": ["BET_CONFIRM", "BET_BROWSE"],
-        "BET_CONFIRM": ["BET_SUCCESS", "BET_BROWSE"],
-        "BET_SLIP": ["BET_SUCCESS", "BET_BROWSE", "BET_MENU"],
+        "BET_MARKETS": ["BET_OUTCOMES"],
+        "BET_OUTCOMES": ["BET_STAKE", "BET_SLIP"],
+        "BET_STAKE": ["BET_CONFIRM"],
+        "BET_CONFIRM": ["BET_SUCCESS"],
+        "BET_SLIP": ["BET_SUCCESS"],
         "BET_MYBETS": ["BET_DONE"],
         "BET_SAFER": ["BET_DONE"],
     },
@@ -42,7 +55,7 @@ BET_WHATSAPP_FLOW = {
             "title": "BetBlitz",
             "data": {
                 **_SLIP,
-                "menu": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "menu": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 "message": {"type": "string", "__example__": "What would you like to do?"},
                 **_ERR,
             },
@@ -64,7 +77,7 @@ BET_WHATSAPP_FLOW = {
             "title": "Place a Bet",
             "data": {
                 **_SLIP,
-                "fixtures": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "fixtures": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 "has_fixtures": {"type": "boolean", "__example__": True},
                 **_ERR,
             },
@@ -87,7 +100,7 @@ BET_WHATSAPP_FLOW = {
                 **_SLIP,
                 "fixture_id": {"type": "string", "__example__": "1"},
                 "fixture_label": {"type": "string", "__example__": "Home v Away"},
-                "markets": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "markets": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -108,8 +121,8 @@ BET_WHATSAPP_FLOW = {
             "data": {
                 **_SLIP,
                 "market_label": {"type": "string", "__example__": "Match Winner"},
-                "outcomes": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
-                "modes": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "outcomes": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
+                "modes": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -181,7 +194,7 @@ BET_WHATSAPP_FLOW = {
                 **_SLIP,
                 "summary": {"type": "string", "__example__": "🧾 Your Bet Slip"},
                 "has_slip": {"type": "boolean", "__example__": False},
-                "slip_actions": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "slip_actions": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -204,7 +217,7 @@ BET_WHATSAPP_FLOW = {
             "title": "My Bets",
             "data": {
                 **_SLIP,
-                "tickets": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "tickets": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -223,7 +236,7 @@ BET_WHATSAPP_FLOW = {
             "title": "Safer Gambling",
             "data": {
                 "summary": {"type": "string", "__example__": "🛡️ Safer Gambling"},
-                "safer_actions": {"type": "array", "items": {"type": "object"}, "__example__": _OPTION_EXAMPLE},
+                "safer_actions": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
