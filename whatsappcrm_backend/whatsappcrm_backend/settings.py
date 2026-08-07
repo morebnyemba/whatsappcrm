@@ -30,6 +30,15 @@ ALLOWED_HOSTS_STRING = os.getenv(
 )
 ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_STRING.split(',') if host.strip()]
 
+# Always allow loopback hosts so in-container probes work regardless of the
+# configured public hosts. The Docker healthcheck curls http://localhost:8000/
+# and Celery/other internal callers may use 127.0.0.1; these Host values can
+# only originate from inside the container network, never from public traffic
+# (which arrives through Nginx with the real domain), so this is safe in prod.
+for _internal_host in ('localhost', '127.0.0.1'):
+    if _internal_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_internal_host)
+
 # --- CSRF Trusted Origins ---
 # Add your ngrok URL and any other frontend domains that will make state-changing requests
 # Ensure these are HTTPS if your site uses HTTPS.
