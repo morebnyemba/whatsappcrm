@@ -45,6 +45,20 @@ SESSION_EXPIRED_MESSAGE = (
 )
 
 
+def _has_valid_session(contact: Contact) -> bool:
+    """Whether the contact currently has a valid (non-expired) login session.
+    Refreshes the session's last-activity timestamp when valid."""
+    from conversations.models import ContactSession
+    try:
+        session = ContactSession.objects.get(contact=contact)
+    except ContactSession.DoesNotExist:
+        return False
+    if session.is_valid():
+        session.refresh()
+        return True
+    return False
+
+
 def _build_login_prompt_action(recipient_wa_id: str, body_text: str) -> dict:
     """Build an interactive Login/Register button prompt action."""
     return {
@@ -1847,8 +1861,22 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
 
     # Launch the native betting WhatsApp Flow on a keyword or a "launch_bet_flow"
     # tap, if it has been published to Meta. Falls through to the conversational
-    # betting flow ("bet") when the UI flow isn't available.
+    # betting flow ("bet") when the UI flow isn't available. Betting requires a
+    # login session — checked here, before launching, since this intercepts the
+    # "bet" keyword ahead of the conversational Betting Flow's own login gate.
     if message_text_body in ('bet', 'play', 'bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
+        if not _has_valid_session(contact):
+            logger.info(
+                f"Betting requested but contact {contact.whatsapp_id} has no valid session. "
+                f"Prompting login instead of launching the betting Flow."
+            )
+            return [_build_login_prompt_action(
+                contact.whatsapp_id,
+                '\U0001f512 *Login Required*\n\n'
+                'You need to be logged in to place bets.\n\n'
+                'If you have an account, tap *Login* below.\n'
+                'New here? Tap *Register* to create a free account.'
+            )]
         from .models import WhatsAppFlow as _WhatsAppFlow
         from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
         app_config = getattr(contact, 'associated_app_config', None)
@@ -1979,17 +2007,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
     if triggered_flow:
         # --- Session security check ---
         if triggered_flow.requires_login:
-            from conversations.models import ContactSession
-            has_valid_session = False
-            try:
-                session = ContactSession.objects.get(contact=contact)
-                has_valid_session = session.is_valid()
-                if has_valid_session:
-                    session.refresh()
-            except ContactSession.DoesNotExist:
-                pass
-
-            if not has_valid_session:
+            if not _has_valid_session(contact):
                 logger.info(
                     f"Flow '{triggered_flow.name}' requires login but contact {contact.whatsapp_id} "
                     f"has no valid session. Prompting login."
