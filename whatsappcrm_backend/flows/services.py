@@ -54,7 +54,7 @@ def _build_login_prompt_action(recipient_wa_id: str, body_text: str) -> dict:
         'data': {
             'type': 'button',
             'body': {'text': body_text},
-            'footer': {'text': 'Tap Login if you already have an account, or Register to create one.'},
+            'footer': {'text': 'Already registered? Login. New here? Register.'},
             'action': {
                 'buttons': [
                     {'type': 'reply', 'reply': {'id': 'prompt_login', 'title': 'Login'}},
