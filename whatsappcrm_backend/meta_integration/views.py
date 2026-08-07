@@ -617,7 +617,7 @@ class WhatsAppFlowEndpointView(View):
         # Native betting Flow: first screen is dynamic (list of fixtures).
         if screen_hint.startswith('BET_'):
             from football_data_app.bet_flow_handler import init_screen
-            return init_screen()
+            return init_screen(flow_token)
 
         if screen_hint == 'REGISTER':
             return {

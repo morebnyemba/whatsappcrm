@@ -45,7 +45,7 @@ BET_WHATSAPP_FLOW = {
         "BET_OUTCOMES": ["BET_STAKE", "BET_SLIP"],
         "BET_STAKE": ["BET_CONFIRM"],
         "BET_CONFIRM": ["BET_SUCCESS"],
-        "BET_SLIP": ["BET_SUCCESS"],
+        "BET_SLIP": ["BET_SUCCESS", "BET_DONE"],
         "BET_MYBETS": ["BET_DONE"],
         "BET_SAFER": ["BET_DONE"],
     },

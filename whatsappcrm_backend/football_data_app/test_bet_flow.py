@@ -41,10 +41,14 @@ class BetFlowHandlerTests(TestCase):
         self.mk2 = Market.objects.create(fixture=self.fx2, bookmaker=bk, api_market_key='h2h',
                                          category=cat, last_updated_odds_api=timezone.now())
         self.home_outcome2 = MarketOutcome.objects.create(market=self.mk2, outcome_name='Home', odds=Decimal('1.50'))
+        H._save_server_slip(self.wa, [])  # each test starts with a clean server-side slip
+
+    def tearDown(self):
+        H._save_server_slip(self.wa, [])
 
     # ---- menu is the entry point ----
     def test_init_shows_menu(self):
-        init = H.init_screen()
+        init = H.init_screen(self.wa)
         self.assertEqual(init['screen'], 'BET_MENU')
         ids = {o['id'] for o in init['data']['menu']}
         self.assertEqual(ids, {'browse', 'slip', 'mybets', 'balance', 'safer'})
@@ -109,16 +113,80 @@ class BetFlowHandlerTests(TestCase):
         self.assertEqual(Decimal(str(ticket.potential_winnings)), Decimal('30.00'))
 
     def test_slip_clear(self):
+        # BET_SLIP -> BET_MENU would be an illegal routing-model cycle (MENU
+        # already has a forward path into SLIP via BROWSE/MARKETS/OUTCOMES),
+        # so "clear" must target a terminal screen (BET_DONE) instead.
         s = H.handle_data_exchange('BET_SLIP',
                                    {'slip_action': 'clear', 'slip': str(self.home_outcome.id)}, self.wa)
-        self.assertEqual(s['screen'], 'BET_MENU')
-        self.assertEqual(s['data']['slip'], '')
+        self.assertEqual(s['screen'], 'BET_DONE')
+        self.assertEqual(H._load_server_slip(self.wa), [])
 
-    def test_slip_add_more_returns_browse(self):
-        s = H.handle_data_exchange('BET_SLIP',
-                                   {'slip_action': 'add_more', 'slip': str(self.home_outcome.id)}, self.wa)
-        self.assertEqual(s['screen'], 'BET_BROWSE')
-        self.assertEqual(s['data']['slip'], str(self.home_outcome.id))
+    def test_no_slip_action_navigates_backward(self):
+        # "Add another selection" was removed: Meta's routing model can't
+        # legally route BET_SLIP back into the browse chain (BET_BROWSE
+        # already has a forward path into BET_SLIP). Guards against it
+        # resurfacing as a data_exchange-driven jump.
+        action_ids = {a['id'] for a in H.SLIP_ACTIONS}
+        self.assertEqual(action_ids, {'place', 'clear'})
+
+    # ---- error recovery never jumps to an earlier screen ----
+    # Meta's Flow client rejects any data_exchange response whose `screen`
+    # isn't a declared forward target of the CURRENT screen ("could not
+    # switch to the requested section"). These guard every error path stays
+    # on the screen the client is actually displaying.
+
+    def test_invalid_market_id_stays_on_markets_screen(self):
+        s = H.handle_data_exchange('BET_MARKETS', {'market_id': '999999', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_MARKETS')
+        self.assertTrue(s['data']['is_error'])
+
+    def test_invalid_outcome_id_stays_on_outcomes_screen(self):
+        s = H.handle_data_exchange(
+            'BET_OUTCOMES', {'outcome_id': '999999', 'mode': 'bet_now', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_OUTCOMES')
+        self.assertTrue(s['data']['is_error'])
+
+    def test_invalid_outcome_id_on_confirm_stays_on_stake_screen(self):
+        s = H.handle_data_exchange(
+            'BET_STAKE', {'outcome_id': '999999', 'stake': '10', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_STAKE')
+        self.assertTrue(s['data']['is_error'])
+
+    def test_no_handler_response_ever_targets_bet_browse_from_deeper_screens(self):
+        # Systematic guard: none of the illegal-jump-prone paths should ever
+        # resolve back to BET_BROWSE once the user is past it.
+        cases = [
+            ('BET_MARKETS', {'market_id': '999999', 'slip': ''}),
+            ('BET_OUTCOMES', {'outcome_id': '999999', 'mode': 'bet_now', 'slip': ''}),
+            ('BET_STAKE', {'outcome_id': '999999', 'stake': '10', 'slip': ''}),
+        ]
+        for current_screen, payload in cases:
+            s = H.handle_data_exchange(current_screen, payload, self.wa)
+            self.assertNotEqual(s['screen'], 'BET_BROWSE',
+                                f"{current_screen} error path illegally jumped to BET_BROWSE")
+
+    # ---- server-side slip persistence survives a stale cached screen ----
+
+    def test_slip_survives_resubmission_from_stale_screen(self):
+        # Leg 1: add the first outcome (server now authoritative for slip=[A]).
+        s = H.handle_data_exchange(
+            'BET_OUTCOMES', {'outcome_id': str(self.home_outcome.id), 'mode': 'add_slip', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_SLIP')
+        self.assertEqual(H._load_server_slip(self.wa), [self.home_outcome.id])
+
+        # Leg 2: simulate the user tapping the Flow's native back button to a
+        # STALE cached BET_OUTCOMES screen (echoing an EMPTY slip — as it was
+        # before leg 1 was added) and adding a second leg from there.
+        s = H.handle_data_exchange(
+            'BET_OUTCOMES', {'outcome_id': str(self.home_outcome2.id), 'mode': 'add_slip', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_SLIP')
+
+        # Both legs must be present — the stale client echo must not have
+        # dropped leg 1.
+        server_ids = set(H._load_server_slip(self.wa))
+        self.assertEqual(server_ids, {self.home_outcome.id, self.home_outcome2.id})
+        self.assertIn(str(self.home_outcome.id), s['data']['slip'].split(','))
+        self.assertIn(str(self.home_outcome2.id), s['data']['slip'].split(','))
 
     # ---- my bets ----
     def test_mybets_empty_then_detail(self):
