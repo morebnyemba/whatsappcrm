@@ -461,7 +461,16 @@ info "Mode: $MODE"
 DOMAIN=""
 if [ "$MODE" = "production" ]; then
   info "Subdomain layout: app.<domain> = player portal, admin.<domain> = admin CRM, api.<domain> = backend."
-  ask DOMAIN "Base domain (e.g. betblitz.co.zw, no scheme)" "" v_domain
+  # Prefill the base domain on re-run: recover it from a saved SITE_URL
+  # (https://api.<domain>) or ALLOWED_HOSTS (api.<domain>,<domain>).
+  dom_default=""
+  if [ -n "${EXISTING[SITE_URL]:-}" ]; then
+    dom_default="$(printf '%s' "${EXISTING[SITE_URL]}" | sed -E 's#^https?://##; s#/.*$##; s#^api\.##')"
+  elif [ -n "${EXISTING[DJANGO_ALLOWED_HOSTS]:-}" ]; then
+    dom_default="$(printf '%s' "${EXISTING[DJANGO_ALLOWED_HOSTS]}" | sed -E 's#^api\.##; s#,.*$##')"
+  fi
+  case "$dom_default" in localhost*|127.0.0.1*|"") dom_default="";; esac
+  ask DOMAIN "Base domain (e.g. betblits.com, no scheme)" "$dom_default" v_domain
   DOMAIN="${ANSWERS[DOMAIN]}"; unset 'ANSWERS[DOMAIN]'
 fi
 if [ -n "$DOMAIN" ]; then
