@@ -7,6 +7,7 @@ from flows.services import (
     InteractiveMessagePayload,
     StepConfigSendMessage,
     StepConfigQuestion,
+    _build_login_prompt_action,
 )
 
 
@@ -178,3 +179,13 @@ class StepConfigQuestionFlowTests(TestCase):
             },
         })
         self.assertEqual(config.reply_config.save_to_variable, "login_nfm_response")
+
+
+class LoginPromptActionTests(TestCase):
+    """Meta rejects interactive button messages whose footer exceeds 60
+    characters (error 131009). Guards against a regression of that bug."""
+
+    def test_footer_within_whatsapp_limit(self):
+        action = _build_login_prompt_action("263774635389", "Welcome!")
+        footer_text = action["data"]["footer"]["text"]
+        self.assertLessEqual(len(footer_text), 60)
