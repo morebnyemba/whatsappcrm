@@ -1848,7 +1848,7 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
     # Launch the native betting WhatsApp Flow on a keyword or a "launch_bet_flow"
     # tap, if it has been published to Meta. Falls through to the conversational
     # betting flow ("bet") when the UI flow isn't available.
-    if message_text_body in ('bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
+    if message_text_body in ('bet', 'play', 'bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
         from .models import WhatsAppFlow as _WhatsAppFlow
         from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
         app_config = getattr(contact, 'associated_app_config', None)
@@ -1864,9 +1864,10 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
             logger.info(f"Launching native betting Flow '{wa_flow.name}' (flow_id={wa_flow.flow_id}) for {contact.whatsapp_id}.")
             flow_message = _WhatsAppFlowService.create_flow_message_data(
                 flow_id=wa_flow.flow_id,
-                screen='BET_BROWSE',
-                flow_cta='Place a bet',
-                body_text='⚽ *Place a bet*\n\nBrowse matches and place a bet without leaving WhatsApp.',
+                screen='BET_MENU',
+                flow_cta='Open BetBlitz',
+                body_text=('⚽ *BetBlitz*\n\nPlace bets, build accumulators, check your bets, '
+                           'balance and safer-gambling tools — all without leaving WhatsApp.'),
                 header_text='BetBlitz',
                 flow_token=contact.whatsapp_id,
                 flow_action='data_exchange',

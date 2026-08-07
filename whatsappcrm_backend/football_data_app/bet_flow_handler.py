@@ -1,21 +1,27 @@
 # whatsappcrm_backend/football_data_app/bet_flow_handler.py
 """
-Server logic for the native WhatsApp **Flow** betting journey (data_exchange).
+Server logic for the native WhatsApp **Flow** betting hub (data_exchange).
 
 The Meta Flow endpoint (meta_integration.views.WhatsAppFlowEndpointView) decrypts
-each screen submission and calls into here. Each call returns the next screen and
-its dynamic data:
+each screen submission and calls into here. The Flow opens on a menu and folds
+the whole BetBlitz experience into native WhatsApp UI:
 
-    BROWSE  → pick a fixture   → MARKETS
-    MARKETS → pick a market    → OUTCOMES
-    OUTCOMES→ pick an outcome  → STAKE
-    STAKE   → enter a stake    → CONFIRM
-    CONFIRM → place the bet    → SUCCESS (terminal)
+    BET_MENU ─┬─ Place a bet → BROWSE → MARKETS → OUTCOMES ─┬─ (single) STAKE → CONFIRM → SUCCESS
+              │                                             └─ (add)    → SLIP
+              ├─ Bet slip / accumulator → SLIP → SUCCESS
+              ├─ My bets → MYBETS → DONE (ticket detail)
+              ├─ My balance → DONE
+              └─ Safer gambling → SAFER → DONE
 
-Selection state is threaded through the screen `data`/payloads (Flows are
-stateless server-side), and `flow_token` is the contact's whatsapp_id, which
-identifies the player. Placement reuses the exact
-customer_data.ticket_processing validation — no bet logic is duplicated here.
+Flows are stateless server-side, so the running **bet slip** is threaded through
+the screen `data`/payloads as a compact CSV of outcome ids (`slip`). Odds and
+labels are always re-derived from the database, and placement re-fetches odds
+server-side, so a tampered slip payload can never change the price of a bet.
+
+`flow_token` is the contact's whatsapp_id, which identifies the player. All bet
+rules (funds/age/limits/odds) are reused from customer_data.ticket_processing;
+safer-gambling controls from customer_data.compliance; balance from
+customer_data.utils — no bet or compliance logic is duplicated here.
 
 Screen names are namespaced BET_* so the Flow endpoint can route them without
 clashing with the login/register screens.
@@ -25,12 +31,29 @@ from __future__ import annotations
 import logging
 from decimal import Decimal, InvalidOperation
 
-from django.utils import timezone
-
 logger = logging.getLogger(__name__)
 
-SCREENS = ('BET_BROWSE', 'BET_MARKETS', 'BET_OUTCOMES', 'BET_STAKE', 'BET_CONFIRM', 'BET_SUCCESS')
+SCREENS = ('BET_MENU', 'BET_BROWSE', 'BET_MARKETS', 'BET_OUTCOMES', 'BET_STAKE',
+           'BET_CONFIRM', 'BET_SUCCESS', 'BET_SLIP', 'BET_MYBETS', 'BET_SAFER', 'BET_DONE')
 MAX_FLOW_OPTIONS = 20  # keep dropdowns comfortably within Meta's limits
+
+# Static option lists surfaced as dynamic data (keeps the Flow JSON declarative).
+MENU_MODES = [
+    {"id": "bet_now", "title": "Bet this now"},
+    {"id": "add_slip", "title": "Add to slip & keep browsing"},
+]
+SLIP_ACTIONS = [
+    {"id": "place", "title": "Place bet"},
+    {"id": "add_more", "title": "Add another selection"},
+    {"id": "clear", "title": "Clear slip"},
+]
+SAFER_ACTIONS = [
+    {"id": "exclude_1", "title": "Take a 1-day break"},
+    {"id": "exclude_7", "title": "Self-exclude 7 days"},
+    {"id": "exclude_30", "title": "Self-exclude 30 days"},
+    {"id": "deposit_limit", "title": "Set daily deposit limit ($)"},
+    {"id": "stake_limit", "title": "Set daily stake limit ($)"},
+]
 
 
 def is_bet_screen(screen: str) -> bool:
@@ -42,8 +65,92 @@ def _label(text, limit=30):
     return text if len(text) <= limit else text[: limit - 1] + '…'
 
 
-def _err(screen, message):
-    return {"screen": screen, "data": {"is_error": True, "error_message": message}}
+def _err(screen, message, extra=None):
+    data = {"is_error": True, "error_message": message}
+    if extra:
+        data.update(extra)
+    return {"screen": screen, "data": data}
+
+
+# --------------------------------------------------------------------------- #
+#  Player / wallet helpers                                                     #
+# --------------------------------------------------------------------------- #
+
+def _user_for(flow_token):
+    """Resolve the Django user behind a flow_token (whatsapp_id), or None."""
+    from customer_data.models import CustomerProfile
+    from conversations.models import Contact
+    contact = Contact.objects.filter(whatsapp_id=flow_token).first()
+    if not contact:
+        return None
+    profile = (CustomerProfile.objects.filter(contact=contact, user__isnull=False)
+               .select_related('user').first())
+    return profile.user if profile else None
+
+
+def _balance_str(flow_token) -> str:
+    from customer_data.utils import get_customer_wallet_balance
+    res = get_customer_wallet_balance(flow_token)
+    return f"{float(res.get('balance') or 0):.2f}"
+
+
+# --------------------------------------------------------------------------- #
+#  Bet slip threaded as a CSV of outcome ids (stateless)                       #
+# --------------------------------------------------------------------------- #
+
+def _parse_slip(slip_str) -> list[int]:
+    ids = []
+    for part in str(slip_str or '').split(','):
+        part = part.strip()
+        if part.isdigit():
+            iv = int(part)
+            if iv not in ids:
+                ids.append(iv)
+    return ids
+
+
+def _slip_str(ids) -> str:
+    return ','.join(str(i) for i in ids)
+
+
+def _slip_items(ids):
+    """Rebuild the betting_ux slip (list of dicts) from outcome ids, in order."""
+    from . import betting_ux as ux
+    from .models import MarketOutcome
+    outcomes = (MarketOutcome.objects.filter(id__in=ids, is_active=True)
+                .select_related('market__fixture__home_team', 'market__fixture__away_team', 'market__category'))
+    by_id = {o.id: o for o in outcomes}
+    slip = []
+    for i in ids:
+        o = by_id.get(int(i))
+        if o:
+            slip, _added, _msg = ux.slip_add(slip, o)
+    return slip
+
+
+# --------------------------------------------------------------------------- #
+#  Screen builders                                                             #
+# --------------------------------------------------------------------------- #
+
+def _menu_screen(slip_str='', message=''):
+    ids = _parse_slip(slip_str)
+    n = len(ids)
+    menu = [
+        {"id": "browse", "title": "⚽ Place a bet"},
+        {"id": "slip", "title": f"🧾 Bet slip ({n})"},
+        {"id": "mybets", "title": "🎫 My bets"},
+        {"id": "balance", "title": "💰 My balance"},
+        {"id": "safer", "title": "🛡️ Safer gambling"},
+    ]
+    return {
+        "screen": "BET_MENU",
+        "data": {
+            "slip": _slip_str(ids),
+            "menu": menu,
+            "message": message or "What would you like to do?",
+            "is_error": False, "error_message": "",
+        },
+    }
 
 
 def _fixtures_options():
@@ -58,31 +165,37 @@ def _fixtures_options():
     return opts
 
 
-def init_screen() -> dict:
-    """The first screen shown when the Flow opens (INIT)."""
+def _browse_screen(slip_str=''):
     fixtures = _fixtures_options()
     return {
         "screen": "BET_BROWSE",
         "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
             "fixtures": fixtures or [{"id": "none", "title": "No matches available", "description": ""}],
             "has_fixtures": bool(fixtures),
-            "is_error": False,
-            "error_message": "",
+            "is_error": False, "error_message": "",
         },
     }
 
 
-def _markets_screen(fixture_id):
+def init_screen() -> dict:
+    """The first screen shown when the Flow opens (INIT): the betting hub menu."""
+    return _menu_screen('')
+
+
+def _markets_screen(fixture_id, slip_str=''):
     from .betting_ux import build_markets_screen
     scr = build_markets_screen(int(fixture_id))
     if not scr or not scr.get('has_markets'):
-        return _err("BET_BROWSE", "That match has no open markets. Pick another.")
+        return _err("BET_BROWSE", "That match has no open markets. Pick another.",
+                    extra=_browse_screen(slip_str)['data'])
     fixture = scr['fixture']
     markets = [{"id": r['id'].split(':', 1)[1], "title": _label(r['title'], 30)}
                for r in scr['sections'][0]['rows']][:MAX_FLOW_OPTIONS]
     return {
         "screen": "BET_MARKETS",
         "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
             "fixture_id": str(fixture_id),
             "fixture_label": _label(f"{fixture.home_team.name} v {fixture.away_team.name}", 40),
             "markets": markets,
@@ -91,53 +204,50 @@ def _markets_screen(fixture_id):
     }
 
 
-def _outcomes_screen(market_id):
+def _outcomes_screen(market_id, slip_str=''):
     from .betting_ux import build_outcomes_screen
     scr = build_outcomes_screen(int(market_id))
     if not scr or not scr.get('has_outcomes'):
-        return _err("BET_BROWSE", "That market has no options right now. Start again.")
-    outcomes = [{"id": r['id'].split(':', 1)[1], "title": _label(r['title'] + ' · ' + r['description'].replace('Odds ', '@ '), 40)}
+        return _err("BET_BROWSE", "That market has no options right now. Start again.",
+                    extra=_browse_screen(slip_str)['data'])
+    outcomes = [{"id": r['id'].split(':', 1)[1],
+                 "title": _label(r['title'] + ' · ' + r['description'].replace('Odds ', '@ '), 40)}
                 for r in scr['sections'][0]['rows']][:MAX_FLOW_OPTIONS]
     return {
         "screen": "BET_OUTCOMES",
         "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
             "market_label": _label(scr['market'].category.name, 40),
             "outcomes": outcomes,
+            "modes": MENU_MODES,
             "is_error": False, "error_message": "",
         },
     }
 
 
-def _stake_screen(outcome_id, flow_token):
+def _stake_screen(outcome_id, flow_token, slip_str=''):
     from .models import MarketOutcome
-    from customer_data.models import CustomerProfile, UserWallet
-    from conversations.models import Contact
     outcome = (MarketOutcome.objects.filter(id=int(outcome_id), is_active=True)
                .select_related('market__fixture__home_team', 'market__fixture__away_team', 'market__category').first())
     if not outcome:
-        return _err("BET_BROWSE", "That selection is no longer available. Start again.")
+        return _err("BET_BROWSE", "That selection is no longer available. Start again.",
+                    extra=_browse_screen(slip_str)['data'])
     fx = outcome.market.fixture
-    balance = "0.00"
-    contact = Contact.objects.filter(whatsapp_id=flow_token).first()
-    if contact:
-        profile = CustomerProfile.objects.filter(contact=contact, user__isnull=False).select_related('user').first()
-        if profile:
-            wallet, _ = UserWallet.objects.get_or_create(user=profile.user)
-            balance = f"{wallet.balance:.2f}"
     selection = f"{fx.home_team.name} v {fx.away_team.name} — {outcome.outcome_name} @ {outcome.odds:.2f}"
     return {
         "screen": "BET_STAKE",
         "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
             "outcome_id": str(outcome_id),
             "selection_label": _label(selection, 60),
             "odds": f"{outcome.odds:.2f}",
-            "balance": balance,
+            "balance": _balance_str(flow_token),
             "is_error": False, "error_message": "",
         },
     }
 
 
-def _confirm_screen(outcome_id, stake):
+def _confirm_screen(outcome_id, stake, slip_str=''):
     from .models import MarketOutcome
     try:
         stake_val = Decimal(str(stake))
@@ -148,7 +258,8 @@ def _confirm_screen(outcome_id, stake):
     outcome = MarketOutcome.objects.filter(id=int(outcome_id), is_active=True).select_related(
         'market__fixture__home_team', 'market__fixture__away_team').first()
     if not outcome:
-        return _err("BET_BROWSE", "That selection is no longer available. Start again.")
+        return _err("BET_BROWSE", "That selection is no longer available. Start again.",
+                    extra=_browse_screen(slip_str)['data'])
     fx = outcome.market.fixture
     payout = stake_val * outcome.odds
     summary = (f"{fx.home_team.name} v {fx.away_team.name}\n"
@@ -157,6 +268,7 @@ def _confirm_screen(outcome_id, stake):
     return {
         "screen": "BET_CONFIRM",
         "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
             "outcome_id": str(outcome_id),
             "stake": f"{stake_val:.2f}",
             "summary": summary,
@@ -165,40 +277,249 @@ def _confirm_screen(outcome_id, stake):
     }
 
 
-def _place(outcome_id, stake, flow_token):
+def _slip_screen(slip_str='', stake=None, message=''):
+    from . import betting_ux as ux
+    ids = _parse_slip(slip_str)
+    slip = _slip_items(ids)
+    # Keep the canonical id order/validity (drops any that went inactive).
+    ids = [int(i) for i in ux.slip_outcome_ids(slip)]
+    if not slip:
+        summary = "🧾 Your bet slip is empty.\n\nChoose *Place a bet*, pick a selection, then *Add to slip* to build an accumulator."
+    else:
+        summary = ux.slip_summary_text(slip, float(stake) if stake else None)
+    return {
+        "screen": "BET_SLIP",
+        "data": {
+            "slip": _slip_str(ids),
+            "summary": message + ("\n\n" if message else "") + summary if message else summary,
+            "has_slip": bool(slip),
+            "slip_actions": SLIP_ACTIONS,
+            "is_error": False, "error_message": "",
+        },
+    }
+
+
+def _done_screen(message, heading="Done"):
+    return {
+        "screen": "BET_DONE",
+        "data": {"heading": heading, "message": message[:4000]},
+    }
+
+
+def _mybets_screen(flow_token, slip_str=''):
+    from customer_data.models import BetTicket
+    from . import betting_ux as ux
+    user = _user_for(flow_token)
+    if not user:
+        return _done_screen("You need an account to view your bets. Type 'login' to sign in.", heading="My bets")
+    tickets = list(BetTicket.objects.filter(user=user).order_by('-created_at')[:MAX_FLOW_OPTIONS])
+    if not tickets:
+        return _done_screen("You have no bets yet. Choose *Place a bet* to get started!", heading="My bets")
+    emoji = {'WON': '✅', 'LOST': '❌', 'PLACED': '⏳', 'PENDING': '⏳', 'REFUNDED': '↩️'}
+    options = []
+    for t in tickets:
+        options.append({
+            "id": str(t.id),
+            "title": _label(f"#{t.id} · ${float(t.total_stake):.2f} · {t.get_status_display()}", 30),
+            "description": _label(f"{emoji.get(t.status, '•')} win ${float(t.potential_winnings):.2f}", 30),
+        })
+    return {
+        "screen": "BET_MYBETS",
+        "data": {
+            "slip": _slip_str(_parse_slip(slip_str)),
+            "tickets": options,
+            "is_error": False, "error_message": "",
+        },
+    }
+
+
+def _ticket_detail(flow_token, ticket_id):
+    from customer_data.models import BetTicket
+    user = _user_for(flow_token)
+    if not user:
+        return _done_screen("You need an account to view that ticket.", heading="My bets")
+    try:
+        ticket = (BetTicket.objects.filter(user=user, id=int(ticket_id))
+                  .prefetch_related('bets__market_outcome__market__fixture__home_team',
+                                    'bets__market_outcome__market__fixture__away_team',
+                                    'bets__market_outcome__market__category').first())
+    except (TypeError, ValueError):
+        ticket = None
+    if not ticket:
+        return _done_screen("That ticket could not be found.", heading="My bets")
+    emoji = {'WON': '✅', 'LOST': '❌', 'PLACED': '⏳', 'PENDING': '⏳', 'REFUNDED': '↩️'}.get(ticket.status, '•')
+    lines = [
+        f"🎫 Ticket #{ticket.id} {emoji} {ticket.get_status_display()}",
+        f"Type: {ticket.get_bet_type_display()}",
+        f"Stake: ${float(ticket.total_stake):.2f}",
+        f"Combined odds: {float(ticket.total_odds):.2f}",
+        f"Potential payout: ${float(ticket.potential_winnings):.2f}",
+        "", "Selections:",
+    ]
+    for bet in ticket.bets.all():
+        fx = bet.market_outcome.market.fixture
+        lines.append(f"• {fx.home_team.name} v {fx.away_team.name}")
+        lines.append(f"   {bet.market_outcome.market.category.name}: "
+                     f"{bet.market_outcome.outcome_name} @ {float(bet.market_outcome.odds):.2f} "
+                     f"({bet.get_status_display()})")
+    return _done_screen("\n".join(lines), heading=f"Ticket #{ticket.id}")
+
+
+def _safer_screen(flow_token, message=''):
+    from customer_data import compliance
+    user = _user_for(flow_token)
+    if not user:
+        return _done_screen("You need an account to manage safer-gambling settings.", heading="Safer gambling")
+    summary = compliance.limits_summary(user)
+    return {
+        "screen": "BET_SAFER",
+        "data": {
+            "summary": (message + "\n\n" + summary) if message else summary,
+            "safer_actions": SAFER_ACTIONS,
+            "is_error": False, "error_message": "",
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  Placement                                                                   #
+# --------------------------------------------------------------------------- #
+
+def _place_single(outcome_id, stake, flow_token, slip_str=''):
     from customer_data.ticket_processing import process_bet_ticket_submission
     result = process_bet_ticket_submission(
         whatsapp_id=flow_token, market_outcome_ids=[str(outcome_id)], stake=float(stake))
     if result.get('success'):
         return {"screen": "BET_SUCCESS", "data": {"message": result.get('message', 'Bet placed!')}}
-    # Stay on confirm with the reason (funds/limits/status).
     return {"screen": "BET_CONFIRM", "data": {
+        "slip": _slip_str(_parse_slip(slip_str)),
         "outcome_id": str(outcome_id), "stake": str(stake),
         "summary": result.get('message', 'Could not place the bet.'),
         "is_error": True, "error_message": result.get('message', 'Could not place the bet.')}}
 
 
+def _place_slip(slip_str, stake, flow_token):
+    from customer_data.ticket_processing import process_bet_ticket_submission
+    from . import betting_ux as ux
+    slip = _slip_items(_parse_slip(slip_str))
+    ids = ux.slip_outcome_ids(slip)
+    if not ids:
+        return _slip_screen('', message="Your bet slip is empty.")
+    try:
+        stake_val = Decimal(str(stake))
+    except (InvalidOperation, TypeError):
+        return _slip_screen(_slip_str([int(i) for i in ids]), message="Enter a valid stake amount.")
+    if stake_val <= 0:
+        return _slip_screen(_slip_str([int(i) for i in ids]), message="Stake must be greater than zero.")
+    result = process_bet_ticket_submission(
+        whatsapp_id=flow_token, market_outcome_ids=ids, stake=float(stake_val))
+    if result.get('success'):
+        return {"screen": "BET_SUCCESS", "data": {"message": result.get('message', 'Bet placed!')}}
+    return _slip_screen(_slip_str([int(i) for i in ids]), stake=float(stake_val),
+                        message=result.get('message', 'Could not place the accumulator.'))
+
+
+# --------------------------------------------------------------------------- #
+#  Dispatch                                                                    #
+# --------------------------------------------------------------------------- #
+
 def handle_data_exchange(screen: str, data: dict, flow_token: str) -> dict:
     """Route a betting-Flow screen submission to the next screen."""
     data = data or {}
+    slip_str = data.get('slip', '')
     logger.info(f"Bet Flow data_exchange: screen={screen}")
+
+    if screen == 'BET_MENU':
+        action = data.get('action')
+        if action == 'browse':
+            return _browse_screen(slip_str)
+        if action == 'slip':
+            return _slip_screen(slip_str)
+        if action == 'mybets':
+            return _mybets_screen(flow_token, slip_str)
+        if action == 'balance':
+            return _done_screen(f"💰 Your balance is *${_balance_str(flow_token)}*.", heading="My balance")
+        if action == 'safer':
+            return _safer_screen(flow_token)
+        return _err("BET_MENU", "Please choose an option.", extra=_menu_screen(slip_str)['data'])
+
     if screen == 'BET_BROWSE':
         fid = data.get('fixture_id')
         if not fid or fid == 'none':
-            return _err("BET_BROWSE", "Please choose a match.")
-        return _markets_screen(fid)
+            return _err("BET_BROWSE", "Please choose a match.", extra=_browse_screen(slip_str)['data'])
+        return _markets_screen(fid, slip_str)
+
     if screen == 'BET_MARKETS':
         mid = data.get('market_id')
         if not mid:
             return _err("BET_MARKETS", "Please choose a market.")
-        return _outcomes_screen(mid)
+        return _outcomes_screen(mid, slip_str)
+
     if screen == 'BET_OUTCOMES':
         oid = data.get('outcome_id')
         if not oid:
             return _err("BET_OUTCOMES", "Please choose an option.")
-        return _stake_screen(oid, flow_token)
+        mode = data.get('mode') or 'bet_now'
+        if mode == 'add_slip':
+            ids = _parse_slip(slip_str)
+            if int(oid) not in ids:
+                ids.append(int(oid))
+            return _slip_screen(_slip_str(ids), message="✅ Added to your slip.")
+        return _stake_screen(oid, flow_token, slip_str)
+
     if screen == 'BET_STAKE':
-        return _confirm_screen(data.get('outcome_id'), data.get('stake'))
+        return _confirm_screen(data.get('outcome_id'), data.get('stake'), slip_str)
+
     if screen == 'BET_CONFIRM':
-        return _place(data.get('outcome_id'), data.get('stake'), flow_token)
-    return _err("BET_BROWSE", "Something went wrong. Start again.")
+        return _place_single(data.get('outcome_id'), data.get('stake'), flow_token, slip_str)
+
+    if screen == 'BET_SLIP':
+        nxt = data.get('slip_action') or 'place'
+        if nxt == 'add_more':
+            return _browse_screen(slip_str)
+        if nxt == 'clear':
+            return _menu_screen('', message="🧾 Your bet slip has been cleared.")
+        return _place_slip(slip_str, data.get('stake'), flow_token)
+
+    if screen == 'BET_MYBETS':
+        tid = data.get('ticket_id')
+        if not tid:
+            return _err("BET_MYBETS", "Please choose a ticket.")
+        return _ticket_detail(flow_token, tid)
+
+    if screen == 'BET_SAFER':
+        return _handle_safer(data, flow_token)
+
+    return _menu_screen(slip_str)
+
+
+def _handle_safer(data, flow_token):
+    from customer_data import compliance
+    user = _user_for(flow_token)
+    if not user:
+        return _done_screen("You need an account to manage safer-gambling settings.", heading="Safer gambling")
+    action = data.get('safer_action')
+    if not action:
+        return _err("BET_SAFER", "Please choose an option.", extra=_safer_screen(flow_token)['data'])
+    if action in ('exclude_1', 'exclude_7', 'exclude_30'):
+        days = int(action.split('_', 1)[1])
+        compliance.set_self_exclusion(user, days)
+        return _done_screen(
+            f"🛡️ You have been self-excluded for {days} day(s). Betting and deposits are blocked "
+            f"during this time. Take care.", heading="Safer gambling")
+    # deposit_limit / stake_limit take an amount (0 or empty removes the limit).
+    raw = data.get('amount')
+    try:
+        value = Decimal(str(raw)) if str(raw or '').strip() else Decimal('0')
+    except (InvalidOperation, TypeError):
+        return _safer_screen(flow_token, message="Please enter a valid amount (e.g. 100), or 0 to remove.")
+    remove = value <= 0
+    if action == 'deposit_limit':
+        compliance.set_daily_deposit_limit(user, None if remove else value)
+        what = "daily deposit limit"
+    else:
+        compliance.set_daily_stake_limit(user, None if remove else value)
+        what = "daily stake limit"
+    msg = (f"✅ Your {what} has been removed." if remove
+           else f"✅ Your {what} is now ${value:.2f}.")
+    return _done_screen(msg, heading="Safer gambling")

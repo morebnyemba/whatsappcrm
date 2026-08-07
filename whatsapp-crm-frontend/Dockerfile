@@ -12,6 +12,11 @@ RUN npm install
 # Copy the rest of the frontend application code
 COPY . .
 
+# API base is baked in at build time. deploy.sh / docker-compose pass
+# https://api.<domain> (the backend's SITE_URL). Defaults to local dev.
+ARG VITE_API_BASE_URL=http://localhost:8000
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 # Build the application
 RUN npm run build
 
@@ -21,8 +26,8 @@ FROM nginx:1.25-alpine
 # Copy the build output from the 'build' stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# (Optional) Copy a custom Nginx configuration if needed
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
+# SPA fallback so client-side routes resolve on refresh/deep-link.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose port 80 (default for Nginx)
 EXPOSE 80
