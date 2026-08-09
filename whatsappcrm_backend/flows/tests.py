@@ -3,7 +3,7 @@ from django.test import TestCase
 from pydantic import ValidationError
 
 from conversations.models import Contact, ContactSession
-from flows.models import WhatsAppFlow
+from flows.models import Flow, FlowStep, WhatsAppFlow
 from flows.whatsapp_flow_service import WhatsAppFlowService
 from flows.services import (
     InteractiveFlowAction,
@@ -13,6 +13,7 @@ from flows.services import (
     StepConfigQuestion,
     _build_login_prompt_action,
     _trigger_new_flow,
+    process_message_for_flow,
 )
 from meta_integration.models import MetaAppConfig
 
@@ -252,6 +253,64 @@ class NativeBettingFlowLoginGateTests(TestCase):
         # error 131009) — it must be absent here, not just unused.
         self.assertEqual(data["action"]["parameters"]["flow_action"], "data_exchange")
         self.assertNotIn("flow_action_payload", data["action"]["parameters"])
+
+
+class SwitchFlowToNativeBettingFlowTests(TestCase):
+    """The conversational engine's switch_flow action ('switch_to_betting' in the
+    Welcome Flow) hands off to _trigger_new_flow, which -- for the native betting
+    Flow -- returns a stateless send_whatsapp_message action without ever creating a
+    ContactFlowState (there's no conversational flow to be 'in'). The switch-flow
+    post-processing used to treat "no ContactFlowState was created" as "the switch
+    failed" regardless of why, so it always appended a spurious 'Sorry, I could not
+    switch to the requested section' text message after every successful native
+    Flow launch. Guards against a regression of that bug."""
+
+    def setUp(self):
+        self.config = MetaAppConfig.objects.create(
+            name="Test Config",
+            app_secret="secret",
+            access_token="token",
+            phone_number_id="880051405199010",
+            waba_id="111222334",
+            verify_token="verify",
+            is_active=True,
+        )
+        self.contact = Contact.objects.create(
+            whatsapp_id="263780625683", associated_app_config=self.config
+        )
+        session = ContactSession.objects.create(contact=self.contact)
+        session.start()
+        WhatsAppFlow.objects.create(
+            name="bet_whatsapp",
+            friendly_name="BetBlitz (Interactive)",
+            meta_app_config=self.config,
+            flow_id="2216047699159394",
+            flow_json={},
+            is_active=True,
+            sync_status="published",
+        )
+        trigger_flow = Flow.objects.create(
+            name="Trigger Bet Flow Test",
+            is_active=True,
+            trigger_keywords=["startbet"],
+        )
+        FlowStep.objects.create(
+            flow=trigger_flow,
+            name="switch_to_betting",
+            step_type="action",
+            is_entry_point=True,
+            config={"actions_to_run": [
+                {"action_type": "switch_flow", "trigger_keyword_template": "bet"}
+            ]},
+        )
+
+    def test_successful_native_flow_launch_has_no_spurious_error_message(self):
+        message_data = {"type": "text", "text": {"body": "startbet"}}
+        actions = process_message_for_flow(self.contact, message_data, None)
+
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["data"].get("type"), "flow")
+        self.assertEqual(actions[0]["data"]["action"]["parameters"]["flow_id"], "2216047699159394")
 
 
 class CreateFlowMessageDataTests(TestCase):
