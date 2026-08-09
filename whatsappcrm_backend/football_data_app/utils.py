@@ -768,6 +768,13 @@ def settle_ticket(ticket_id: int):
                 else:
                     logger.error(f"{log_prefix} Cannot payout - user or wallet not found.")
                     raise ValueError("User or wallet not found for payout")
+
+                # Deduct from agent's wallet on referred user's win
+                try:
+                    from referrals.utils import apply_agent_win_deduction
+                    apply_agent_win_deduction(ticket, winnings)
+                except Exception as deduction_err:
+                    logger.error(f"{log_prefix} Error applying agent win deduction: {deduction_err}", exc_info=True)
             # All bets are PUSH/REFUNDED
             else:
                 new_status = 'REFUNDED'

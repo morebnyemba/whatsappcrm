@@ -1633,7 +1633,9 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                         'bonus_percentage_each': referral_settings.bonus_percentage_each,
                         'bonus_percentage_display': f"{referral_settings.bonus_percentage_each:.2%}",
                         'agent_commission_percentage': referral_settings.agent_commission_percentage,
-                        'agent_commission_display': f"{referral_settings.agent_commission_percentage:.2%}"
+                        'agent_commission_display': f"{referral_settings.agent_commission_percentage:.2%}",
+                        'agent_win_deduction_percentage': referral_settings.agent_win_deduction_percentage,
+                        'agent_win_deduction_display': f"{referral_settings.agent_win_deduction_percentage:.2%}",
                     }
                     current_step_context[action_item_root.output_variable_name] = settings_data
                     logger.info(f"Loaded referral settings into context variable '{action_item_root.output_variable_name}'.")
@@ -1682,13 +1684,19 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                                 current_step_context[action_item_root.output_variable_name] = {}
                                 continue
                             total_earnings = agent_profile.total_earnings
+                            total_deductions = agent_profile.total_deductions
+                            net_earnings = agent_profile.net_earnings
                             total_referrals = ReferralProfile.objects.filter(referred_by=user).count()
                             agent_settings = ReferralSettings.load()
                             earnings_data = {
                                 'total_earnings': f"{total_earnings:.2f}",
+                                'total_deductions': f"{total_deductions:.2f}",
+                                'net_earnings': f"{net_earnings:.2f}",
                                 'total_referrals': total_referrals,
                                 'commission_percentage': agent_settings.agent_commission_percentage,
                                 'commission_display': f"{agent_settings.agent_commission_percentage:.2%}",
+                                'deposit_bonus_display': f"{agent_settings.bonus_percentage_each:.2%}",
+                                'win_deduction_display': f"{agent_settings.agent_win_deduction_percentage:.2%}",
                             }
                             current_step_context[action_item_root.output_variable_name] = earnings_data
                             logger.info(f"Loaded agent earnings for user {user.username}: {earnings_data}")

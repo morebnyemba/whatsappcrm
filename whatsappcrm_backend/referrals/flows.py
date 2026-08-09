@@ -80,7 +80,7 @@ def create_referral_flow():
                         "message_type": "interactive",
                         "interactive": {
                             "type": "button",
-                            "body": {"text": "Welcome to the Agent Program! 🤝\nEarn commission when users you refer lose bets.\n\nWhat would you like to do?"},
+                            "body": {"text": "Welcome to the Agent Program! 🤝\nEarn a bonus when your referrals make their first deposit, plus commission when they lose bets. Note: a share of their winnings is deducted from your balance when they win.\n\nWhat would you like to do?"},
                             "action": {
                                 "buttons": [
                                     {"type": "reply", "reply": {"id": "get_referral_code", "title": "Get My Agent Code"}},
@@ -133,7 +133,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "Your personal agent code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. When they register and place bets, you'll earn a *{{ flow_context.referral_settings.agent_commission_display }}* commission on every bet they lose! 💰\n\nI'll send the shareable message next. Just forward it to your friends!"
+                        "body": "Your personal agent code is here! 🚀\n\nCode: *{{ flow_context.referral_code }}*\n\nShare this code with your friends. Here's how you earn:\n• *{{ flow_context.referral_settings.bonus_percentage_display }}* bonus when they make their first deposit\n• *{{ flow_context.referral_settings.agent_commission_display }}* commission on every bet they lose\n\nNote: *{{ flow_context.referral_settings.agent_win_deduction_display }}* of their winnings is deducted from your balance when they win.\n\nI'll send the shareable message next. Just forward it to your friends!"
                     }
                 },
                 "transitions": [{"to_step": "send_shareable_referral_message", "condition_config": {"type": "always_true"}}]
@@ -195,7 +195,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "💰 *Agent Earnings Summary*\n\nTotal Earnings: *${{ flow_context.agent_earnings_data.total_earnings }}*\nTotal Referrals: *{{ flow_context.agent_earnings_data.total_referrals }}*\nCommission Rate: *{{ flow_context.agent_earnings_data.commission_display }}*\n\nKeep sharing your code to earn more! 🚀"
+                        "body": "💰 *Agent Earnings Summary*\n\nTotal Earnings: *${{ flow_context.agent_earnings_data.total_earnings }}*\nTotal Deductions: *${{ flow_context.agent_earnings_data.total_deductions }}*\nNet Earnings: *${{ flow_context.agent_earnings_data.net_earnings }}*\nTotal Referrals: *{{ flow_context.agent_earnings_data.total_referrals }}*\n\nDeposit Bonus: *{{ flow_context.agent_earnings_data.deposit_bonus_display }}*\nLoss Commission: *{{ flow_context.agent_earnings_data.commission_display }}*\nWin Deduction: *{{ flow_context.agent_earnings_data.win_deduction_display }}*\n\nKeep sharing your code to earn more! 🚀"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]
