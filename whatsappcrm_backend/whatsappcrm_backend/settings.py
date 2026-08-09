@@ -261,6 +261,21 @@ CELERY_BEAT_SCHEDULE = {
         # Runs every 5 minutes to check for idle sessions (5 min timeout, matching reference repo)
         'schedule': crontab(minute='*/5'),
     },
+    'fetch-football-odds-v3': {
+        'task': 'football_data_app.run_api_football_v3_full_update',
+        # Refreshes leagues/fixtures/odds from API-Football v3. Costs API credits per
+        # run (fetches every league's upcoming fixtures + odds) -- 30 min was chosen
+        # as the requested cadence; tighten/loosen against your API-Football plan's
+        # rate limit if needed.
+        'schedule': crontab(minute='*/30'),
+    },
+    'settle-football-scores-v3': {
+        'task': 'football_data_app.run_score_and_settlement_v3_task',
+        # Fetches live/recent scores and settles finished fixtures' bets. Runs more
+        # often than the odds refresh since it only touches in-progress/recently
+        # completed fixtures, not the full upcoming schedule.
+        'schedule': crontab(minute='*/5'),
+    },
 }
 
 # --- Application-Specific Settings ---
