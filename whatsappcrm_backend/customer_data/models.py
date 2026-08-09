@@ -44,7 +44,13 @@ class UserWallet(models.Model):
     UserWallet model to track user's betting balance and transactions.
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='wallet')
-    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    # A bare float default (0.00) leaves balance as a Python float in memory
+    # until the object round-trips through the DB — an in-process caller that
+    # reuses the same instance (e.g. Django's reverse-relation caching from
+    # the wallet-creation signal below) would then hit "float + Decimal"
+    # TypeErrors in add_funds()/deduct_funds(). Decimal('0.00') keeps it typed
+    # correctly from construction.
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -87,6 +93,27 @@ class UserWallet(models.Model):
         self.save()
         return self.balance
 
+    def deduct_funds_allow_negative(self, amount: Decimal, description: str, transaction_type: str):
+        """Deduct funds unconditionally, allowing the balance to go negative.
+
+        For system-driven deductions only (e.g. the agent win-deduction charged
+        against a referred user's winnings) — NOT for user-initiated withdrawals,
+        which must keep using deduct_funds()'s insufficient-funds guard.
+        """
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+        self.balance -= Decimal(str(amount))
+        WalletTransaction.objects.create(
+            wallet=self,
+            amount=-amount,  # Store deductions as negative amounts for easier accounting
+            transaction_type=transaction_type,
+            description=description,
+            status='COMPLETED',
+            payment_method='system',
+        )
+        self.save()
+        return self.balance
+
     class Meta:
         ordering = ['-updated_at']
 
@@ -102,6 +129,8 @@ class WalletTransaction(models.Model):
         ('BET_LOST', 'Bet Lost'),
         ('BET_REFUNDED', 'Bet Refunded'),
         ('AGENT_COMMISSION', 'Agent Commission'),
+        ('AGENT_DEPOSIT_BONUS', 'Agent Deposit Bonus'),
+        ('AGENT_WIN_DEDUCTION', 'Agent Win Deduction'),
     ]
 
     TRANSACTION_STATUS = [

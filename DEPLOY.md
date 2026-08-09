@@ -225,11 +225,45 @@ superuser you created):
 Run inside the backend container (`docker compose exec backend python manage.py …`):
 
 ```bash
-migrate                     # apply DB migrations
-load_flow_definitions       # (re)load WhatsApp conversational flows
-football_league_setup_v3    # fetch leagues from API-Football v3
-createsuperuser             # add an admin user
+migrate                        # apply DB migrations
+load_flow_definitions          # (re)load WhatsApp conversational flows
+football_league_setup_v3       # fetch leagues from API-Football v3
+createsuperuser                # add an admin user
+update_affiliate_percentages   # one-off: bump an existing Agent Program's commission % off its old 5% default (see below)
 ```
+
+---
+
+## 5b. Agent / Affiliate Program
+
+Configured in Django admin under **Referrals → Agent Program Settings** (a
+singleton). All three percentages default to **25%** for a fresh deploy:
+
+| Setting | Applies when | Effect |
+|---|---|---|
+| `bonus_percentage_each` | A referred user's first completed deposit | Both the referred user **and** the referring agent (if `is_agent=True`) are credited this % of the deposit. |
+| `agent_commission_percentage` | A referred user's bet ticket is **lost** | The agent's wallet is credited this % of the stake. |
+| `agent_win_deduction_percentage` | A referred user's bet ticket is **won** | The agent's wallet is debited this % of the winnings — unconditionally, so it can go negative. |
+
+Only **admin-designated agents** (`ReferralProfile.is_agent=True`) earn/owe
+any of these — a plain referral link with no agent flag gets the referred
+user their own deposit bonus only. All three flows are recorded (`AgentEarning`,
+`AgentDeduction`, `AgentDepositBonus`) and visible per-agent in admin
+(`Total Earnings` / `Total Deductions` / `Net Earnings`) and via the agent's
+own WhatsApp "My Earnings" screen.
+
+**Upgrading an existing deployment:** `agent_commission_percentage` used to
+default to 5%. Since this repo's migrations aren't committed (regenerated
+fresh per deploy — see `.gitignore`), a schema `makemigrations` won't touch
+already-stored data. After deploying, run:
+
+```bash
+docker compose exec backend python manage.py update_affiliate_percentages
+```
+
+It bumps `agent_commission_percentage` to 25% only if it's still sitting at
+the old 5% default (leaves a deliberately-customised value alone); pass
+`--force` to set it to 25% regardless.
 
 ---
 

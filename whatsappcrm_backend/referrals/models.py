@@ -48,9 +48,23 @@ class ReferralProfile(models.Model):
 
     @property
     def total_earnings(self):
-        """Returns total agent commission earnings."""
-        result = self.agent_earnings.aggregate(total=models.Sum('commission_amount'))
+        """Returns total agent commission earnings (lost-bet commission +
+        deposit-referral bonus). Does not net off deductions — see
+        total_deductions / net_earnings for the full picture."""
+        commission = self.agent_earnings.aggregate(total=models.Sum('commission_amount'))['total'] or Decimal('0.00')
+        deposit_bonus = self.deposit_bonuses.aggregate(total=models.Sum('bonus_amount'))['total'] or Decimal('0.00')
+        return commission + deposit_bonus
+
+    @property
+    def total_deductions(self):
+        """Returns total deducted from the agent when referred users win."""
+        result = self.agent_deductions.aggregate(total=models.Sum('deduction_amount'))
         return result['total'] or Decimal('0.00')
+
+    @property
+    def net_earnings(self):
+        """Total earnings minus total win-deductions."""
+        return self.total_earnings - self.total_deductions
 
 class AgentEarning(models.Model):
     """
@@ -86,6 +100,77 @@ class AgentEarning(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+class AgentDeduction(models.Model):
+    """
+    Tracks amounts deducted from an agent's wallet when a user they referred
+    wins a bet — the mirror image of AgentEarning (which credits the agent on
+    a referred user's loss).
+    """
+    agent_profile = models.ForeignKey(
+        ReferralProfile,
+        on_delete=models.CASCADE,
+        related_name='agent_deductions'
+    )
+    bet_ticket = models.ForeignKey(
+        'customer_data.BetTicket',
+        on_delete=models.CASCADE,
+        related_name='agent_deductions'
+    )
+    referred_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='agent_wins'
+    )
+    win_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    deduction_percentage = models.DecimalField(max_digits=5, decimal_places=4)
+    deduction_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return (
+            f"Agent {self.agent_profile.user.username} was deducted "
+            f"${self.deduction_amount} for {self.referred_user.username}'s "
+            f"won ticket #{self.bet_ticket_id}"
+        )
+
+    class Meta:
+        ordering = ['-created_at']
+
+class AgentDepositBonus(models.Model):
+    """
+    Tracks the agent's own bonus, earned when a user they referred makes
+    their qualifying first deposit — paid alongside (not instead of) the
+    referred user's own first-deposit bonus.
+    """
+    agent_profile = models.ForeignKey(
+        ReferralProfile,
+        on_delete=models.CASCADE,
+        related_name='deposit_bonuses'
+    )
+    referred_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='agent_signup_bonuses'
+    )
+    deposit_transaction = models.ForeignKey(
+        'customer_data.WalletTransaction',
+        on_delete=models.CASCADE,
+        related_name='agent_deposit_bonuses'
+    )
+    deposit_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    bonus_percentage = models.DecimalField(max_digits=5, decimal_places=4)
+    bonus_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return (
+            f"Agent {self.agent_profile.user.username} earned "
+            f"${self.bonus_amount} from {self.referred_user.username}'s first deposit"
+        )
+
+    class Meta:
+        ordering = ['-created_at']
+
 class ReferralSettings(models.Model):
     """
     A singleton model to store global settings for the agent/referral program.
@@ -94,14 +179,24 @@ class ReferralSettings(models.Model):
         max_digits=5,
         decimal_places=4,
         default=Decimal('0.2500'),
-        help_text="The bonus percentage (e.g., 0.25 for 25%) given to both the referrer and the referred user on first deposit.",
+        help_text="The bonus percentage (e.g., 0.25 for 25%) given to both the referrer (if a "
+                   "designated agent) and the referred user on the referred user's qualifying "
+                   "first deposit.",
         validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('1.00'))]
     )
     agent_commission_percentage = models.DecimalField(
         max_digits=5,
         decimal_places=4,
-        default=Decimal('0.0500'),
-        help_text="The percentage of a lost bet's stake (e.g., 0.05 for 5%) awarded to the agent who referred the losing bettor.",
+        default=Decimal('0.2500'),
+        help_text="The percentage of a lost bet's stake (e.g., 0.25 for 25%) awarded to the agent who referred the losing bettor.",
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('1.00'))]
+    )
+    agent_win_deduction_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.2500'),
+        help_text="The percentage of a won bet's winnings (e.g., 0.25 for 25%) deducted from the "
+                   "agent's wallet when a user they referred wins.",
         validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('1.00'))]
     )
     updated_at = models.DateTimeField(auto_now=True)

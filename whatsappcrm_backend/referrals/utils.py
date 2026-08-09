@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from decimal import Decimal
 from django.contrib.auth import get_user_model
-from .models import ReferralProfile, ReferralSettings, AgentEarning
+from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus
 from customer_data.models import UserWallet, WalletTransaction, CustomerProfile
 from .tasks import send_bonus_notification_task
 
@@ -76,10 +76,12 @@ def get_referrer_details_from_code(referral_code: str) -> dict:
 
 def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction):
     """
-    Applies a percentage-based referral bonus to the new (referred) user only,
-    based on the amount of their first deposit.
-    Agents earn commission exclusively via award_agent_commission() when a
-    referred user loses a bet — they receive no bonus at signup or first deposit.
+    Applies a percentage-based referral bonus to the new (referred) user based
+    on the amount of their first deposit. If the referrer is an admin-designated
+    agent, the agent also receives the same percentage bonus on that same
+    qualifying deposit (recorded as an AgentDepositBonus). Referrers who are
+    not designated agents don't earn this side of the bonus — matches how
+    agent loss-commission is already gated (see award_agent_commission).
     This is an internal function called by check_and_apply_first_deposit_bonus.
     """
     profile = get_or_create_referral_profile(new_user)
@@ -95,10 +97,29 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
     bonus_amount = first_deposit_amount * settings.bonus_percentage_each
 
     referrer_user = profile.referred_by
+    referrer_profile = ReferralProfile.objects.filter(user=referrer_user).first()
+    is_agent = bool(referrer_profile and referrer_profile.is_agent)
 
     with transaction.atomic():
-        # Credit only the new (referred) user — agents earn via bet-loss commission only
+        # Credit the new (referred) user.
         new_user.wallet.add_funds(bonus_amount, description=f"Referral bonus from {referrer_user.username}", transaction_type='BONUS')
+
+        agent_bonus_amount = Decimal('0.00')
+        if is_agent:
+            agent_bonus_amount = bonus_amount
+            referrer_user.wallet.add_funds(
+                agent_bonus_amount,
+                description=f"Agent deposit bonus from {new_user.username}'s first deposit",
+                transaction_type='AGENT_DEPOSIT_BONUS',
+            )
+            AgentDepositBonus.objects.create(
+                agent_profile=referrer_profile,
+                referred_user=new_user,
+                deposit_transaction=deposit_transaction,
+                deposit_amount=first_deposit_amount,
+                bonus_percentage=settings.bonus_percentage_each,
+                bonus_amount=agent_bonus_amount,
+            )
 
         profile.referral_bonus_applied = True
         profile.save(update_fields=['referral_bonus_applied'])
@@ -106,9 +127,19 @@ def apply_referral_bonus(new_user: User, deposit_transaction: WalletTransaction)
     logger.info(f"Applied referral bonus of ${bonus_amount:.2f} to {new_user.username} based on a deposit of ${first_deposit_amount:.2f}")
 
     bonus_percentage_display = f"{settings.bonus_percentage_each:.2%}"
-    # Notify the new user only
+    # Notify the new user
     new_user_message = f"🎉 Congratulations! You've received a ${bonus_amount:.2f} ({bonus_percentage_display}) referral bonus on your first deposit!"
     send_bonus_notification_task.delay(user_id=new_user.id, message=new_user_message)
+
+    if is_agent:
+        logger.info(f"Applied agent deposit bonus of ${agent_bonus_amount:.2f} to {referrer_user.username} from {new_user.username}'s first deposit.")
+        agent_message = (
+            f"💰 Agent Deposit Bonus Earned!\n\n"
+            f"Your referral {new_user.username} made their first deposit of ${first_deposit_amount:.2f}.\n\n"
+            f"You've earned a *${agent_bonus_amount:.2f}* ({bonus_percentage_display}) bonus! "
+            f"Your wallet has been credited."
+        )
+        send_bonus_notification_task.delay(user_id=referrer_user.id, message=agent_message)
 
     return {"success": True, "message": f"Successfully applied a ${bonus_amount:.2f} bonus to your account!"}
 
@@ -238,3 +269,99 @@ def award_agent_commission(ticket):
         f"Your wallet has been credited."
     )
     send_bonus_notification_task.delay(user_id=agent_user.id, message=commission_message)
+
+
+def apply_agent_win_deduction(ticket, winnings):
+    """
+    Deducts a percentage of a referred user's winnings from the referring
+    agent's wallet. Called during bet ticket settlement when a ticket status
+    is WON — the mirror image of award_agent_commission() (which credits the
+    agent on a referred user's loss).
+
+    The deduction is unconditional (per the affiliate program's rules) and
+    may take the agent's wallet negative — it does not block or reduce the
+    referred user's own payout, which has already been credited by the time
+    this runs.
+
+    Args:
+        ticket: The BetTicket instance that was won.
+        winnings: The Decimal amount the referred user won on this ticket.
+    """
+    log_prefix = f"[Agent Win Deduction - Ticket #{ticket.id}]"
+
+    if not ticket.user:
+        logger.debug(f"{log_prefix} No user on ticket. Skipping agent deduction.")
+        return
+
+    try:
+        profile = ReferralProfile.objects.select_related('referred_by').get(user=ticket.user)
+    except ReferralProfile.DoesNotExist:
+        logger.debug(f"{log_prefix} No referral profile for user {ticket.user.username}. Skipping.")
+        return
+
+    if not profile.referred_by:
+        logger.debug(f"{log_prefix} User {ticket.user.username} has no agent. Skipping.")
+        return
+
+    agent_user = profile.referred_by
+
+    try:
+        agent_profile = ReferralProfile.objects.get(user=agent_user)
+    except ReferralProfile.DoesNotExist:
+        logger.debug(f"{log_prefix} Agent {agent_user.username} has no referral profile. Skipping.")
+        return
+
+    # Prevent duplicate deduction for the same ticket (early exit before is_agent check)
+    if AgentDeduction.objects.filter(agent_profile=agent_profile, bet_ticket=ticket).exists():
+        logger.info(f"{log_prefix} Deduction already applied to agent {agent_user.username}. Skipping.")
+        return
+
+    if not agent_profile.is_agent:
+        logger.debug(f"{log_prefix} User {agent_user.username} is not a designated agent. Skipping deduction.")
+        return
+
+    settings = ReferralSettings.load()
+    deduction_pct = settings.agent_win_deduction_percentage
+
+    if deduction_pct <= 0:
+        logger.debug(f"{log_prefix} Agent win deduction percentage is 0. Skipping.")
+        return
+
+    winnings = Decimal(str(winnings))
+    deduction_amount = winnings * Decimal(str(deduction_pct))
+
+    if deduction_amount <= 0:
+        logger.debug(f"{log_prefix} Deduction amount is zero or negative. Skipping.")
+        return
+
+    with transaction.atomic():
+        # Record the deduction
+        AgentDeduction.objects.create(
+            agent_profile=agent_profile,
+            bet_ticket=ticket,
+            referred_user=ticket.user,
+            win_amount=winnings,
+            deduction_percentage=deduction_pct,
+            deduction_amount=deduction_amount,
+        )
+
+        # Deduct from the agent's wallet — unconditional; may go negative.
+        agent_user.wallet.deduct_funds_allow_negative(
+            amount=deduction_amount,
+            description=f"Agent win deduction from {ticket.user.username}'s won ticket #{ticket.id}",
+            transaction_type='AGENT_WIN_DEDUCTION',
+        )
+
+    logger.info(
+        f"{log_prefix} Deducted ${deduction_amount:.2f} ({deduction_pct:.2%}) from agent "
+        f"{agent_user.username} for {ticket.user.username}'s win of ${winnings:.2f}."
+    )
+
+    # Send notification to agent
+    deduction_message = (
+        f"⚠️ Agent Win Deduction\n\n"
+        f"Your referred user {ticket.user.username} won a bet (Ticket #{ticket.id}) "
+        f"with winnings of ${winnings:.2f}.\n\n"
+        f"*${deduction_amount:.2f}* ({deduction_pct:.2%}) has been deducted from your wallet."
+    )
+    send_bonus_notification_task.delay(user_id=agent_user.id, message=deduction_message)
