@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from conversations.models import Contact, ContactSession
 from flows.models import WhatsAppFlow
+from flows.whatsapp_flow_service import WhatsAppFlowService
 from flows.services import (
     InteractiveFlowAction,
     InteractiveFlowActionParameters,
@@ -246,3 +247,36 @@ class NativeBettingFlowLoginGateTests(TestCase):
         data = actions[0]["data"]
         self.assertEqual(data.get("type"), "flow")
         self.assertEqual(data["action"]["parameters"]["flow_id"], "2216047699159394")
+        # Meta's Graph API rejects flow_action_payload when flow_action is
+        # data_exchange ("Unexpected key \"flow_action_payload\"..." /
+        # error 131009) — it must be absent here, not just unused.
+        self.assertEqual(data["action"]["parameters"]["flow_action"], "data_exchange")
+        self.assertNotIn("flow_action_payload", data["action"]["parameters"])
+
+
+class CreateFlowMessageDataTests(TestCase):
+    """Meta's Graph API rejects flow_action_payload when flow_action is
+    data_exchange (error 131009) — it's only valid for flow_action=navigate,
+    since data_exchange mode has Meta call the endpoint's own INIT action to
+    get the first screen instead of the caller specifying one up front."""
+
+    def test_data_exchange_omits_flow_action_payload(self):
+        data = WhatsAppFlowService.create_flow_message_data(
+            flow_id="123", screen="BET_MENU", flow_cta="Open", body_text="Body",
+            flow_action="data_exchange",
+        )
+        self.assertNotIn("flow_action_payload", data["action"]["parameters"])
+
+    def test_navigate_includes_flow_action_payload(self):
+        data = WhatsAppFlowService.create_flow_message_data(
+            flow_id="123", screen="LOGIN", flow_cta="Login", body_text="Body",
+            flow_action="navigate",
+        )
+        self.assertEqual(data["action"]["parameters"]["flow_action_payload"], {"screen": "LOGIN"})
+
+    def test_default_flow_action_is_navigate_with_payload(self):
+        data = WhatsAppFlowService.create_flow_message_data(
+            flow_id="123", screen="REGISTER", flow_cta="Register", body_text="Body",
+        )
+        self.assertEqual(data["action"]["parameters"]["flow_action"], "navigate")
+        self.assertEqual(data["action"]["parameters"]["flow_action_payload"], {"screen": "REGISTER"})

@@ -645,7 +645,13 @@ class WhatsAppFlowService:
 
         Args:
             flow_id: The Meta flow ID
-            screen: The initial screen to show
+            screen: The initial screen to show. Only used (sent as
+                flow_action_payload) when flow_action="navigate" — Meta's Graph
+                API rejects flow_action_payload outright when flow_action is
+                "data_exchange" ("Unexpected key \"flow_action_payload\" when
+                \"flow_action\" is \"data_exchange\"", error 131009), since in
+                that mode Meta calls the endpoint's own INIT action to get the
+                first screen instead.
             flow_cta: Call-to-action button text
             body_text: Body text of the message
             header_text: Optional header text
@@ -655,21 +661,22 @@ class WhatsAppFlowService:
         Returns:
             Dict containing the interactive message payload
         """
+        parameters = {
+            "flow_message_version": "3",
+            "flow_token": flow_token or "",
+            "flow_id": flow_id,
+            "flow_cta": flow_cta,
+            "flow_action": flow_action,
+        }
+        if flow_action == "navigate":
+            parameters["flow_action_payload"] = {"screen": screen}
+
         interactive_payload = {
             "type": "flow",
             "body": {"text": body_text},
             "action": {
                 "name": "flow",
-                "parameters": {
-                    "flow_message_version": "3",
-                    "flow_token": flow_token or "",
-                    "flow_id": flow_id,
-                    "flow_cta": flow_cta,
-                    "flow_action": flow_action,
-                    "flow_action_payload": {
-                        "screen": screen
-                    }
-                }
+                "parameters": parameters,
             }
         }
 
