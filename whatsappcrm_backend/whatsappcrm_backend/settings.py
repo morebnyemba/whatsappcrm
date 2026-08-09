@@ -266,6 +266,10 @@ CELERY_BEAT_SCHEDULE = {
 # --- Application-Specific Settings ---
 CONVERSATION_EXPIRY_DAYS = int(os.getenv('CONVERSATION_EXPIRY_DAYS', '60'))
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv('SESSION_IDLE_TIMEOUT_MINUTES', '5'))  # Flow session timeout
+# How long a WhatsApp contact stays logged in (ContactSession) with no activity
+# before they must log in again. Gates access to requires_login flows (betting,
+# account management, etc.) — see conversations.models.ContactSession.
+SESSION_TIMEOUT_MINUTES = int(os.getenv('SESSION_TIMEOUT_MINUTES', '5'))
 
 # --- Logging Configuration ---
 LOGGING = {

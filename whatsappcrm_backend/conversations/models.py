@@ -215,7 +215,7 @@ class ContactSession(models.Model):
     Contacts must log in (verify their PIN/password) before accessing
     protected flows. Sessions expire after a configurable timeout.
     """
-    DEFAULT_SESSION_TIMEOUT_MINUTES = 30
+    DEFAULT_SESSION_TIMEOUT_MINUTES = 5
 
     contact = models.OneToOneField(
         Contact,
