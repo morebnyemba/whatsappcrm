@@ -2926,12 +2926,22 @@ def process_message_for_flow(contact: Contact, message_data: dict, incoming_mess
                     # This ensures auto-transitions have access to the initial context.
                     newly_created_state_after_switch.save(update_fields=['flow_context_data', 'last_updated_at'])
                     logger.info(f"Applied initial context to new flow triggered by keyword '{trigger_keyword}' state for {contact.whatsapp_id}: {initial_context_for_new_flow}")
-                
+
                 # Now, run automatic transitions from the new flow's entry point.
                 # This will continue executing action/send_message steps until a question or end_flow is hit.
                 logger.info(f"Running automatic transitions for newly switched flow from step '{newly_created_state_after_switch.current_step.name}'.")
                 additional_auto_actions = _process_automatic_transitions(newly_created_state_after_switch, contact)
                 switched_flow_actions.extend(additional_auto_actions) # Add these actions to the list to be returned
+            elif switched_flow_actions:
+                # _trigger_new_flow resolved to a stateless send (e.g. launching a
+                # native WhatsApp UI Flow, or a login/register prompt) instead of
+                # entering the conversational flow engine, so no ContactFlowState was
+                # ever expected here. This is success, not failure.
+                logger.info(
+                    f"Switch flow command for {contact.whatsapp_id} via keyword '{trigger_keyword}' "
+                    f"resolved to a stateless send ({len(switched_flow_actions)} action(s)); no "
+                    f"ContactFlowState created, as expected for native Flow / prompt actions."
+                )
             else:
                 logger.error(f"Switch flow command failed to trigger a new flow for contact {contact.whatsapp_id} with keyword '{trigger_keyword}'.")
                 switched_flow_actions.append({'type': 'send_whatsapp_message', 'message_type': 'text', 'data': {'body': 'Sorry, I could not switch to the requested section. Please try again.'}})

@@ -610,7 +610,11 @@ class WhatsAppFlowEndpointView(View):
     def _handle_init(self, body):
         """Handle INIT action - return the appropriate initial screen dict."""
         flow_token = body.get('flow_token', '')
-        # Check flow_action_payload to determine which screen to show
+        # Check flow_action_payload to determine which screen to show. Only present
+        # when the triggering message used flow_action="navigate" -- Meta's Graph API
+        # rejects flow_action_payload outright for flow_action="data_exchange" (see
+        # WhatsAppFlowService.create_flow_message_data), so a data_exchange-launched
+        # Flow's INIT call always arrives with this empty.
         flow_action_payload = body.get('flow_action_payload', {}) or {}
         screen_hint = flow_action_payload.get('screen', '')
 
@@ -628,14 +632,23 @@ class WhatsAppFlowEndpointView(View):
                 }
             }
 
-        # Default to login screen
-        return {
-            "screen": "LOGIN",
-            "data": {
-                "error_message": "",
-                "is_error": False
+        if screen_hint == 'LOGIN':
+            return {
+                "screen": "LOGIN",
+                "data": {
+                    "error_message": "",
+                    "is_error": False
+                }
             }
-        }
+
+        # No hint at all: the betting Flow is the only one launched with
+        # flow_action="data_exchange" in this codebase (Login/Register always use
+        # "navigate" with an explicit screen hint), so an unhinted INIT call can only
+        # be the betting Flow asking for its first screen. Returning "LOGIN" here --
+        # a screen the betting Flow's JSON doesn't define -- would make the WhatsApp
+        # client show a generic "something went wrong" instead of opening the Flow.
+        from football_data_app.bet_flow_handler import init_screen
+        return init_screen(flow_token)
 
     def _handle_data_exchange(self, body):
         """Handle data_exchange action - process form submissions."""

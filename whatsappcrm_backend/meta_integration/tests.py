@@ -467,9 +467,37 @@ class WhatsAppFlowEndpointTestCase(TestCase):
         decrypted = self._decrypt_response(response.content.decode(), aes_key, iv)
         self.assertEqual(decrypted, {"data": {"status": "active"}})
 
-    def test_encrypted_init_default_login(self):
-        """Test encrypted INIT returns login screen by default."""
+    def test_encrypted_init_no_hint_defaults_to_betting_menu(self):
+        """An INIT call with no flow_action_payload hint can only come from a
+        flow_action="data_exchange" launch (flow_action_payload is invalid in that
+        mode, per Meta error 131009), and the betting Flow is the only Flow launched
+        that way -- so it must get the betting hub, not the (undefined-in-that-Flow's-
+        JSON) LOGIN screen, which would otherwise surface as "something went wrong"
+        on the client."""
         payload = {"action": "INIT", "flow_token": "wa_test"}
+        encrypted_body, aes_key, iv = self._encrypt_payload(payload)
+
+        request = self.factory.post(
+            '/flow-endpoint/',
+            data=json.dumps(encrypted_body).encode('utf-8'),
+            content_type='application/json',
+        )
+
+        view = WhatsAppFlowEndpointView.as_view()
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        decrypted = self._decrypt_response(response.content.decode(), aes_key, iv)
+        self.assertEqual(decrypted["screen"], "BET_MENU")
+
+    def test_encrypted_init_login_hint_returns_login(self):
+        """A navigate-mode launch that does supply an explicit LOGIN hint must still
+        get the LOGIN screen."""
+        payload = {
+            "action": "INIT",
+            "flow_token": "wa_test",
+            "flow_action_payload": {"screen": "LOGIN"},
+        }
         encrypted_body, aes_key, iv = self._encrypt_payload(payload)
 
         request = self.factory.post(
@@ -502,7 +530,8 @@ class WhatsAppFlowEndpointTestCase(TestCase):
         self.assertEqual(data, {"data": {"status": "active"}})
 
     def test_plaintext_init_still_works(self):
-        """Test that plaintext INIT requests still work."""
+        """Test that plaintext INIT requests still work (no hint -> betting menu,
+        same as the encrypted no-hint case)."""
         payload = {"action": "INIT", "flow_token": "test"}
         request = self.factory.post(
             '/flow-endpoint/',
@@ -515,7 +544,7 @@ class WhatsAppFlowEndpointTestCase(TestCase):
 
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
-        self.assertEqual(data["screen"], "LOGIN")
+        self.assertEqual(data["screen"], "BET_MENU")
 
 
 class RegisterScreenHandlerTestCase(TestCase):
