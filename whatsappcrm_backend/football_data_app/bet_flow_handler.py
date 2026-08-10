@@ -55,13 +55,23 @@ SCREENS = ('BET_MENU', 'BET_BROWSE', 'BET_MARKETS', 'BET_OUTCOMES', 'BET_STAKE',
 MAX_FLOW_OPTIONS = 20  # keep dropdowns comfortably within Meta's limits
 SLIP_TTL_SECONDS = 1800  # 30 minutes — matches typical WhatsApp Flow session lifetimes
 
-# Static option lists surfaced as dynamic data (keeps the Flow JSON declarative).
-# Every item needs a "description" key -- even empty -- to match the RadioButtonsGroup
-# data-source item schema declared in the Flow JSON (id/title/description). Every
-# RadioButtonsGroup in this Flow (BET_MENU's menu, these three) omitted it; the
-# Dropdown-driven lists (fixtures/markets/outcomes/tickets) always populated theirs
-# and were never reported broken -- consistent with the WhatsApp client silently
-# failing to bind a selection for a data-source item missing a declared property.
+# Static option lists for this Flow's four small, fixed menus. These are
+# imported into flows/definitions/bet_whatsapp_flow.py and inlined as literal
+# `data-source` arrays in the screen JSON at publish time, NOT resolved from
+# screen `data` per-request -- every RadioButtonsGroup/Dropdown bound to a
+# *dynamic* data-source (`"${data.X}"`) in this Flow submitted with no value
+# at all, on every device tested, regardless of component type or item schema
+# (see git history on this file and on bet_whatsapp_flow.py for the full
+# trail). A static data-source is a genuinely different code path per Meta's
+# Flow JSON docs. The genuinely variable-length lists (fixtures/markets/
+# outcomes/tickets) can't be static and remain dynamic.
+MENU_ITEMS = [
+    {"id": "browse", "title": "⚽ Place a bet", "description": ""},
+    {"id": "slip", "title": "🧾 Bet slip", "description": ""},
+    {"id": "mybets", "title": "🎫 My bets", "description": ""},
+    {"id": "balance", "title": "💰 My balance", "description": ""},
+    {"id": "safer", "title": "🛡️ Safer gambling", "description": ""},
+]
 MENU_MODES = [
     {"id": "bet_now", "title": "Bet this now", "description": ""},
     {"id": "add_slip", "title": "Add to slip & keep browsing", "description": ""},
@@ -230,19 +240,14 @@ def _slip_items(ids):
 def _menu_screen(flow_token, slip_str='', message=''):
     ids = _current_slip_ids(flow_token, slip_str)
     n = len(ids)
-    menu = [
-        {"id": "browse", "title": "⚽ Place a bet", "description": ""},
-        {"id": "slip", "title": f"🧾 Bet slip ({n})", "description": ""},
-        {"id": "mybets", "title": "🎫 My bets", "description": ""},
-        {"id": "balance", "title": "💰 My balance", "description": ""},
-        {"id": "safer", "title": "🛡️ Safer gambling", "description": ""},
-    ]
+    if not message:
+        message = (f"What would you like to do? You have {n} selection{'s' if n != 1 else ''} "
+                    f"in your bet slip." if n else "What would you like to do?")
     return {
         "screen": "BET_MENU",
         "data": {
             "slip": _slip_str(ids),
-            "menu": menu,
-            "message": message or "What would you like to do?",
+            "message": message,
             "is_error": False, "error_message": "",
         },
     }
@@ -316,7 +321,6 @@ def _outcomes_screen(market_id, flow_token, slip_str=''):
             "slip": _slip_str(_current_slip_ids(flow_token, slip_str)),
             "market_label": _label(scr['market'].category.name, 40),
             "outcomes": outcomes,
-            "modes": MENU_MODES,
             "is_error": False, "error_message": "",
         },
     }
@@ -402,7 +406,6 @@ def _slip_screen(flow_token, slip_str='', stake=None, message=''):
             "slip": _slip_str(ids),
             "summary": message + ("\n\n" if message else "") + summary if message else summary,
             "has_slip": bool(slip),
-            "slip_actions": SLIP_ACTIONS,
             "is_error": False, "error_message": "",
         },
     }
@@ -483,7 +486,6 @@ def _safer_screen(flow_token, message=''):
         "screen": "BET_SAFER",
         "data": {
             "summary": (message + "\n\n" + summary) if message else summary,
-            "safer_actions": SAFER_ACTIONS,
             "is_error": False, "error_message": "",
         },
     }
@@ -586,7 +588,7 @@ def handle_data_exchange(screen: str, data: dict, flow_token: str) -> dict:
         oid = data.get('outcome_id')
         if not oid:
             return _err("BET_OUTCOMES", "Please choose an option.",
-                        extra={"market_label": "", "outcomes": [], "modes": MENU_MODES,
+                        extra={"market_label": "", "outcomes": [],
                                "slip": _slip_str(_current_slip_ids(flow_token, slip_str))})
         mode = data.get('mode') or 'bet_now'
         if mode == 'add_slip':
@@ -600,7 +602,7 @@ def handle_data_exchange(screen: str, data: dict, flow_token: str) -> dict:
             # Can't jump back to BET_BROWSE either — stay on BET_OUTCOMES.
             return _err("BET_OUTCOMES", "That selection is no longer available. Please choose "
                         "another, or type 'bet' to start over.",
-                        extra={"market_label": "", "outcomes": [], "modes": MENU_MODES,
+                        extra={"market_label": "", "outcomes": [],
                                "slip": _slip_str(_current_slip_ids(flow_token, slip_str))})
         return result
 
