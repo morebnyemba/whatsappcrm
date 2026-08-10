@@ -73,12 +73,23 @@ SLIP_TTL_SECONDS = 1800  # 30 minutes — matches typical WhatsApp Flow session 
 # it because Meta can only validate the *declared schema* of a "${data.X}"
 # reference at publish time, not runtime values -- a static array's actual
 # content is checked directly.
+#
+# No emoji in these titles. This is the only static list whose titles ever
+# had emoji, and BET_MENU is the only screen actually reached in production
+# so far -- every attempt (RadioButtonsGroup, Dropdown, static data-source,
+# non-blank descriptions) still submitted with the "action" key entirely
+# absent from the payload. Untested until now: whether an emoji in a
+# data-source item's "title", specifically inside a native Flow's own
+# RadioButtonsGroup/Dropdown rendering (a different client code path from
+# the plain WhatsApp interactive list messages elsewhere in this bot, where
+# the identical emoji render and submit fine), breaks the client's binding
+# of that item's value.
 MENU_ITEMS = [
-    {"id": "browse", "title": "⚽ Place a bet", "description": "See upcoming matches and odds"},
-    {"id": "slip", "title": "🧾 Bet slip", "description": "Review your current selections"},
-    {"id": "mybets", "title": "🎫 My bets", "description": "View your open and settled bets"},
-    {"id": "balance", "title": "💰 My balance", "description": "Check your wallet balance"},
-    {"id": "safer", "title": "🛡️ Safer gambling", "description": "Limits, breaks and self-exclusion"},
+    {"id": "browse", "title": "Place a bet", "description": "See upcoming matches and odds"},
+    {"id": "slip", "title": "Bet slip", "description": "Review your current selections"},
+    {"id": "mybets", "title": "My bets", "description": "View your open and settled bets"},
+    {"id": "balance", "title": "My balance", "description": "Check your wallet balance"},
+    {"id": "safer", "title": "Safer gambling", "description": "Limits, breaks and self-exclusion"},
 ]
 MENU_MODES = [
     {"id": "bet_now", "title": "Bet this now", "description": "Place this single selection immediately"},
