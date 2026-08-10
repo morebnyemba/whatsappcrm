@@ -9,7 +9,7 @@ from celery import chord, shared_task, chain, group
 from django.db import transaction, models
 from django.utils import timezone
 from dateutil import parser
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone as dt_timezone
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 import random
@@ -543,7 +543,7 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
     days = set()
     for match_date in fixtures_needing_odds:
         if match_date:
-            days.add(timezone.localtime(match_date, timezone.utc).strftime('%Y-%m-%d'))
+            days.add(timezone.localtime(match_date, dt_timezone.utc).strftime('%Y-%m-%d'))
 
     fixture_count = len(fixtures_needing_odds)
 

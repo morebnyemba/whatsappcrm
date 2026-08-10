@@ -8,7 +8,7 @@ from django.conf import settings
 from celery import chord, shared_task, chain, group
 from django.db import transaction, models
 from django.utils import timezone
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone as dt_timezone
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 import random
@@ -642,19 +642,34 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         return {"league_id": league_id, "status": "error", "message": str(e)}
 
 
-@shared_task(bind=True, queue='cpu_heavy')
-def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches):
+@shared_task(bind=True, name="football_data_app.dispatch_odds_fetching_after_events_v3", queue='cpu_heavy')
+def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches=None):
     """
-    Step 3: Dispatches individual tasks to fetch odds for each upcoming fixture.
+    Dispatches individual tasks to fetch odds for each upcoming fixture that
+    needs one, based purely on DB staleness (see the query below) -- it does
+    not actually depend on `results_from_event_fetches` for that decision, so
+    this task is safe to run either as the events-fetch chord's callback, or
+    entirely standalone from its own periodic schedule (see
+    CELERY_BEAT_SCHEDULE['dispatch-football-odds-v3']).
+
+    The standalone schedule exists because CELERY_RESULT_BACKEND='django-db'
+    does not natively support chords (no atomic increment backend); Celery
+    falls back to a polling "chord_unlock" task which is fragile at the scale
+    of this chord (700+ leagues per header) and can end up never invoking this
+    callback at all, silently starving odds fetching indefinitely even though
+    every individual league's events keep updating fine. Running this on its
+    own schedule guarantees odds still get dispatched regardless of whether
+    the chord ever completes.
     """
     logger.info("="*80)
     logger.info("TASK START: dispatch_odds_fetching_after_events_v3_task (Odds Dispatch)")
     logger.info(f"Task ID: {self.request.id}")
     logger.info("="*80)
-    
+
+    results_from_event_fetches = results_from_event_fetches or []
     logger.info(f"Received {len(results_from_event_fetches)} result(s) from event fetching group")
     logger.debug(f"Event fetch results: {results_from_event_fetches}")
-    
+
     # Count successful events
     total_events_processed = 0
     for result in results_from_event_fetches:
@@ -684,7 +699,7 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     league_day_pairs = set()
     for league_id, match_date in fixtures_needing_odds:
         if match_date:
-            utc_day = timezone.localtime(match_date, timezone.utc).strftime('%Y-%m-%d')
+            utc_day = timezone.localtime(match_date, dt_timezone.utc).strftime('%Y-%m-%d')
             league_day_pairs.add((league_id, utc_day))
 
     fixture_count = len(fixtures_needing_odds)

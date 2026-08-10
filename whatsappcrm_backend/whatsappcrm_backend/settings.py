@@ -276,6 +276,19 @@ CELERY_BEAT_SCHEDULE = {
         # completed fixtures, not the full upcoming schedule.
         'schedule': crontab(minute='*/5'),
     },
+    'dispatch-football-odds-v3': {
+        'task': 'football_data_app.dispatch_odds_fetching_after_events_v3',
+        # Standalone odds dispatch, independent of fetch-football-odds-v3's chord
+        # callback. CELERY_RESULT_BACKEND='django-db' has no native chord support,
+        # so that chord (700+ league tasks per run) relies on Celery's fragile
+        # polling "chord_unlock" fallback and can end up never calling back at
+        # all -- silently starving odds fetching even while events/scores keep
+        # updating fine. This task is self-contained: it queries fixtures needing
+        # odds straight from the DB, so it works with or without the chord ever
+        # completing. Offset by 7 minutes so it usually lands just after a
+        # fetch-football-odds-v3 cycle's events have settled.
+        'schedule': crontab(minute='7,22,37,52'),
+    },
 }
 
 # --- Application-Specific Settings ---
