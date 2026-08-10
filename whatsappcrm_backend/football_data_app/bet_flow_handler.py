@@ -65,30 +65,38 @@ SLIP_TTL_SECONDS = 1800  # 30 minutes — matches typical WhatsApp Flow session 
 # trail). A static data-source is a genuinely different code path per Meta's
 # Flow JSON docs. The genuinely variable-length lists (fixtures/markets/
 # outcomes/tickets) can't be static and remain dynamic.
+#
+# Every item needs a non-blank "description" -- Meta's publish-time validator
+# rejects a static data-source item with an empty string ("Property
+# 'description' should not be blank or an empty string", PATTERN_MISMATCH).
+# The dynamic dropdowns elsewhere in this Flow got away with omitting/blanking
+# it because Meta can only validate the *declared schema* of a "${data.X}"
+# reference at publish time, not runtime values -- a static array's actual
+# content is checked directly.
 MENU_ITEMS = [
-    {"id": "browse", "title": "⚽ Place a bet", "description": ""},
-    {"id": "slip", "title": "🧾 Bet slip", "description": ""},
-    {"id": "mybets", "title": "🎫 My bets", "description": ""},
-    {"id": "balance", "title": "💰 My balance", "description": ""},
-    {"id": "safer", "title": "🛡️ Safer gambling", "description": ""},
+    {"id": "browse", "title": "⚽ Place a bet", "description": "See upcoming matches and odds"},
+    {"id": "slip", "title": "🧾 Bet slip", "description": "Review your current selections"},
+    {"id": "mybets", "title": "🎫 My bets", "description": "View your open and settled bets"},
+    {"id": "balance", "title": "💰 My balance", "description": "Check your wallet balance"},
+    {"id": "safer", "title": "🛡️ Safer gambling", "description": "Limits, breaks and self-exclusion"},
 ]
 MENU_MODES = [
-    {"id": "bet_now", "title": "Bet this now", "description": ""},
-    {"id": "add_slip", "title": "Add to slip & keep browsing", "description": ""},
+    {"id": "bet_now", "title": "Bet this now", "description": "Place this single selection immediately"},
+    {"id": "add_slip", "title": "Add to slip & keep browsing", "description": "Build an accumulator with more legs"},
 ]
 # No "add another selection" entry: Meta's routing model can't legally route
 # BET_SLIP back into the browse chain (see module docstring). Users add more
 # legs with the Flow's native back button instead.
 SLIP_ACTIONS = [
-    {"id": "place", "title": "Place bet", "description": ""},
-    {"id": "clear", "title": "Clear slip", "description": ""},
+    {"id": "place", "title": "Place bet", "description": "Submit your slip as a bet"},
+    {"id": "clear", "title": "Clear slip", "description": "Remove all selections"},
 ]
 SAFER_ACTIONS = [
-    {"id": "exclude_1", "title": "Take a 1-day break", "description": ""},
-    {"id": "exclude_7", "title": "Self-exclude 7 days", "description": ""},
-    {"id": "exclude_30", "title": "Self-exclude 30 days", "description": ""},
-    {"id": "deposit_limit", "title": "Set daily deposit limit ($)", "description": ""},
-    {"id": "stake_limit", "title": "Set daily stake limit ($)", "description": ""},
+    {"id": "exclude_1", "title": "Take a 1-day break", "description": "Pause betting for 1 day"},
+    {"id": "exclude_7", "title": "Self-exclude 7 days", "description": "Pause betting for 7 days"},
+    {"id": "exclude_30", "title": "Self-exclude 30 days", "description": "Pause betting for 30 days"},
+    {"id": "deposit_limit", "title": "Set daily deposit limit ($)", "description": "Cap how much you can deposit per day"},
+    {"id": "stake_limit", "title": "Set daily stake limit ($)", "description": "Cap how much you can stake per day"},
 ]
 
 
@@ -271,7 +279,8 @@ def _browse_screen(flow_token, slip_str=''):
         "screen": "BET_BROWSE",
         "data": {
             "slip": _slip_str(_current_slip_ids(flow_token, slip_str)),
-            "fixtures": fixtures or [{"id": "none", "title": "No matches available", "description": ""}],
+            "fixtures": fixtures or [{"id": "none", "title": "No matches available",
+                                       "description": "Check back closer to kickoff"}],
             "has_fixtures": bool(fixtures),
             "is_error": False, "error_message": "",
         },

@@ -36,7 +36,7 @@ _ERR = {
     "error_message": {"type": "string", "__example__": ""},
     "is_error": {"type": "boolean", "__example__": False},
 }
-_OPTION_EXAMPLE = [{"id": "1", "title": "Example", "description": ""}]
+_OPTION_EXAMPLE = [{"id": "1", "title": "Example", "description": "Example option"}]
 # Meta requires dynamic data-source arrays to declare their item object schema
 # (id/title/description), not a bare {"type": "object"}.
 _OPTION_ITEMS = {
