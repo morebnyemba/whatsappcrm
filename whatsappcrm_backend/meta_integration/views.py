@@ -660,11 +660,17 @@ class WhatsAppFlowEndpointView(View):
         flow_token = body.get('flow_token')
 
         logger.info(f"WhatsApp Flow data_exchange: screen={screen}, flow_token={flow_token}")
+        logger.debug(f"WhatsApp Flow data_exchange: incoming form data: {data}")
 
         # Native betting Flow screens (BET_BROWSE / BET_MARKETS / ...).
         from football_data_app.bet_flow_handler import is_bet_screen, handle_data_exchange
         if is_bet_screen(screen):
-            return handle_data_exchange(screen, data, flow_token)
+            result = handle_data_exchange(screen, data, flow_token)
+            logger.debug(
+                f"WhatsApp Flow data_exchange: responding with screen={result.get('screen')}, "
+                f"data={result.get('data')}"
+            )
+            return result
 
         if screen == 'LOGIN':
             return self._handle_login_screen(data, flow_token)
