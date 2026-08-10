@@ -64,11 +64,17 @@ BET_WHATSAPP_FLOW = {
                 {"type": "TextBody", "text": "${data.message}"},
                 {"type": "TextBody", "text": "${data.error_message}", "visible": "${data.is_error}"},
                 {"type": "Form", "name": "menu_form", "children": [
-                    {"type": "RadioButtonsGroup", "name": "action", "label": "Menu", "required": True,
+                    # Named "menu_choice", not "action" -- every other RadioButtonsGroup in
+                    # this Flow uses a compound name (mode/slip_action/safer_action); "action"
+                    # bare also names a load-bearing key elsewhere in WhatsApp's own Flow
+                    # message schema (the interactive message's own "action" object,
+                    # "on-click-action"), and a bare-"action" field consistently submitted
+                    # with no value at all even when a radio option was selected.
+                    {"type": "RadioButtonsGroup", "name": "menu_choice", "label": "Menu", "required": True,
                      "data-source": "${data.menu}"},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
-                            "action": "${form.action}", "slip": "${data.slip}"}}},
+                            "action": "${form.menu_choice}", "slip": "${data.slip}"}}},
                 ]},
             ]},
         },
