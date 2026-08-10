@@ -48,9 +48,13 @@ class BetFlowHandlerTests(TestCase):
 
     # ---- menu is the entry point ----
     def test_init_shows_menu(self):
+        # The menu's options are a static data-source baked into the Flow JSON
+        # (see flows/definitions/bet_whatsapp_flow.py), not sent as dynamic
+        # screen data -- only H.MENU_ITEMS is the source of truth now.
         init = H.init_screen(self.wa)
         self.assertEqual(init['screen'], 'BET_MENU')
-        ids = {o['id'] for o in init['data']['menu']}
+        self.assertNotIn('menu', init['data'])
+        ids = {o['id'] for o in H.MENU_ITEMS}
         self.assertEqual(ids, {'browse', 'slip', 'mybets', 'balance', 'safer'})
 
     def test_menu_balance(self):

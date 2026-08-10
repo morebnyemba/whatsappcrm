@@ -15,6 +15,23 @@ server-side, reusing the same ticket-processing validation as the rest of the
 system. Screen ids are namespaced BET_* so the shared Flow endpoint can route them.
 """
 
+# Every RadioButtonsGroup/Dropdown bound to a *dynamic* data-source
+# (`"data-source": "${data.X}"`) in this Flow has submitted with no value at
+# all on every device tested, regardless of component type -- see git history
+# on this file and football_data_app/bet_flow_handler.py for the full trail
+# (field renames, missing "description" item property, RadioButtonsGroup vs
+# Dropdown). Per Meta's own Flow JSON docs, `data-source` also accepts a
+# *static* literal array baked into the screen JSON at publish time instead of
+# a dynamic reference -- a genuinely different code path in the WhatsApp
+# client, unlike swapping component type. The four fixed, small option lists
+# below (menu / bet-mode / slip-action / safer-gambling) are static in
+# practice, so they're inlined here as literals rather than resolved from
+# screen `data` each request. Import from bet_flow_handler so the ids this
+# Flow submits and the ids handle_data_exchange checks for can never drift
+# apart. The genuinely variable-length lists (fixtures/markets/outcomes/
+# tickets) remain dynamic -- they can't be static.
+from football_data_app.bet_flow_handler import MENU_ITEMS, MENU_MODES, SLIP_ACTIONS, SAFER_ACTIONS
+
 _ERR = {
     "error_message": {"type": "string", "__example__": ""},
     "is_error": {"type": "boolean", "__example__": False},
@@ -55,7 +72,6 @@ BET_WHATSAPP_FLOW = {
             "title": "BetBlitz",
             "data": {
                 **_SLIP,
-                "menu": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 "message": {"type": "string", "__example__": "What would you like to do?"},
                 **_ERR,
             },
@@ -71,17 +87,15 @@ BET_WHATSAPP_FLOW = {
                     # "on-click-action"), and a bare-"action" field consistently submitted
                     # with no value at all even when a radio option was selected.
                     #
-                    # Dropdown, not RadioButtonsGroup: on the client(s) this Flow has
-                    # actually been tested on, RadioButtonsGroup bound to a dynamic
-                    # data-source consistently submits with no value at all -- the
-                    # Footer's on-click payload came back missing this field entirely,
-                    # every single time, across every fix tried for the field name,
-                    # the data-source item schema, and the error-display logic. Dropdown
-                    # is the only other single-select component available here, so this
-                    # is the next differential test to isolate whether that's a
-                    # RadioButtonsGroup-specific client bug.
-                    {"type": "Dropdown", "name": "menu_choice", "label": "Menu", "required": True,
-                     "data-source": "${data.menu}"},
+                    # RadioButtonsGroup with a STATIC data-source (MENU_ITEMS, a literal
+                    # array), not a dynamic "${data.menu}" reference. Every RadioButtonsGroup/
+                    # Dropdown bound to a dynamic data-source in this Flow submitted with no
+                    # value at all, on every device tested, regardless of component type --
+                    # see the module docstring. This menu's five options are fixed in
+                    # practice, so making the data-source static (a genuinely different code
+                    # path per Meta's Flow JSON docs) is the next differential test.
+                    {"type": "RadioButtonsGroup", "name": "menu_choice", "label": "Menu", "required": True,
+                     "data-source": MENU_ITEMS},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
                             "action": "${form.menu_choice}", "slip": "${data.slip}"}}},
@@ -138,7 +152,6 @@ BET_WHATSAPP_FLOW = {
                 **_SLIP,
                 "market_label": {"type": "string", "__example__": "Match Winner"},
                 "outcomes": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
-                "modes": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -147,8 +160,9 @@ BET_WHATSAPP_FLOW = {
                 {"type": "Form", "name": "outcomes_form", "children": [
                     {"type": "Dropdown", "name": "outcome_id", "label": "Selection", "required": True,
                      "data-source": "${data.outcomes}"},
-                    {"type": "Dropdown", "name": "mode", "label": "Then", "required": True,
-                     "data-source": "${data.modes}"},
+                    # Static data-source (MENU_MODES) -- see the module docstring.
+                    {"type": "RadioButtonsGroup", "name": "mode", "label": "Then", "required": True,
+                     "data-source": MENU_MODES},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
                             "outcome_id": "${form.outcome_id}", "mode": "${form.mode}",
@@ -210,7 +224,6 @@ BET_WHATSAPP_FLOW = {
                 **_SLIP,
                 "summary": {"type": "string", "__example__": "🧾 Your Bet Slip"},
                 "has_slip": {"type": "boolean", "__example__": False},
-                "slip_actions": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
@@ -219,8 +232,9 @@ BET_WHATSAPP_FLOW = {
                 {"type": "Form", "name": "slip_form", "children": [
                     {"type": "TextInput", "name": "stake", "label": "Stake ($)", "required": False,
                      "input-type": "number", "helper-text": "Stake for the whole slip"},
-                    {"type": "Dropdown", "name": "slip_action", "label": "Action", "required": True,
-                     "data-source": "${data.slip_actions}"},
+                    # Static data-source (SLIP_ACTIONS) -- see the module docstring.
+                    {"type": "RadioButtonsGroup", "name": "slip_action", "label": "Action", "required": True,
+                     "data-source": SLIP_ACTIONS},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
                             "slip_action": "${form.slip_action}", "stake": "${form.stake}",
@@ -252,15 +266,15 @@ BET_WHATSAPP_FLOW = {
             "title": "Safer Gambling",
             "data": {
                 "summary": {"type": "string", "__example__": "🛡️ Safer Gambling"},
-                "safer_actions": {"type": "array", "items": _OPTION_ITEMS, "__example__": _OPTION_EXAMPLE},
                 **_ERR,
             },
             "layout": {"type": "SingleColumnLayout", "children": [
                 {"type": "TextHeading", "text": "Safer gambling"},
                 {"type": "TextBody", "text": "${data.summary}"},
                 {"type": "Form", "name": "safer_form", "children": [
-                    {"type": "Dropdown", "name": "safer_action", "label": "Choose", "required": True,
-                     "data-source": "${data.safer_actions}"},
+                    # Static data-source (SAFER_ACTIONS) -- see the module docstring.
+                    {"type": "RadioButtonsGroup", "name": "safer_action", "label": "Choose", "required": True,
+                     "data-source": SAFER_ACTIONS},
                     {"type": "TextInput", "name": "amount", "label": "Limit amount ($)", "required": False,
                      "input-type": "number", "helper-text": "For a deposit/stake limit. 0 removes it."},
                     {"type": "Footer", "label": "Apply", "on-click-action": {
