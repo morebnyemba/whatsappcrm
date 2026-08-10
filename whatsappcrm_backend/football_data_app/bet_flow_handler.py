@@ -86,9 +86,13 @@ def _label(text, limit=30):
 
 
 def _err(screen, message, extra=None):
-    data = {"is_error": True, "error_message": message}
-    if extra:
-        data.update(extra)
+    # `extra` is typically a screen builder's own ['data'] dict, which always
+    # carries its own is_error=False/error_message="" -- applying it after the
+    # error fields would silently clobber them back to "no error", leaving the
+    # Flow stuck on the same screen with no explanation shown to the user.
+    data = dict(extra) if extra else {}
+    data["is_error"] = True
+    data["error_message"] = message
     return {"screen": screen, "data": data}
 
 
