@@ -1867,15 +1867,56 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         elif interactive.get('type') == 'list_reply':
             interactive_reply_id = interactive.get('list_reply', {}).get('id', '')
 
-    # The native WhatsApp UI Flow ("bet_whatsapp") betting hub is NOT launched here
-    # anymore. Every single-select field in it (RadioButtonsGroup, then Dropdown --
-    # both tried) has submitted with no value at all on every device tested, so the
-    # entry menu never advances. "bet"/"play"/etc. now fall straight through to the
-    # keyword-matching block below, which routes to the older, proven conversational
-    # Betting Flow (flows/betting_flow.py) -- plain WhatsApp interactive list/button
-    # messages, the same mechanism already confirmed working for every other menu in
-    # this bot. Do not re-add a native-Flow interception here without first getting
-    # a selection component to actually submit a value in production.
+    # Launch the native betting WhatsApp Flow on a keyword or a "launch_bet_flow"
+    # tap, if it has been published to Meta. Falls through to the conversational
+    # betting flow ("bet") when the UI flow isn't available. Betting requires a
+    # login session — checked here, before launching, since this intercepts the
+    # "bet" keyword ahead of the conversational Betting Flow's own login gate.
+    if message_text_body in ('bet', 'play', 'bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
+        if not _has_valid_session(contact):
+            logger.info(
+                f"Betting requested but contact {contact.whatsapp_id} has no valid session. "
+                f"Prompting login instead of launching the betting Flow."
+            )
+            return [_build_login_prompt_action(
+                contact.whatsapp_id,
+                '\U0001f512 *Login Required*\n\n'
+                'You need to be logged in to place bets.\n\n'
+                'If you have an account, tap *Login* below.\n'
+                'New here? Tap *Register* to create a free account.'
+            )]
+        from .models import WhatsAppFlow as _WhatsAppFlow
+        from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
+        app_config = getattr(contact, 'associated_app_config', None)
+        wa_flow = None
+        if app_config:
+            wa_flow = (
+                _WhatsAppFlow.objects
+                .filter(meta_app_config=app_config, is_active=True, name__istartswith='bet_whatsapp')
+                .exclude(flow_id__isnull=True).exclude(flow_id='')
+                .order_by('-updated_at').first()
+            )
+        if wa_flow:
+            logger.info(f"Launching native betting Flow '{wa_flow.name}' (flow_id={wa_flow.flow_id}) for {contact.whatsapp_id}.")
+            flow_message = _WhatsAppFlowService.create_flow_message_data(
+                flow_id=wa_flow.flow_id,
+                screen='BET_MENU',
+                flow_cta='Open BetBlitz',
+                body_text=('⚽ *BetBlitz*\n\nPlace bets, build accumulators, check your bets, '
+                           'balance and safer-gambling tools — all without leaving WhatsApp.'),
+                header_text='BetBlitz',
+                flow_token=contact.whatsapp_id,
+                flow_action='data_exchange',
+            )
+            return [{
+                'type': 'send_whatsapp_message',
+                'recipient_wa_id': contact.whatsapp_id,
+                'message_type': 'interactive',
+                'data': flow_message,
+            }]
+        else:
+            logger.info("Native betting Flow not published; falling back to the conversational betting flow.")
+            message_text_body = 'bet'  # fall through to keyword-triggered conversational flow
 
     # When user taps Login/Register from the session-enforcement prompt, directly
     # launch the corresponding WhatsApp UI flow if one is published.  This avoids
