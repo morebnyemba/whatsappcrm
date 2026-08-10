@@ -619,6 +619,19 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         return {"league_id": league_id, "status": "error", "message": "League not found"}
     except APIFootballV3Exception as e:
         logger.error(f"TASK ERROR: API-Football v3 API error for league {league_id}: {e}", exc_info=True)
+        if self.request.retries >= self.max_retries:
+            # This task runs inside a chord alongside every other league (see
+            # _prepare_and_launch_event_odds_chord_v3): letting the exception
+            # propagate here after retries are exhausted would mark this task
+            # FAILURE, which breaks the whole chord silently and means
+            # dispatch_odds_fetching_after_events_v3_task -- the only place
+            # odds ever get dispatched -- never runs for the entire cycle.
+            # Degrade to an error result instead so the chord can still complete.
+            logger.error(f"Max retries exceeded for league {league_id}; giving up without breaking the odds-dispatch chord.")
+            logger.info("="*80)
+            logger.info(f"TASK END: fetch_events_for_league_v3_task - FAILED (max retries exceeded)")
+            logger.info("="*80)
+            return {"league_id": league_id, "status": "error", "message": str(e)}
         logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
         raise self.retry(exc=e)
     except Exception as e:
