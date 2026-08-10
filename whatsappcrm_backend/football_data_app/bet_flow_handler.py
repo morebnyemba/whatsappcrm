@@ -56,23 +56,29 @@ MAX_FLOW_OPTIONS = 20  # keep dropdowns comfortably within Meta's limits
 SLIP_TTL_SECONDS = 1800  # 30 minutes — matches typical WhatsApp Flow session lifetimes
 
 # Static option lists surfaced as dynamic data (keeps the Flow JSON declarative).
+# Every item needs a "description" key -- even empty -- to match the RadioButtonsGroup
+# data-source item schema declared in the Flow JSON (id/title/description). Every
+# RadioButtonsGroup in this Flow (BET_MENU's menu, these three) omitted it; the
+# Dropdown-driven lists (fixtures/markets/outcomes/tickets) always populated theirs
+# and were never reported broken -- consistent with the WhatsApp client silently
+# failing to bind a selection for a data-source item missing a declared property.
 MENU_MODES = [
-    {"id": "bet_now", "title": "Bet this now"},
-    {"id": "add_slip", "title": "Add to slip & keep browsing"},
+    {"id": "bet_now", "title": "Bet this now", "description": ""},
+    {"id": "add_slip", "title": "Add to slip & keep browsing", "description": ""},
 ]
 # No "add another selection" entry: Meta's routing model can't legally route
 # BET_SLIP back into the browse chain (see module docstring). Users add more
 # legs with the Flow's native back button instead.
 SLIP_ACTIONS = [
-    {"id": "place", "title": "Place bet"},
-    {"id": "clear", "title": "Clear slip"},
+    {"id": "place", "title": "Place bet", "description": ""},
+    {"id": "clear", "title": "Clear slip", "description": ""},
 ]
 SAFER_ACTIONS = [
-    {"id": "exclude_1", "title": "Take a 1-day break"},
-    {"id": "exclude_7", "title": "Self-exclude 7 days"},
-    {"id": "exclude_30", "title": "Self-exclude 30 days"},
-    {"id": "deposit_limit", "title": "Set daily deposit limit ($)"},
-    {"id": "stake_limit", "title": "Set daily stake limit ($)"},
+    {"id": "exclude_1", "title": "Take a 1-day break", "description": ""},
+    {"id": "exclude_7", "title": "Self-exclude 7 days", "description": ""},
+    {"id": "exclude_30", "title": "Self-exclude 30 days", "description": ""},
+    {"id": "deposit_limit", "title": "Set daily deposit limit ($)", "description": ""},
+    {"id": "stake_limit", "title": "Set daily stake limit ($)", "description": ""},
 ]
 
 
@@ -225,11 +231,11 @@ def _menu_screen(flow_token, slip_str='', message=''):
     ids = _current_slip_ids(flow_token, slip_str)
     n = len(ids)
     menu = [
-        {"id": "browse", "title": "⚽ Place a bet"},
-        {"id": "slip", "title": f"🧾 Bet slip ({n})"},
-        {"id": "mybets", "title": "🎫 My bets"},
-        {"id": "balance", "title": "💰 My balance"},
-        {"id": "safer", "title": "🛡️ Safer gambling"},
+        {"id": "browse", "title": "⚽ Place a bet", "description": ""},
+        {"id": "slip", "title": f"🧾 Bet slip ({n})", "description": ""},
+        {"id": "mybets", "title": "🎫 My bets", "description": ""},
+        {"id": "balance", "title": "💰 My balance", "description": ""},
+        {"id": "safer", "title": "🛡️ Safer gambling", "description": ""},
     ]
     return {
         "screen": "BET_MENU",
