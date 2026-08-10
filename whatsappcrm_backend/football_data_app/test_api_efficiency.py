@@ -4,6 +4,7 @@ Tests for the cost-saving API-Football v3 request changes: /odds pagination,
 fixture id batching, and bulk per-league-day odds fetching.
 """
 from decimal import Decimal
+from datetime import timedelta
 from unittest import mock
 
 from django.test import TestCase
@@ -153,6 +154,34 @@ class EventFetchChordSafetyTests(TestCase):
                     task.run(self.league.id)
             finally:
                 task.pop_request()
+
+
+class StandaloneOddsDispatchTests(TestCase):
+    """
+    dispatch_odds_fetching_after_events_v3_task must also work when invoked on
+    its own periodic schedule (no chord results), since CELERY_RESULT_BACKEND=
+    'django-db' makes the events-fetch chord's callback unreliable at scale.
+    """
+
+    def setUp(self):
+        self.league = League.objects.create(name='EPL', api_id='v3_39', sport_key='soccer')
+        self.home = Team.objects.create(name='Home FC', api_team_id='1')
+        self.away = Team.objects.create(name='Away FC', api_team_id='2')
+        self.fixture = FootballFixture.objects.create(
+            league=self.league, home_team=self.home, away_team=self.away,
+            api_id='v3_5001', match_date=timezone.now() + timedelta(hours=2),
+            status=FootballFixture.FixtureStatus.SCHEDULED,
+        )
+
+    def test_runs_with_no_argument_and_dispatches_stale_fixtures(self):
+        from . import tasks_api_football_v3 as T
+        with mock.patch.object(T, 'group') as fake_group:
+            fake_group.return_value.apply_async = mock.Mock()
+            T.dispatch_odds_fetching_after_events_v3_task.run()
+
+        fake_group.assert_called_once()
+        dispatched_tasks = fake_group.call_args[0][0]
+        self.assertEqual(len(dispatched_tasks), 1)  # one league-day pair: our fixture
 
 
 class ApiFootballBulkOddsTests(TestCase):
