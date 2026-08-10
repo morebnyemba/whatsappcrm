@@ -58,6 +58,28 @@ class BetFlowHandlerTests(TestCase):
         self.assertEqual(s['screen'], 'BET_DONE')
         self.assertIn('500.00', s['data']['message'])
 
+    def test_menu_no_selection_shows_error_not_silently_swallowed(self):
+        # _err()'s `extra` was a full screen builder's ['data'] dict, which
+        # always carries its own is_error=False/error_message="" -- merging it
+        # in after the error fields silently clobbered them back to "no
+        # error", leaving the Flow stuck on BET_MENU with no explanation.
+        s = H.handle_data_exchange('BET_MENU', {'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_MENU')
+        self.assertTrue(s['data']['is_error'])
+        self.assertEqual(s['data']['error_message'], 'Please choose an option.')
+
+    def test_browse_no_selection_shows_error_not_silently_swallowed(self):
+        s = H.handle_data_exchange('BET_BROWSE', {'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_BROWSE')
+        self.assertTrue(s['data']['is_error'])
+        self.assertEqual(s['data']['error_message'], 'Please choose a match.')
+
+    def test_safer_no_selection_shows_error_not_silently_swallowed(self):
+        s = H.handle_data_exchange('BET_SAFER', {}, self.wa)
+        self.assertEqual(s['screen'], 'BET_SAFER')
+        self.assertTrue(s['data']['is_error'])
+        self.assertEqual(s['data']['error_message'], 'Please choose an option.')
+
     # ---- single bet path ----
     def test_full_single_bet(self):
         s = H.handle_data_exchange('BET_MENU', {'action': 'browse', 'slip': ''}, self.wa)
