@@ -70,7 +70,17 @@ BET_WHATSAPP_FLOW = {
                     # message schema (the interactive message's own "action" object,
                     # "on-click-action"), and a bare-"action" field consistently submitted
                     # with no value at all even when a radio option was selected.
-                    {"type": "RadioButtonsGroup", "name": "menu_choice", "label": "Menu", "required": True,
+                    #
+                    # Dropdown, not RadioButtonsGroup: on the client(s) this Flow has
+                    # actually been tested on, RadioButtonsGroup bound to a dynamic
+                    # data-source consistently submits with no value at all -- the
+                    # Footer's on-click payload came back missing this field entirely,
+                    # every single time, across every fix tried for the field name,
+                    # the data-source item schema, and the error-display logic. Dropdown
+                    # is the only other single-select component available here, so this
+                    # is the next differential test to isolate whether that's a
+                    # RadioButtonsGroup-specific client bug.
+                    {"type": "Dropdown", "name": "menu_choice", "label": "Menu", "required": True,
                      "data-source": "${data.menu}"},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
@@ -137,7 +147,7 @@ BET_WHATSAPP_FLOW = {
                 {"type": "Form", "name": "outcomes_form", "children": [
                     {"type": "Dropdown", "name": "outcome_id", "label": "Selection", "required": True,
                      "data-source": "${data.outcomes}"},
-                    {"type": "RadioButtonsGroup", "name": "mode", "label": "Then", "required": True,
+                    {"type": "Dropdown", "name": "mode", "label": "Then", "required": True,
                      "data-source": "${data.modes}"},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
@@ -209,7 +219,7 @@ BET_WHATSAPP_FLOW = {
                 {"type": "Form", "name": "slip_form", "children": [
                     {"type": "TextInput", "name": "stake", "label": "Stake ($)", "required": False,
                      "input-type": "number", "helper-text": "Stake for the whole slip"},
-                    {"type": "RadioButtonsGroup", "name": "slip_action", "label": "Action", "required": True,
+                    {"type": "Dropdown", "name": "slip_action", "label": "Action", "required": True,
                      "data-source": "${data.slip_actions}"},
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
@@ -249,7 +259,7 @@ BET_WHATSAPP_FLOW = {
                 {"type": "TextHeading", "text": "Safer gambling"},
                 {"type": "TextBody", "text": "${data.summary}"},
                 {"type": "Form", "name": "safer_form", "children": [
-                    {"type": "RadioButtonsGroup", "name": "safer_action", "label": "Choose", "required": True,
+                    {"type": "Dropdown", "name": "safer_action", "label": "Choose", "required": True,
                      "data-source": "${data.safer_actions}"},
                     {"type": "TextInput", "name": "amount", "label": "Limit amount ($)", "required": False,
                      "input-type": "number", "helper-text": "For a deposit/stake limit. 0 removes it."},
