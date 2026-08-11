@@ -58,7 +58,7 @@ class BetFlowHandlerTests(TestCase):
         self.assertEqual(ids, {'browse', 'slip', 'mybets', 'balance', 'safer'})
 
     def test_menu_balance(self):
-        s = H.handle_data_exchange('BET_MENU', {'action': 'balance', 'slip': ''}, self.wa)
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'balance', 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_DONE')
         self.assertIn('500.00', s['data']['message'])
 
@@ -86,7 +86,7 @@ class BetFlowHandlerTests(TestCase):
 
     # ---- single bet path ----
     def test_full_single_bet(self):
-        s = H.handle_data_exchange('BET_MENU', {'action': 'browse', 'slip': ''}, self.wa)
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'browse', 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_BROWSE')
         self.assertTrue(any(o['id'] == str(self.fx.id) for o in s['data']['fixtures']))
 
@@ -216,12 +216,12 @@ class BetFlowHandlerTests(TestCase):
 
     # ---- my bets ----
     def test_mybets_empty_then_detail(self):
-        s = H.handle_data_exchange('BET_MENU', {'action': 'mybets', 'slip': ''}, self.wa)
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'mybets', 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_DONE')  # no bets yet
 
         # place one, then it shows up
         H.handle_data_exchange('BET_CONFIRM', {'outcome_id': str(self.home_outcome.id), 'stake': '50', 'slip': ''}, self.wa)
-        s = H.handle_data_exchange('BET_MENU', {'action': 'mybets', 'slip': ''}, self.wa)
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'mybets', 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_MYBETS')
         tid = s['data']['tickets'][0]['id']
         s = H.handle_data_exchange('BET_MYBETS', {'ticket_id': tid, 'slip': ''}, self.wa)
@@ -230,7 +230,7 @@ class BetFlowHandlerTests(TestCase):
 
     # ---- safer gambling ----
     def test_safer_self_exclude(self):
-        s = H.handle_data_exchange('BET_MENU', {'action': 'safer', 'slip': ''}, self.wa)
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'safer', 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_SAFER')
         s = H.handle_data_exchange('BET_SAFER', {'safer_action': 'exclude_7'}, self.wa)
         self.assertEqual(s['screen'], 'BET_DONE')

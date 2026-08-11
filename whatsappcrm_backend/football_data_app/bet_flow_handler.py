@@ -564,7 +564,7 @@ def handle_data_exchange(screen: str, data: dict, flow_token: str) -> dict:
     logger.info(f"Bet Flow data_exchange: screen={screen}")
 
     if screen == 'BET_MENU':
-        action = data.get('action')
+        action = data.get('menu_action')
         if action == 'browse':
             return _browse_screen(flow_token, slip_str)
         if action == 'slip':
