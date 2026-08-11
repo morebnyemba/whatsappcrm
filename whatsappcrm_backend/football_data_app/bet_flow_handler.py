@@ -267,7 +267,7 @@ def _menu_screen(flow_token, slip_str='', message=''):
         "data": {
             "slip": _slip_str(ids),
             "message": message,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -293,7 +293,7 @@ def _browse_screen(flow_token, slip_str=''):
             "fixtures": fixtures or [{"id": "none", "title": "No matches available",
                                        "description": "Check back closer to kickoff"}],
             "has_fixtures": bool(fixtures),
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -321,7 +321,7 @@ def _markets_screen(fixture_id, flow_token, slip_str=''):
             "fixture_id": str(fixture_id),
             "fixture_label": _label(f"{fixture.home_team.name} v {fixture.away_team.name}", 40),
             "markets": markets,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -341,7 +341,7 @@ def _outcomes_screen(market_id, flow_token, slip_str=''):
             "slip": _slip_str(_current_slip_ids(flow_token, slip_str)),
             "market_label": _label(scr['market'].category.name, 40),
             "outcomes": outcomes,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -363,7 +363,7 @@ def _stake_screen(outcome_id, flow_token, slip_str=''):
             "selection_label": _label(selection, 60),
             "odds": f"{outcome.odds:.2f}",
             "balance": _balance_str(flow_token),
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -402,7 +402,7 @@ def _confirm_screen(outcome_id, stake, flow_token, slip_str=''):
             "outcome_id": str(outcome_id),
             "stake": f"{stake_val:.2f}",
             "summary": summary,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -426,7 +426,7 @@ def _slip_screen(flow_token, slip_str='', stake=None, message=''):
             "slip": _slip_str(ids),
             "summary": message + ("\n\n" if message else "") + summary if message else summary,
             "has_slip": bool(slip),
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -459,7 +459,7 @@ def _mybets_screen(flow_token, slip_str=''):
         "data": {
             "slip": _slip_str(_current_slip_ids(flow_token, slip_str)),
             "tickets": options,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 
@@ -506,7 +506,7 @@ def _safer_screen(flow_token, message=''):
         "screen": "BET_SAFER",
         "data": {
             "summary": (message + "\n\n" + summary) if message else summary,
-            "is_error": False, "error_message": "",
+            "is_error": False, "error_message": " ",
         },
     }
 

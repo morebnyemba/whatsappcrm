@@ -33,7 +33,14 @@ system. Screen ids are namespaced BET_* so the shared Flow endpoint can route th
 from football_data_app.bet_flow_handler import MENU_ITEMS, MENU_MODES, SLIP_ACTIONS, SAFER_ACTIONS
 
 _ERR = {
-    "error_message": {"type": "string", "__example__": ""},
+    # A non-blank placeholder, not "" -- Meta's Flow Preview reports "TextBody
+    # is missing required property 'text'" when a TextBody's `text` (here
+    # "${data.error_message}") resolves to an empty string, even though the
+    # component is hidden via "visible": "${data.is_error}". Same underlying
+    # rule as the data-source "description" fix: required text properties
+    # can't be blank, visible or not. bet_flow_handler.py's screen builders
+    # send " " (a single, invisible space) instead of "" for the no-error case.
+    "error_message": {"type": "string", "__example__": " "},
     "is_error": {"type": "boolean", "__example__": False},
 }
 _OPTION_EXAMPLE = [{"id": "1", "title": "Example", "description": "Example option"}]
@@ -303,7 +310,7 @@ BET_WHATSAPP_FLOW = {
             "success": True,
             "data": {
                 "heading": {"type": "string", "__example__": "Done"},
-                "message": {"type": "string", "__example__": ""},
+                "message": {"type": "string", "__example__": " "},
             },
             "layout": {"type": "SingleColumnLayout", "children": [
                 {"type": "TextHeading", "text": "${data.heading}"},
