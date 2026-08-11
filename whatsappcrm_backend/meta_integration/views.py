@@ -627,7 +627,12 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "REGISTER",
                 "data": {
-                    "error_message": "",
+                    # Not "" -- Meta's Flow Preview reports "TextBody is missing
+                    # required property 'text'" when a TextBody's text (here
+                    # "${data.error_message}") resolves to an empty string, even
+                    # while hidden via "visible": "${data.is_error}". A single
+                    # space satisfies the required-property check invisibly.
+                    "error_message": " ",
                     "is_error": False
                 }
             }
@@ -636,7 +641,7 @@ class WhatsAppFlowEndpointView(View):
             return {
                 "screen": "LOGIN",
                 "data": {
-                    "error_message": "",
+                    "error_message": " ",
                     "is_error": False
                 }
             }

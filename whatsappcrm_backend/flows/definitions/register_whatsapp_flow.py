@@ -24,7 +24,7 @@ REGISTER_WHATSAPP_FLOW = {
             "data": {
                 "error_message": {
                     "type": "string",
-                    "__example__": ""
+                    "__example__": " "
                 },
                 "is_error": {
                     "type": "boolean",
