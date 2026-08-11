@@ -103,9 +103,17 @@ BET_WHATSAPP_FLOW = {
                     # path per Meta's Flow JSON docs) is the next differential test.
                     {"type": "RadioButtonsGroup", "name": "menu_choice", "label": "Menu", "required": True,
                      "data-source": MENU_ITEMS},
+                    # Payload key "menu_action", not "action" -- the client visibly
+                    # registers the selection (Continue enables, satisfying `required`)
+                    # but the resolved data_exchange payload never included this key
+                    # under any component/field-name/data-source variant tried, only
+                    # ever missing this ONE key while "slip" (a ${data.X} reference,
+                    # not ${form.X}) always came through. The outgoing payload dict's
+                    # own key was still literally "action" this whole time -- the same
+                    # word used one level up as "on-click-action" -- untested until now.
                     {"type": "Footer", "label": "Continue", "on-click-action": {
                         "name": "data_exchange", "payload": {
-                            "action": "${form.menu_choice}", "slip": "${data.slip}"}}},
+                            "menu_action": "${form.menu_choice}", "slip": "${data.slip}"}}},
                 ]},
             ]},
         },
