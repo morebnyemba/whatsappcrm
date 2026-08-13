@@ -179,13 +179,10 @@ class OddsAggregationTestCase(TestCase):
             result_text = ' '.join(result)
             # Check that fixture is present
             self.assertIn("Manchester United vs Liverpool", result_text)
-            # Check that we're not showing the outlier odds (5.00)
-            # The displayed odds should be around 2.00-2.10, not 5.00
-            # This verifies the median logic is working
-            # Not `assertIn(...) or assertIn(...)` -- assertIn raises on
-            # failure rather than returning False, so the first failing call
-            # would abort before the `or` ever reached the second check.
-            self.assertTrue("2.0" in result_text or "2.1" in result_text)
-            # Make sure the outlier isn't being displayed as the primary odds
-            # Note: This is a basic check - more detailed parsing could verify exact values
+            # Check the true median (2.10) is shown, not the min (2.00) or the
+            # outlier (5.00) -- accepting "2.0" here too would let an
+            # implementation that picked the min instead of the median pass
+            # just as well, since "2.0" is also a substring of "2.00".
+            self.assertIn("2.10", result_text)
+            self.assertNotIn("5.00", result_text)
 

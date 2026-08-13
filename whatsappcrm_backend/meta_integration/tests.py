@@ -571,8 +571,12 @@ class RegisterScreenHandlerTestCase(TestCase):
             name="Test User",
             associated_app_config=self.config,
         )
-        # Registration requires a valid, existing agent referral code.
-        agent_user = _User.objects.create_user(username="agent_test", password="irrelevant")
+        # Registration requires a valid, existing agent referral code. This
+        # user is never authenticated as, so give it an unusable password
+        # rather than a literal credential-like string.
+        agent_user = _User(username="agent_test")
+        agent_user.set_unusable_password()
+        agent_user.save()
         self.agent_profile = ReferralProfile.objects.create(user=agent_user, is_agent=True)
 
     def _valid_data(self, **overrides):
