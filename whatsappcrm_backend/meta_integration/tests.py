@@ -556,6 +556,8 @@ class RegisterScreenHandlerTestCase(TestCase):
         # Create a contact to use as the flow_token target
         from conversations.models import Contact
         from meta_integration.models import MetaAppConfig
+        from django.contrib.auth.models import User as _User
+        from referrals.models import ReferralProfile
         self.config = MetaAppConfig.objects.create(
             name="Reg Test Config",
             access_token="tok",
@@ -569,6 +571,9 @@ class RegisterScreenHandlerTestCase(TestCase):
             name="Test User",
             associated_app_config=self.config,
         )
+        # Registration requires a valid, existing agent referral code.
+        agent_user = _User.objects.create_user(username="agent_test", password="irrelevant")
+        self.agent_profile = ReferralProfile.objects.create(user=agent_user, is_agent=True)
 
     def _valid_data(self, **overrides):
         base = {
@@ -578,6 +583,7 @@ class RegisterScreenHandlerTestCase(TestCase):
             "email": "john@example.com",
             "password": "Secure123!",
             "confirm_password": "Secure123!",
+            "agent_code": self.agent_profile.referral_code,
         }
         base.update(overrides)
         return base

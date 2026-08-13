@@ -1,7 +1,7 @@
 from django.test import TestCase
 from django.contrib.admin.sites import AdminSite
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 from .models import FootballFixture, League, Team, Bookmaker, Market, MarketCategory, MarketOutcome
 from .admin import FootballFixtureAdmin
 
@@ -30,7 +30,12 @@ class FootballFixtureAdminTestCase(TestCase):
             league=self.league,
             home_team=self.home_team,
             away_team=self.away_team,
-            match_date="2024-01-15 15:00:00"
+            # A real datetime, not a string -- Model.objects.create() doesn't
+            # coerce field values via to_python() the way a ModelForm would,
+            # so a raw string stored on a DateTimeField stays a str in memory
+            # until the instance is reloaded from the DB, and __str__() calls
+            # .strftime() on it directly.
+            match_date=timezone.make_aware(datetime(2024, 1, 15, 15, 0, 0))
         )
         self.assertIn("Home Team vs Away Team", str(fixture))
         self.assertIn("2024-01-15", str(fixture))
@@ -177,7 +182,10 @@ class OddsAggregationTestCase(TestCase):
             # Check that we're not showing the outlier odds (5.00)
             # The displayed odds should be around 2.00-2.10, not 5.00
             # This verifies the median logic is working
-            self.assertIn("2.0", result_text) or self.assertIn("2.1", result_text)
+            # Not `assertIn(...) or assertIn(...)` -- assertIn raises on
+            # failure rather than returning False, so the first failing call
+            # would abort before the `or` ever reached the second check.
+            self.assertTrue("2.0" in result_text or "2.1" in result_text)
             # Make sure the outlier isn't being displayed as the primary odds
             # Note: This is a basic check - more detailed parsing could verify exact values
 
