@@ -313,6 +313,41 @@ class SwitchFlowToNativeBettingFlowTests(TestCase):
         self.assertEqual(actions[0]["data"]["action"]["parameters"]["flow_id"], "2216047699159394")
 
 
+class TraditionalFlowTransitionIntegrityTests(TestCase):
+    """Each traditional flow definition's transitions reference other steps by
+    name string (`to_step`), with no validation at definition time. The
+    loader (load_flow_definitions._load_traditional_flow) silently drops any
+    transition whose `to_step` doesn't match a step in the same flow -- it
+    only logs a warning, never raises -- so a typo'd or removed step name
+    quietly turns into a dead end: the contact reaches that step and the
+    conversation just stops, with nothing in the logs a live user would ever
+    see. This happened for real: Deposit Flow's `ensure_customer_account`
+    step transitioned to a step named 'account_creation_failed' that was
+    never defined, so a failed account-creation silently stranded the user.
+
+    This test loads no database rows -- it walks the plain dict returned by
+    each TRADITIONAL_FLOW_CREATORS entry and checks every transition's
+    `to_step` resolves to a real step name in that same flow, so a dangling
+    reference fails fast in CI instead of silently degrading a live flow."""
+
+    def test_every_transition_target_exists_in_its_own_flow(self):
+        from flows.definitions import TRADITIONAL_FLOW_CREATORS
+
+        dangling = []
+        for creator in TRADITIONAL_FLOW_CREATORS:
+            flow_def = creator()
+            step_names = {step['name'] for step in flow_def.get('steps', [])}
+            for step in flow_def.get('steps', []):
+                for transition in step.get('transitions', []):
+                    to_step = transition.get('to_step')
+                    if to_step not in step_names:
+                        dangling.append(
+                            f"{flow_def['name']}: '{step['name']}' -> '{to_step}'"
+                        )
+
+        self.assertEqual(dangling, [], "Dangling transition(s) found:\n" + "\n".join(dangling))
+
+
 class CreateFlowMessageDataTests(TestCase):
     """Meta's Graph API rejects flow_action_payload when flow_action is
     data_exchange (error 131009) — it's only valid for flow_action=navigate,
