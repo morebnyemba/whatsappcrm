@@ -12,7 +12,7 @@ import time
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
-from .utils import settle_ticket # Import the new utility function
+from .utils import settle_ticket, upsert_market_outcome # Import the new utility function
 from .the_odds_api_client import TheOddsAPIClient, TheOddsAPIException
 
 from meta_integration.models import MetaAppConfig
@@ -37,40 +37,56 @@ EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
 
 # --- Helper Functions ---
 @transaction.atomic
-def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
+def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict) -> set:
     """
     Processes and saves market and outcome data for a given fixture and bookmaker.
-    Assumes that old markets for this bookmaker/fixture have been cleared by the calling task.
+    Returns the set of Market ids upserted, so the caller can deactivate any of
+    this bookmaker's markets for this fixture that this payload no longer
+    contains at all.
+
+    Updates existing Market/MarketOutcome rows in place instead of creating fresh
+    ones -- Market -> MarketOutcome -> Bet are all on_delete=CASCADE, so recreating
+    them would cascade-delete any Bet a user already placed against an outcome
+    (see the identical fix and full explanation in tasks_api_football_v3.py's
+    _process_api_football_v3_odds_data). The calling task (_apply_odds_event) no
+    longer clears old markets first, so this must upsert rather than assume a
+    clean slate.
     """
     bookmaker, _ = Bookmaker.objects.get_or_create(
         api_bookmaker_key=bookmaker_data['key'],
         defaults={'name': bookmaker_data['title']}
     )
 
+    seen_market_ids = set()
     for market_data in bookmaker_data.get('markets', []):
         market_key = market_data['key']
         category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
 
-        # Since old markets are cleared by the calling task, we can simply create new ones.
-        market = Market.objects.create(
+        market, _ = Market.objects.update_or_create(
             fixture=fixture,
             bookmaker=bookmaker,
             api_market_key=market_key,
-            category=category,
-            last_updated_odds_api=parser.isoparse(market_data['last_update'])
+            defaults={
+                'category': category,
+                'last_updated_odds_api': parser.isoparse(market_data['last_update']),
+                'is_active': True,
+            }
         )
+        seen_market_ids.add(market.id)
 
-        outcomes_to_create = [
-            MarketOutcome(
-                market=market,
-                outcome_name=o['name'],
-                odds=Decimal(str(o['price'])),
-                point_value=o.get('point')
-            )
-            for o in market_data.get('outcomes', [])
-        ]
-        if outcomes_to_create:
-            MarketOutcome.objects.bulk_create(outcomes_to_create)
+        seen_outcome_ids = set()
+        for o in market_data.get('outcomes', []):
+            try:
+                odds_value = Decimal(str(o['price']))
+            except (ArithmeticError, ValueError, TypeError):
+                logger.warning(f"Skipping unparsable odd '{o.get('price')}' for fixture {fixture.id}")
+                continue
+            outcome = upsert_market_outcome(market, o['name'], o.get('point'), odds_value)
+            seen_outcome_ids.add(outcome.id)
+
+        market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
+
+    return seen_market_ids
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
@@ -246,10 +262,11 @@ def dispatch_odds_fetching_after_events_task(self, results_from_event_fetches):
 
 def _apply_odds_event(fixture_for_update, odds_data):
     """
-    Apply one event's odds payload to a locked fixture: sync team names, replace
-    the markets for the bookmakers present in the payload, and stamp
-    last_odds_update. Shared by the single-event and bulk odds tasks so their
-    behaviour is identical.
+    Apply one event's odds payload to a locked fixture: sync team names,
+    upsert the markets/outcomes for the bookmakers present in the payload
+    (deactivating any of those bookmakers' markets the payload no longer
+    contains), and stamp last_odds_update. Shared by the single-event and
+    bulk odds tasks so their behaviour is identical.
     """
     api_home_team_name = odds_data.get('home_team')
     api_away_team_name = odds_data.get('away_team')
@@ -265,15 +282,23 @@ def _apply_odds_event(fixture_for_update, odds_data):
         fixture_for_update.away_team = correct_away_team
         team_fields_to_update.append('away_team')
 
-    bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
-    if bookmaker_keys_in_response:
+    # _process_bookmaker_data upserts each market/outcome in place rather than
+    # assuming a clean slate, because deleting markets used to cascade-delete any
+    # Bet already placed against one of this fixture's outcomes. Markets that the
+    # payload no longer contains for a given bookmaker are deactivated (below)
+    # instead of deleted, so they stop accepting new bets without destroying
+    # settlement history.
+    seen_market_ids = set()
+    bookmaker_keys_seen = []
+    for bookmaker_data in odds_data.get('bookmakers', []):
+        bookmaker_keys_seen.append(bookmaker_data['key'])
+        seen_market_ids.update(_process_bookmaker_data(fixture_for_update, bookmaker_data))
+
+    if bookmaker_keys_seen:
         Market.objects.filter(
             fixture=fixture_for_update,
-            bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response,
-        ).delete()
-
-    for bookmaker_data in odds_data.get('bookmakers', []):
-        _process_bookmaker_data(fixture_for_update, bookmaker_data)
+            bookmaker__api_bookmaker_key__in=bookmaker_keys_seen,
+        ).exclude(id__in=seen_market_ids).update(is_active=False)
 
     fixture_for_update.last_odds_update = timezone.now()
     fixture_for_update.save(update_fields=['last_odds_update'] + team_fields_to_update)

@@ -1,7 +1,7 @@
 from django.test import TestCase
 from django.contrib.admin.sites import AdminSite
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 from .models import FootballFixture, League, Team, Bookmaker, Market, MarketCategory, MarketOutcome
 from .admin import FootballFixtureAdmin
 
@@ -30,7 +30,12 @@ class FootballFixtureAdminTestCase(TestCase):
             league=self.league,
             home_team=self.home_team,
             away_team=self.away_team,
-            match_date="2024-01-15 15:00:00"
+            # A real datetime, not a string -- Model.objects.create() doesn't
+            # coerce field values via to_python() the way a ModelForm would,
+            # so a raw string stored on a DateTimeField stays a str in memory
+            # until the instance is reloaded from the DB, and __str__() calls
+            # .strftime() on it directly.
+            match_date=timezone.make_aware(datetime(2024, 1, 15, 15, 0, 0))
         )
         self.assertIn("Home Team vs Away Team", str(fixture))
         self.assertIn("2024-01-15", str(fixture))
@@ -164,20 +169,18 @@ class OddsAggregationTestCase(TestCase):
             days_ahead=2
         )
         
-        # Verify result is not None
-        self.assertIsNotNone(result, "Function should return data for scheduled fixtures")
-        
-        # The median of [2.00, 2.10, 5.00] is 2.10
-        # So the outcome closest to median should be used (2.10)
-        # In the output, we should see odds closer to 2.10 than 5.00
-        if result:
-            result_text = ' '.join(result)
-            # Check that fixture is present
-            self.assertIn("Manchester United vs Liverpool", result_text)
-            # Check that we're not showing the outlier odds (5.00)
-            # The displayed odds should be around 2.00-2.10, not 5.00
-            # This verifies the median logic is working
-            self.assertIn("2.0", result_text) or self.assertIn("2.1", result_text)
-            # Make sure the outlier isn't being displayed as the primary odds
-            # Note: This is a basic check - more detailed parsing could verify exact values
+        # Not assertIsNotNone alone -- an empty list is also "not None" and
+        # would silently skip every assertion below via the old `if result:`
+        # guard, letting a regression that returns no fixtures pass unnoticed.
+        self.assertTrue(result, "Function should return data for scheduled fixtures")
+
+        result_text = ' '.join(result)
+        # Check that fixture is present
+        self.assertIn("Manchester United vs Liverpool", result_text)
+        # The median of [2.00, 2.10, 5.00] is 2.10 -- check the true median is
+        # shown, not the min (2.00) or the outlier (5.00). Accepting "2.0" here
+        # too would let an implementation that picked the min instead of the
+        # median pass just as well, since "2.0" is also a substring of "2.00".
+        self.assertIn("2.10", result_text)
+        self.assertNotIn("5.00", result_text)
 

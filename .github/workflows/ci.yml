@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# CI only reads code, installs dependencies, and runs tests/builds -- none of
+# these jobs need to write to the repo. Dependency install/build steps run
+# arbitrary third-party code, so the default token they can reach should be
+# read-only regardless of what the repo's default token permissions are.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests (Django)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: whatsapp_crm_dev
+          POSTGRES_USER: crm_user
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crm_user -d whatsapp_crm_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DJANGO_SECRET_KEY: ci-test-secret-key-not-for-production
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: whatsapp_crm_dev
+      DB_USER: crm_user
+      DB_PASSWORD: ci_test_password
+      DB_HOST: localhost
+      DB_PORT: 5432
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+
+    defaults:
+      run:
+        working-directory: whatsappcrm_backend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+          cache-dependency-path: whatsappcrm_backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run Django test suite
+        run: python manage.py test --noinput
+
+  frontend:
+    name: Frontend (whatsapp-crm-frontend)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: whatsapp-crm-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: whatsapp-crm-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        # Advisory only: ~40 pre-existing errors here as of this workflow's
+        # introduction. Visible in the job output/annotations, but doesn't
+        # block the pipeline. Flip this off once the backlog's cleared.
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build
+        run: npm run build
+
+  player-portal:
+    name: Frontend (player-portal)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: player-portal
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: player-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
