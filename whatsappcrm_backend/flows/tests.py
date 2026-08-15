@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from pydantic import ValidationError
 
@@ -313,7 +313,7 @@ class SwitchFlowToNativeBettingFlowTests(TestCase):
         self.assertEqual(actions[0]["data"]["action"]["parameters"]["flow_id"], "2216047699159394")
 
 
-class TraditionalFlowTransitionIntegrityTests(TestCase):
+class TraditionalFlowTransitionIntegrityTests(SimpleTestCase):
     """Each traditional flow definition's transitions reference other steps by
     name string (`to_step`), with no validation at definition time. The
     loader (load_flow_definitions._load_traditional_flow) silently drops any
