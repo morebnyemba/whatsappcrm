@@ -149,57 +149,59 @@ def _process_apifootball_odds_data(fixture: FootballFixture, odds_data: dict):
                 # Create H2H market
                 category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
                 
-                # Delete old market if exists
-                deleted_count, _ = Market.objects.filter(
-                    fixture=fixture,
-                    bookmaker=bookmaker,
-                    api_market_key='h2h'
-                ).delete()
-                if deleted_count > 0:
-                    logger.debug(f"Deleted {deleted_count} old market(s) for bookmaker {bookmaker_name}")
-                
-                market = Market.objects.create(
+                # Update the existing market/outcomes in place rather than deleting and
+                # recreating them. Market -> MarketOutcome -> Bet are all
+                # on_delete=CASCADE, so deleting a Market here cascade-deletes every
+                # MarketOutcome under it, which cascade-deletes any Bet a user already
+                # placed against one of those outcomes -- see the identical fix and
+                # full explanation in tasks_api_football_v3.py's
+                # _process_api_football_v3_odds_data.
+                market, _ = Market.objects.update_or_create(
                     fixture=fixture,
                     bookmaker=bookmaker,
                     api_market_key='h2h',
-                    category=category,
-                    last_updated_odds_api=timezone.now()
+                    defaults={
+                        'category': category,
+                        'last_updated_odds_api': timezone.now(),
+                        'is_active': True,
+                    }
                 )
                 total_markets_created += 1
-                
-                outcomes_to_create = []
-                
+
+                seen_outcome_ids = set()
+
                 if odd_1:
-                    outcomes_to_create.append(
-                        MarketOutcome(
-                            market=market,
-                            outcome_name=fixture.home_team.name,
-                            odds=Decimal(str(odd_1)),
-                        )
+                    outcome, _ = MarketOutcome.objects.update_or_create(
+                        market=market,
+                        outcome_name=fixture.home_team.name,
+                        point_value=None,
+                        defaults={'odds': Decimal(str(odd_1)), 'is_active': True}
                     )
-                
+                    seen_outcome_ids.add(outcome.id)
+
                 if odd_x:
-                    outcomes_to_create.append(
-                        MarketOutcome(
-                            market=market,
-                            outcome_name='Draw',
-                            odds=Decimal(str(odd_x)),
-                        )
+                    outcome, _ = MarketOutcome.objects.update_or_create(
+                        market=market,
+                        outcome_name='Draw',
+                        point_value=None,
+                        defaults={'odds': Decimal(str(odd_x)), 'is_active': True}
                     )
-                
+                    seen_outcome_ids.add(outcome.id)
+
                 if odd_2:
-                    outcomes_to_create.append(
-                        MarketOutcome(
-                            market=market,
-                            outcome_name=fixture.away_team.name,
-                            odds=Decimal(str(odd_2)),
-                        )
+                    outcome, _ = MarketOutcome.objects.update_or_create(
+                        market=market,
+                        outcome_name=fixture.away_team.name,
+                        point_value=None,
+                        defaults={'odds': Decimal(str(odd_2)), 'is_active': True}
                     )
-                
-                if outcomes_to_create:
-                    MarketOutcome.objects.bulk_create(outcomes_to_create)
-                    total_outcomes_created += len(outcomes_to_create)
-                    logger.debug(f"Created market with {len(outcomes_to_create)} outcomes for bookmaker {bookmaker_name}")
+                    seen_outcome_ids.add(outcome.id)
+
+                if seen_outcome_ids:
+                    total_outcomes_created += len(seen_outcome_ids)
+                    logger.debug(f"Upserted market with {len(seen_outcome_ids)} outcomes for bookmaker {bookmaker_name}")
+
+                market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
     
     logger.debug(f"Odds processing complete for fixture {fixture.id}: {total_markets_created} markets, {total_outcomes_created} outcomes")
 

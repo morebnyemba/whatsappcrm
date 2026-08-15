@@ -40,7 +40,14 @@ EVENT_RETRY_DELAY = getattr(settings, 'THE_ODDS_API_EVENT_RETRY_DELAY', 300)
 def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
     """
     Processes and saves market and outcome data for a given fixture and bookmaker.
-    Assumes that old markets for this bookmaker/fixture have been cleared by the calling task.
+
+    Updates existing Market/MarketOutcome rows in place instead of creating fresh
+    ones -- Market -> MarketOutcome -> Bet are all on_delete=CASCADE, so recreating
+    them would cascade-delete any Bet a user already placed against an outcome
+    (see the identical fix and full explanation in tasks_api_football_v3.py's
+    _process_api_football_v3_odds_data). The calling task (_apply_odds_event) no
+    longer clears old markets first, so this must upsert rather than assume a
+    clean slate.
     """
     bookmaker, _ = Bookmaker.objects.get_or_create(
         api_bookmaker_key=bookmaker_data['key'],
@@ -51,26 +58,28 @@ def _process_bookmaker_data(fixture: FootballFixture, bookmaker_data: dict):
         market_key = market_data['key']
         category, _ = MarketCategory.objects.get_or_create(name=market_key.replace("_", " ").title())
 
-        # Since old markets are cleared by the calling task, we can simply create new ones.
-        market = Market.objects.create(
+        market, _ = Market.objects.update_or_create(
             fixture=fixture,
             bookmaker=bookmaker,
             api_market_key=market_key,
-            category=category,
-            last_updated_odds_api=parser.isoparse(market_data['last_update'])
+            defaults={
+                'category': category,
+                'last_updated_odds_api': parser.isoparse(market_data['last_update']),
+                'is_active': True,
+            }
         )
 
-        outcomes_to_create = [
-            MarketOutcome(
+        seen_outcome_ids = set()
+        for o in market_data.get('outcomes', []):
+            outcome, _ = MarketOutcome.objects.update_or_create(
                 market=market,
                 outcome_name=o['name'],
-                odds=Decimal(str(o['price'])),
-                point_value=o.get('point')
+                point_value=o.get('point'),
+                defaults={'odds': Decimal(str(o['price'])), 'is_active': True}
             )
-            for o in market_data.get('outcomes', [])
-        ]
-        if outcomes_to_create:
-            MarketOutcome.objects.bulk_create(outcomes_to_create)
+            seen_outcome_ids.add(outcome.id)
+
+        market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
@@ -265,13 +274,10 @@ def _apply_odds_event(fixture_for_update, odds_data):
         fixture_for_update.away_team = correct_away_team
         team_fields_to_update.append('away_team')
 
-    bookmaker_keys_in_response = {bk['key'] for bk in odds_data.get('bookmakers', [])}
-    if bookmaker_keys_in_response:
-        Market.objects.filter(
-            fixture=fixture_for_update,
-            bookmaker__api_bookmaker_key__in=bookmaker_keys_in_response,
-        ).delete()
-
+    # _process_bookmaker_data now upserts each market/outcome in place rather than
+    # assuming a clean slate, so markets for these bookmakers no longer need to be
+    # cleared here first -- doing so used to cascade-delete any Bet a user had
+    # already placed against one of this fixture's outcomes.
     for bookmaker_data in odds_data.get('bookmakers', []):
         _process_bookmaker_data(fixture_for_update, bookmaker_data)
 

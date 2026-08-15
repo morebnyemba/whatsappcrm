@@ -207,27 +207,29 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     category, _ = MarketCategory.objects.get_or_create(name=bet_name)
                     api_market_key = f"bet_{bet_id}" if bet_id else bet_name.lower().replace(' ', '_')
                 
-                # Delete old market if exists (to update odds)
-                deleted_count, _ = Market.objects.filter(
-                    fixture=fixture,
-                    bookmaker=bookmaker,
-                    api_market_key=api_market_key
-                ).delete()
-                if deleted_count > 0:
-                    logger.debug(f"Deleted {deleted_count} old market(s) for bookmaker {bookmaker_name}, market {bet_name}")
-                
-                # Create new market
-                market = Market.objects.create(
+                # Update the existing market in place if one already exists for this
+                # fixture/bookmaker/market_key, instead of deleting and recreating it.
+                # Market -> MarketOutcome -> Bet are all on_delete=CASCADE, so deleting
+                # a Market here previously cascade-deleted every MarketOutcome under it,
+                # which in turn cascade-deleted any Bet a user had already placed against
+                # one of those outcomes -- silently destroying placed bets (and orphaning
+                # their BetTicket) on every single odds-refresh cycle, not just settling
+                # them late. update_or_create keeps the same Market/MarketOutcome rows
+                # (and thus the same ids Bet.market_outcome points at) across refreshes.
+                market, _ = Market.objects.update_or_create(
                     fixture=fixture,
                     bookmaker=bookmaker,
                     api_market_key=api_market_key,
-                    category=category,
-                    last_updated_odds_api=timezone.now()
+                    defaults={
+                        'category': category,
+                        'last_updated_odds_api': timezone.now(),
+                        'is_active': True,
+                    }
                 )
                 total_markets_created += 1
-                
+
                 # Process outcomes (values)
-                outcomes_to_create = []
+                seen_outcome_ids = set()
                 for value_data in bet_data.get('values', []):
                     outcome_value = value_data.get('value')
                     odd = value_data.get('odd')
@@ -265,23 +267,38 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                                     except (ValueError, IndexError) as e:
                                         logger.debug(f"Could not parse point value from '{outcome_value}' for market '{bet_name}': {e}")
                             
-                            outcomes_to_create.append(
-                                MarketOutcome(
-                                    market=market,
-                                    outcome_name=outcome_name,
-                                    odds=Decimal(str(odd)),
-                                    point_value=point_value
-                                )
+                            # update_or_create rather than always inserting a fresh row --
+                            # keeps the same MarketOutcome id (and thus keeps any existing
+                            # Bet.market_outcome pointing at it valid) across refreshes,
+                            # just updating its odds in place. Settlement reads
+                            # MarketOutcome.result_status, not .odds, and a Bet's payout
+                            # (potential_winnings) is computed and stored on the Bet itself
+                            # at placement time -- so updating odds here never retroactively
+                            # changes an already-placed bet's payout.
+                            outcome, _ = MarketOutcome.objects.update_or_create(
+                                market=market,
+                                outcome_name=outcome_name,
+                                point_value=point_value,
+                                defaults={
+                                    'odds': Decimal(str(odd)),
+                                    'is_active': True,
+                                }
                             )
+                            seen_outcome_ids.add(outcome.id)
+                            total_outcomes_created += 1
                         except (ValueError, TypeError) as e:
                             logger.warning(f"Could not parse odd value: {odd}, error: {e}")
-                
-                if outcomes_to_create:
-                    MarketOutcome.objects.bulk_create(outcomes_to_create)
-                    total_outcomes_created += len(outcomes_to_create)
-                    logger.debug(f"Created market '{bet_name}' with {len(outcomes_to_create)} outcomes for bookmaker {bookmaker_name}")
+
+                if seen_outcome_ids:
+                    logger.debug(f"Upserted market '{bet_name}' with {len(seen_outcome_ids)} outcomes for bookmaker {bookmaker_name}")
                 else:
-                    logger.warning(f"No valid outcomes created for market '{bet_name}' from bookmaker {bookmaker_name}")
+                    logger.warning(f"No valid outcomes upserted for market '{bet_name}' from bookmaker {bookmaker_name}")
+
+                # Outcomes that existed before this refresh but weren't present in this
+                # response (e.g. the bookmaker dropped that specific line) are deactivated,
+                # not deleted -- hides them from new bets while leaving any placed Bet
+                # referencing them, and their settlement history, intact.
+                market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
     
     logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {bookmakers_encountered} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
 
