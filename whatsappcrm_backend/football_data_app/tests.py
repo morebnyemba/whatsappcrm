@@ -169,20 +169,18 @@ class OddsAggregationTestCase(TestCase):
             days_ahead=2
         )
         
-        # Verify result is not None
-        self.assertIsNotNone(result, "Function should return data for scheduled fixtures")
-        
-        # The median of [2.00, 2.10, 5.00] is 2.10
-        # So the outcome closest to median should be used (2.10)
-        # In the output, we should see odds closer to 2.10 than 5.00
-        if result:
-            result_text = ' '.join(result)
-            # Check that fixture is present
-            self.assertIn("Manchester United vs Liverpool", result_text)
-            # Check the true median (2.10) is shown, not the min (2.00) or the
-            # outlier (5.00) -- accepting "2.0" here too would let an
-            # implementation that picked the min instead of the median pass
-            # just as well, since "2.0" is also a substring of "2.00".
-            self.assertIn("2.10", result_text)
-            self.assertNotIn("5.00", result_text)
+        # Not assertIsNotNone alone -- an empty list is also "not None" and
+        # would silently skip every assertion below via the old `if result:`
+        # guard, letting a regression that returns no fixtures pass unnoticed.
+        self.assertTrue(result, "Function should return data for scheduled fixtures")
+
+        result_text = ' '.join(result)
+        # Check that fixture is present
+        self.assertIn("Manchester United vs Liverpool", result_text)
+        # The median of [2.00, 2.10, 5.00] is 2.10 -- check the true median is
+        # shown, not the min (2.00) or the outlier (5.00). Accepting "2.0" here
+        # too would let an implementation that picked the min instead of the
+        # median pass just as well, since "2.0" is also a substring of "2.00".
+        self.assertIn("2.10", result_text)
+        self.assertNotIn("5.00", result_text)
 

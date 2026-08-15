@@ -16,7 +16,7 @@ import time
 
 from .models import League, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome, Team
 from customer_data.models import Bet, BetTicket
-from .utils import settle_ticket
+from .utils import settle_ticket, upsert_market_outcome
 from .api_football_v3_client import APIFootballV3Client, APIFootballV3Exception
 
 from meta_integration.utils import send_whatsapp_message, create_text_message_data
@@ -133,7 +133,13 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
     total_outcomes_created = 0
     bookmakers_encountered = 0
     bookmakers_created = 0
-    
+    # Tracks which of this fixture's existing markets are still offered by each
+    # bookmaker in this refresh, so a market a bookmaker has dropped entirely
+    # (not just one outcome within a market that's still offered) gets
+    # deactivated below rather than left active with odds that can never
+    # change again.
+    seen_market_ids_by_bookmaker_id = {}
+
     for odds_item in odds_data:
         bookmakers_list = odds_item.get('bookmakers', [])
         logger.info(f"Processing {len(bookmakers_list)} bookmakers for fixture {fixture.id}")
@@ -151,7 +157,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
             if bookmaker_created:
                 logger.info(f"Created new bookmaker: {bookmaker_name}")
                 bookmakers_created += 1
-            
+            seen_market_ids = seen_market_ids_by_bookmaker_id.setdefault(bookmaker.id, set())
+
             # Process bets (markets)
             bets_list = bookmaker_data.get('bets', [])
             logger.debug(f"Processing {len(bets_list)} markets for bookmaker {bookmaker_name}")
@@ -227,6 +234,7 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     }
                 )
                 total_markets_created += 1
+                seen_market_ids.add(market.id)
 
                 # Process outcomes (values)
                 seen_outcome_ids = set()
@@ -275,14 +283,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                             # (potential_winnings) is computed and stored on the Bet itself
                             # at placement time -- so updating odds here never retroactively
                             # changes an already-placed bet's payout.
-                            outcome, _ = MarketOutcome.objects.update_or_create(
-                                market=market,
-                                outcome_name=outcome_name,
-                                point_value=point_value,
-                                defaults={
-                                    'odds': Decimal(str(odd)),
-                                    'is_active': True,
-                                }
+                            outcome = upsert_market_outcome(
+                                market, outcome_name, point_value, Decimal(str(odd))
                             )
                             seen_outcome_ids.add(outcome.id)
                             total_outcomes_created += 1
@@ -299,7 +301,16 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                 # not deleted -- hides them from new bets while leaving any placed Bet
                 # referencing them, and their settlement history, intact.
                 market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
-    
+
+    # A market a bookmaker no longer offers at all (not just one outcome within
+    # a market that's still offered) never gets touched by the loop above, so it
+    # would otherwise stay is_active=True forever with odds that can never
+    # change again -- deactivate it here instead.
+    for bookmaker_id, seen_market_ids in seen_market_ids_by_bookmaker_id.items():
+        Market.objects.filter(
+            fixture=fixture, bookmaker_id=bookmaker_id
+        ).exclude(id__in=seen_market_ids).update(is_active=False)
+
     logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {bookmakers_encountered} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
 
 

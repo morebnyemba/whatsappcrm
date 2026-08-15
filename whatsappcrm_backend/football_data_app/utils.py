@@ -30,6 +30,48 @@ FIXTURES_PER_PAGE = 6  # Number of fixtures per PDF page before page break
 MAX_FIXTURES_IN_PDF = 150  # Maximum number of fixtures to include in a single PDF (increased for 10-day coverage)
 MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
+
+def upsert_market_outcome(market, outcome_name, point_value, odds):
+    """update_or_create a MarketOutcome, tolerating pre-existing duplicate rows.
+
+    MarketOutcome has no DB-level uniqueness constraint on
+    (market, outcome_name, point_value), so update_or_create's own SELECT-then-
+    INSERT/UPDATE can raise MultipleObjectsReturned if duplicates already exist
+    for that combination (e.g. left over from historical data, or a bookmaker
+    API returning the same line twice in one response). Falls back to updating
+    just the first matching row rather than letting one bad combination abort
+    the whole odds-refresh task for a fixture -- used by every odds-fetching
+    pipeline's market/outcome upsert (see tasks_api_football_v3.py,
+    tasks_apifootball.py, tasks_theoddsapi_backup.py for why they upsert
+    in place instead of delete-and-recreate).
+
+    Returns the MarketOutcome instance (its id is what callers track to know
+    which outcomes were "seen" in this refresh).
+    """
+    from .models import MarketOutcome
+    try:
+        outcome, _ = MarketOutcome.objects.update_or_create(
+            market=market,
+            outcome_name=outcome_name,
+            point_value=point_value,
+            defaults={'odds': odds, 'is_active': True}
+        )
+        return outcome
+    except MarketOutcome.MultipleObjectsReturned:
+        logger.warning(
+            f"Multiple MarketOutcome rows found for market={market.id}, "
+            f"outcome_name='{outcome_name}', point_value={point_value} -- "
+            f"updating the first and leaving the rest as-is (they'll be "
+            f"deactivated as 'not seen' by the caller's cleanup pass)."
+        )
+        outcome = MarketOutcome.objects.filter(
+            market=market, outcome_name=outcome_name, point_value=point_value
+        ).order_by('id').first()
+        outcome.odds = odds
+        outcome.is_active = True
+        outcome.save(update_fields=['odds', 'is_active'])
+        return outcome
+
 def _format_handicap_market(outcomes_dict: Dict, fixture, market_name: str) -> Optional[str]:
     """
     Helper function to format handicap markets (Asian Handicap variants).

@@ -16,7 +16,7 @@ function for the exact same fixture/bookmaker/market -- as the real
 Celery Beat schedule does every few minutes -- and assert the bet survives.
 """
 from decimal import Decimal
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -42,7 +42,7 @@ class _BaseOddsRefreshTestCase(TestCase):
         UserWallet.objects.filter(user=self.user).update(balance=Decimal('500.00'))
         contact = Contact.objects.create(whatsapp_id='263779990099')
         CustomerProfile.objects.create(contact=contact, user=self.user,
-                                       date_of_birth=timezone.localdate().replace(year=1990))
+                                       date_of_birth=date(1990, 1, 1))
 
         self.league = League.objects.create(name='EPL', api_id='v3_39', sport_key='soccer')
         self.home = Team.objects.create(name='Home Team')
@@ -103,7 +103,7 @@ class ApiFootballV3OddsRefreshTests(_BaseOddsRefreshTestCase):
         self.assertEqual(ticket.bets.count(), 1)
 
     def test_refresh_updates_odds_in_place_without_changing_bet_payout(self):
-        ticket, bet = self._place_bet()
+        _ticket, bet = self._place_bet()
         original_outcome_id = bet.market_outcome_id
 
         from .tasks_api_football_v3 import _process_api_football_v3_odds_data
@@ -120,7 +120,7 @@ class ApiFootballV3OddsRefreshTests(_BaseOddsRefreshTestCase):
         self.assertEqual(bet.potential_winnings, Decimal('20.00'))
 
     def test_outcome_missing_from_a_later_refresh_is_deactivated_not_deleted(self):
-        ticket, bet = self._place_bet()
+        _ticket, bet = self._place_bet()
 
         from .tasks_api_football_v3 import _process_api_football_v3_odds_data
         # Same market (so it's actually upserted, touching self.market), but
@@ -161,6 +161,40 @@ class LegacyApiFootballOddsRefreshTests(_BaseOddsRefreshTestCase):
             'odd_bookmakers': [{
                 'bookmaker_name': 'bet365',
                 'bookmaker_odds': [{'odd_1': '2.20', 'odd_x': '3.10', 'odd_2': '3.40'}],
+            }],
+        })
+
+        self.assertTrue(Bet.objects.filter(id=bet.id).exists())
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.bets.count(), 1)
+
+
+class TheOddsApiBackupOddsRefreshTests(_BaseOddsRefreshTestCase):
+    """Legacy backup pipeline (tasks_theoddsapi_backup.py), not currently
+    scheduled, but fixed for the same reason -- and the one where the
+    upfront Market.objects.filter(...).delete() lived one level up, in
+    _apply_odds_event, rather than in this file's own market/outcome loop."""
+
+    # This pipeline keys a Bookmaker directly off the odds API's bookmaker
+    # key string (e.g. 'bet365'), same as the legacy APIFootball pipeline --
+    # see BOOKMAKER_API_KEY's docstring on the base class.
+    BOOKMAKER_API_KEY = 'bet365'
+
+    def test_refresh_does_not_delete_a_placed_bet(self):
+        ticket, bet = self._place_bet()
+
+        from .tasks_theoddsapi_backup import _process_bookmaker_data
+        _process_bookmaker_data(self.fixture, {
+            'key': 'bet365',
+            'title': 'Bet365',
+            'markets': [{
+                'key': 'h2h',
+                'last_update': timezone.now().isoformat(),
+                'outcomes': [
+                    {'name': 'Home Team', 'price': 2.30},
+                    {'name': 'Draw', 'price': 3.10},
+                    {'name': 'Away Team', 'price': 3.40},
+                ],
             }],
         })
 
