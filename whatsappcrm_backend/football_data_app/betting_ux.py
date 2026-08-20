@@ -34,8 +34,10 @@ from .models import FootballFixture, Market, MarketOutcome
 
 # WhatsApp interactive-list hard limit: total rows across all sections.
 MAX_LIST_ROWS = 10
-# How many fixtures to show per browser page (one row is reserved for "More").
-FIXTURES_PER_PAGE = 9
+# How many fixtures to show per browser page. Middle pages can show both a
+# "Previous" and a "More" nav row, so 2 of the 10-row WhatsApp list cap are
+# always reserved for navigation, leaving 8 for fixtures.
+FIXTURES_PER_PAGE = 8
 # Only offer bets on fixtures kicking off within this window.
 BROWSE_WINDOW_DAYS = 10
 
@@ -147,15 +149,21 @@ def build_fixtures_screen(page: int = 0, preferred_league_ids: Optional[list[int
 
     sections = [buckets[k] for k in sorted(buckets.keys())]
 
+    nav_rows = []
+    if page > 0:
+        nav_rows.append({'id': f"fxpage:{page - 1}", 'title': '⬅️ Previous matches',
+                          'description': 'See the previous page of fixtures'})
     if has_more:
-        sections.append({
-            'title': 'More',
-            'rows': [{'id': f"fxpage:{page + 1}", 'title': '➡️ More matches',
-                      'description': 'See the next page of fixtures'}],
-        })
+        nav_rows.append({'id': f"fxpage:{page + 1}", 'title': '➡️ More matches',
+                          'description': 'See the next page of fixtures'})
+    if nav_rows:
+        sections.append({'title': 'More', 'rows': nav_rows})
 
     if not page_fixtures:
         body = "No upcoming matches are open for betting right now. Please check back later."
+    elif page > 0:
+        total_pages = -(-len(qs) // FIXTURES_PER_PAGE)  # ceil division
+        body = f"Page {page + 1} of {total_pages}. Tap a match to see its markets and place a bet. 👇"
     else:
         body = "Tap a match to see its markets and place a bet. 👇"
 

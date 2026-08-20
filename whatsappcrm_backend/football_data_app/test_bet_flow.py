@@ -137,6 +137,12 @@ class BetFlowHandlerTests(TestCase):
         self.assertEqual(ticket.bets.count(), 2)
         # combined odds 2.00 * 1.50 = 3.00, stake 10 → potential winnings 30.00
         self.assertEqual(Decimal(str(ticket.potential_winnings)), Decimal('30.00'))
+        # total_odds must actually be persisted on the ticket -- it's computed
+        # locally in process_bet_ticket_submission but was never passed into
+        # BetTicket.objects.create(), so it silently stayed at the model
+        # default of 1.000 and every "Combined odds" display showed 1.00
+        # regardless of the real multiplier.
+        self.assertEqual(Decimal(str(ticket.total_odds)), Decimal('3.000'))
 
     def test_slip_clear(self):
         # BET_SLIP -> BET_MENU would be an illegal routing-model cycle (MENU
@@ -227,6 +233,9 @@ class BetFlowHandlerTests(TestCase):
         s = H.handle_data_exchange('BET_MYBETS', {'ticket_id': tid, 'slip': ''}, self.wa)
         self.assertEqual(s['screen'], 'BET_DONE')
         self.assertIn('Ticket #', s['data']['message'])
+        # Regression: "Combined odds" must show the real multiplier (2.00 for
+        # this single Home @ 2.00 bet), not the stale default of 1.00.
+        self.assertIn('Combined odds: 2.00', s['data']['message'])
 
     # ---- safer gambling ----
     def test_safer_self_exclude(self):

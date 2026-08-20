@@ -148,7 +148,8 @@ def process_bet_ticket_submission(
                 total_stake=Decimal(str(stake)),
                 potential_winnings=potential_winnings,
                 status='PENDING',
-                bet_type=bet_type
+                bet_type=bet_type,
+                total_odds=total_odds
             )
 
             # Create individual Bets for the ticket

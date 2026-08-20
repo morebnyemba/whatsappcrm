@@ -265,7 +265,6 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
         if not user:
             return _fail("You need an account to manage safer-gambling settings.", route='no_user')
         from customer_data import compliance
-        from decimal import Decimal, InvalidOperation
 
         if action_type == 'rg_menu':
             summary = compliance.limits_summary(user)
