@@ -33,6 +33,17 @@ def create_deposit_flow():
                 ]
             },
             {
+                "name": "account_creation_failed",
+                "step_type": "send_message",
+                "config": {
+                    "message_type": "text",
+                    "text": {"body": "We couldn't set up your account. Please contact support to proceed with deposits."}
+                },
+                "transitions": [
+                    {"to_step": "end_deposit_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
                 "name": "start_deposit",
                 "step_type": "question", # Changed from send_message to question
                 "is_entry_point": False, # No longer the entry point
