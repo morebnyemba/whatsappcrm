@@ -1867,56 +1867,21 @@ def _trigger_new_flow(contact: Contact, message_data: dict, incoming_message_obj
         elif interactive.get('type') == 'list_reply':
             interactive_reply_id = interactive.get('list_reply', {}).get('id', '')
 
-    # Launch the native betting WhatsApp Flow on a keyword or a "launch_bet_flow"
-    # tap, if it has been published to Meta. Falls through to the conversational
-    # betting flow ("bet") when the UI flow isn't available. Betting requires a
-    # login session — checked here, before launching, since this intercepts the
-    # "bet" keyword ahead of the conversational Betting Flow's own login gate.
-    if message_text_body in ('bet', 'play', 'bet form', 'quick bet', 'betform', 'place bet') or interactive_reply_id == 'launch_bet_flow':
-        if not _has_valid_session(contact):
-            logger.info(
-                f"Betting requested but contact {contact.whatsapp_id} has no valid session. "
-                f"Prompting login instead of launching the betting Flow."
-            )
-            return [_build_login_prompt_action(
-                contact.whatsapp_id,
-                '\U0001f512 *Login Required*\n\n'
-                'You need to be logged in to place bets.\n\n'
-                'If you have an account, tap *Login* below.\n'
-                'New here? Tap *Register* to create a free account.'
-            )]
-        from .models import WhatsAppFlow as _WhatsAppFlow
-        from .whatsapp_flow_service import WhatsAppFlowService as _WhatsAppFlowService
-        app_config = getattr(contact, 'associated_app_config', None)
-        wa_flow = None
-        if app_config:
-            wa_flow = (
-                _WhatsAppFlow.objects
-                .filter(meta_app_config=app_config, is_active=True, name__istartswith='bet_whatsapp')
-                .exclude(flow_id__isnull=True).exclude(flow_id='')
-                .order_by('-updated_at').first()
-            )
-        if wa_flow:
-            logger.info(f"Launching native betting Flow '{wa_flow.name}' (flow_id={wa_flow.flow_id}) for {contact.whatsapp_id}.")
-            flow_message = _WhatsAppFlowService.create_flow_message_data(
-                flow_id=wa_flow.flow_id,
-                screen='BET_MENU',
-                flow_cta='Open BetBlitz',
-                body_text=('⚽ *BetBlitz*\n\nPlace bets, build accumulators, check your bets, '
-                           'balance and safer-gambling tools — all without leaving WhatsApp.'),
-                header_text='BetBlitz',
-                flow_token=contact.whatsapp_id,
-                flow_action='data_exchange',
-            )
-            return [{
-                'type': 'send_whatsapp_message',
-                'recipient_wa_id': contact.whatsapp_id,
-                'message_type': 'interactive',
-                'data': flow_message,
-            }]
-        else:
-            logger.info("Native betting Flow not published; falling back to the conversational betting flow.")
-            message_text_body = 'bet'  # fall through to keyword-triggered conversational flow
+    # The native betting WhatsApp Flow (bet_whatsapp*, BET_MENU/BET_BROWSE/...)
+    # is NOT launched here on purpose. Its own history (see the docstring and
+    # MENU_ITEMS comment in football_data_app/bet_flow_handler.py) documents
+    # that every dynamic dropdown beyond BET_MENU -- fixtures, markets,
+    # outcomes, tickets -- submitted with no value at all on every device
+    # tested; BET_MENU is the only screen of that Flow ever actually reached
+    # in production. Routing the "bet" keyword into it left users able to see
+    # the menu but unable to browse or select a match at all. "bet"/"play"/
+    # "launch_bet_flow" now always fall through to the conversational Betting
+    # Flow below (flows/betting_flow.py), which uses plain WhatsApp
+    # interactive list messages -- the code path already confirmed to work.
+    # Its own requires_login=True enforces the login gate generically further
+    # down, same as every other flow.
+    if interactive_reply_id == 'launch_bet_flow':
+        message_text_body = 'bet'
 
     # When user taps Login/Register from the session-enforcement prompt, directly
     # launch the corresponding WhatsApp UI flow if one is published.  This avoids
