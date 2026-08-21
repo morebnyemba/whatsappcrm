@@ -272,20 +272,44 @@ def _menu_screen(flow_token, slip_str='', message=''):
     }
 
 
-def _fixtures_options():
+# Fixtures beyond a single dropdown's worth are reached by paging rather
+# than crammed into one list: MAX_FLOW_OPTIONS caps *all* dropdown items
+# (Meta's practical limit), so up to 2 of those slots are reserved for
+# "More matches" / "Previous matches" nav rows whenever a page needs them,
+# leaving FIXTURES_PAGE_SIZE for actual fixtures. The 'more:<n>'/'prev:<n>'
+# ids are sentinels: the BET_BROWSE handler recognises them and re-renders
+# BET_BROWSE at that page (a self-return, not a screen switch -- Meta's
+# forward-only routing model only constrains switching to a *different*
+# declared screen) instead of treating them as a real fixture_id.
+FIXTURES_PAGE_SIZE = MAX_FLOW_OPTIONS - 2
+
+
+def _fixtures_options(page=0):
     from .betting_ux import _bettable_fixtures_qs, _kickoff_label
+    page = max(0, int(page or 0))
+    qs = list(_bettable_fixtures_qs())
+    start = page * FIXTURES_PAGE_SIZE
+    page_fixtures = qs[start:start + FIXTURES_PAGE_SIZE]
+    has_more = len(qs) > start + FIXTURES_PAGE_SIZE
+
     opts = []
-    for fx in list(_bettable_fixtures_qs())[:MAX_FLOW_OPTIONS]:
+    if page > 0:
+        opts.append({"id": f"prev:{page - 1}", "title": "⬅️ Previous matches",
+                     "description": "See the previous page of fixtures"})
+    for fx in page_fixtures:
         opts.append({
             "id": str(fx.id),
             "title": _label(f"{fx.home_team.name} v {fx.away_team.name}", 30),
             "description": _label(_kickoff_label(fx), 30),
         })
+    if has_more:
+        opts.append({"id": f"more:{page + 1}", "title": "➡️ More matches",
+                     "description": "See the next page of fixtures"})
     return opts
 
 
-def _browse_screen(flow_token, slip_str=''):
-    fixtures = _fixtures_options()
+def _browse_screen(flow_token, slip_str='', page=0):
+    fixtures = _fixtures_options(page=page)
     return {
         "screen": "BET_BROWSE",
         "data": {
@@ -579,6 +603,12 @@ def handle_data_exchange(screen: str, data: dict, flow_token: str) -> dict:
 
     if screen == 'BET_BROWSE':
         fid = data.get('fixture_id')
+        if fid and (fid.startswith('more:') or fid.startswith('prev:')):
+            try:
+                target_page = int(fid.split(':', 1)[1])
+            except (TypeError, ValueError):
+                target_page = 0
+            return _browse_screen(flow_token, slip_str, page=target_page)
         if not fid or fid == 'none':
             return _err("BET_BROWSE", "Please choose a match.", extra=_browse_screen(flow_token, slip_str)['data'])
         result = _markets_screen(fid, flow_token, slip_str)

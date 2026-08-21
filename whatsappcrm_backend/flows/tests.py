@@ -198,20 +198,18 @@ class LoginPromptActionTests(TestCase):
         self.assertLessEqual(len(footer_text), 60)
 
 
-class BetKeywordRoutesToConversationalFlowTests(TestCase):
-    """The "bet" keyword must always launch the conversational Betting Flow
-    (flows/betting_flow.py), never the native WhatsApp Flow (bet_whatsapp*).
+class NativeBettingFlowLoginGateTests(TestCase):
+    """The native betting Flow launcher intercepts the 'bet' keyword ahead of
+    the conversational Betting Flow's own login check, so it must enforce
+    login itself. Without this, an unauthenticated contact could browse
+    fixtures/markets/odds and reach the confirm screen, only to have bet
+    placement silently fail server-side (no linked user account).
 
-    The native Flow's own docstring (football_data_app/bet_flow_handler.py)
-    documents that every dynamic dropdown beyond its BET_MENU screen --
-    fixtures, markets, outcomes, tickets -- submitted with no value at all on
-    every device tested, and BET_MENU is the only screen of that Flow ever
-    actually reached in production. Routing "bet" into it left users able to
-    open the menu but unable to browse or select a match at all -- exactly
-    the "we only have bet, not browse, and bet has no navigation" symptom
-    this test guards against regressing. A `bet_whatsapp` WhatsAppFlow row is
-    still created here (published and active) specifically to prove it's
-    ignored, not just absent."""
+    The native Flow (bet_whatsapp*, BET_MENU/BET_BROWSE/...) is confirmed
+    working end to end on a real device -- menu, browse, markets, outcomes,
+    stake, confirm, placement. It's the primary "bet" experience whenever
+    it's published; the conversational Betting Flow (flows/betting_flow.py)
+    is only the fallback for when it isn't."""
 
     def setUp(self):
         self.config = MetaAppConfig.objects.create(
@@ -235,15 +233,11 @@ class BetKeywordRoutesToConversationalFlowTests(TestCase):
             is_active=True,
             sync_status="published",
         )
-        from flows.betting_flow import create_betting_flow
-        from flows.management.commands.load_flow_definitions import Command as LoadFlowsCommand
-        LoadFlowsCommand()._load_traditional_flow(create_betting_flow())
-        Flow.objects.filter(name="Betting Flow").update(is_active=True)
 
     def _text_message(self, body):
         return {"type": "text", "text": {"body": body}}
 
-    def test_bet_keyword_without_session_prompts_login_not_the_native_flow(self):
+    def test_bet_keyword_without_session_prompts_login_not_the_flow(self):
         actions = _trigger_new_flow(self.contact, self._text_message("bet"), None)
         self.assertEqual(len(actions), 1)
         data = actions[0]["data"]
@@ -252,29 +246,30 @@ class BetKeywordRoutesToConversationalFlowTests(TestCase):
         button_ids = {b["reply"]["id"] for b in data["action"]["buttons"]}
         self.assertEqual(button_ids, {"prompt_login", "prompt_register"})
 
-    def test_bet_keyword_with_valid_session_launches_the_conversational_flow(self):
+    def test_bet_keyword_with_valid_session_launches_the_flow(self):
         session = ContactSession.objects.create(contact=self.contact)
         session.start()
-        actions = process_message_for_flow(self.contact, self._text_message("bet"), None)
+        actions = _trigger_new_flow(self.contact, self._text_message("bet"), None)
         self.assertEqual(len(actions), 1)
         data = actions[0]["data"]
-        # A plain interactive list message (the Betting Flow's main menu),
-        # never a native "flow" message pointing at bet_whatsapp.
-        self.assertEqual(data.get("type"), "list")
-        combined = str(data)
-        self.assertIn("menu:browse", combined)
-        self.assertNotIn("2216047699159394", combined)
+        self.assertEqual(data.get("type"), "flow")
+        self.assertEqual(data["action"]["parameters"]["flow_id"], "2216047699159394")
+        # Meta's Graph API rejects flow_action_payload when flow_action is
+        # data_exchange ("Unexpected key \"flow_action_payload\"..." /
+        # error 131009) — it must be absent here, not just unused.
+        self.assertEqual(data["action"]["parameters"]["flow_action"], "data_exchange")
+        self.assertNotIn("flow_action_payload", data["action"]["parameters"])
 
 
-class SwitchFlowToBettingFlowTests(TestCase):
-    """The conversational engine's switch_flow action ('switch_to_betting' in
-    the Welcome Flow) hands off to _trigger_new_flow and must land the
-    contact inside a real ContactFlowState for the conversational Betting
-    Flow. Guards against a related regression class: switch-flow
-    post-processing used to treat "no ContactFlowState was created" as "the
-    switch failed" regardless of why, appending a spurious 'Sorry, I could
-    not switch to the requested section' text message even after a
-    legitimately successful switch."""
+class SwitchFlowToNativeBettingFlowTests(TestCase):
+    """The conversational engine's switch_flow action ('switch_to_betting' in the
+    Welcome Flow) hands off to _trigger_new_flow, which -- for the native betting
+    Flow -- returns a stateless send_whatsapp_message action without ever creating a
+    ContactFlowState (there's no conversational flow to be 'in'). The switch-flow
+    post-processing used to treat "no ContactFlowState was created" as "the switch
+    failed" regardless of why, so it always appended a spurious 'Sorry, I could not
+    switch to the requested section' text message after every successful native
+    Flow launch. Guards against a regression of that bug."""
 
     def setUp(self):
         self.config = MetaAppConfig.objects.create(
@@ -291,10 +286,15 @@ class SwitchFlowToBettingFlowTests(TestCase):
         )
         session = ContactSession.objects.create(contact=self.contact)
         session.start()
-        from flows.betting_flow import create_betting_flow
-        from flows.management.commands.load_flow_definitions import Command as LoadFlowsCommand
-        LoadFlowsCommand()._load_traditional_flow(create_betting_flow())
-        Flow.objects.filter(name="Betting Flow").update(is_active=True)
+        WhatsAppFlow.objects.create(
+            name="bet_whatsapp",
+            friendly_name="BetBlitz (Interactive)",
+            meta_app_config=self.config,
+            flow_id="2216047699159394",
+            flow_json={},
+            is_active=True,
+            sync_status="published",
+        )
         trigger_flow = Flow.objects.create(
             name="Trigger Bet Flow Test",
             is_active=True,
@@ -310,17 +310,13 @@ class SwitchFlowToBettingFlowTests(TestCase):
             ]},
         )
 
-    def test_successful_switch_has_no_spurious_error_message_and_creates_state(self):
+    def test_successful_native_flow_launch_has_no_spurious_error_message(self):
         message_data = {"type": "text", "text": {"body": "startbet"}}
         actions = process_message_for_flow(self.contact, message_data, None)
 
         self.assertEqual(len(actions), 1)
-        self.assertEqual(actions[0]["data"].get("type"), "list")
-        self.assertTrue(
-            ContactFlowState.objects.filter(
-                contact=self.contact, current_flow__name="Betting Flow"
-            ).exists()
-        )
+        self.assertEqual(actions[0]["data"].get("type"), "flow")
+        self.assertEqual(actions[0]["data"]["action"]["parameters"]["flow_id"], "2216047699159394")
 
 
 class TraditionalFlowTransitionIntegrityTests(SimpleTestCase):
