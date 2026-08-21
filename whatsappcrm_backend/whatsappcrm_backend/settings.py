@@ -276,6 +276,18 @@ CELERY_BEAT_SCHEDULE = {
         # completed fixtures, not the full upcoming schedule.
         'schedule': crontab(minute='*/5'),
     },
+    'fetch-live-football-odds-v3': {
+        'task': 'football_data_app.fetch_live_odds_v3',
+        # In-play odds for fixtures that have gone LIVE, via API-Football v3's
+        # separate GET /odds/live endpoint (requires a live-odds-enabled plan).
+        # Every-minute cadence is Celery Beat's finest native granularity
+        # (crontab has no sub-minute resolution); the task itself is a cheap
+        # no-op whenever nothing is currently live, so idle ticks cost nothing.
+        # A single call covers every live fixture in one request, so this
+        # doesn't scale with fixture count -- only tighten below 1 minute via
+        # a dedicated long-running task if your plan's rate limit allows it.
+        'schedule': crontab(minute='*'),
+    },
     'dispatch-football-odds-v3': {
         'task': 'football_data_app.dispatch_odds_fetching_after_events_v3',
         # Standalone odds dispatch, independent of fetch-football-odds-v3's chord

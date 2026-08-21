@@ -419,6 +419,31 @@ class APIFootballV3Client:
                 return None
             raise
 
+    def get_live_odds(self, fixture_id: Optional[int] = None) -> List[dict]:
+        """
+        In-play odds for currently live fixtures (GET /odds/live) -- a separate
+        endpoint from get_odds()'s pre-match /odds, with its own response shape
+        (top-level "odds" bookmaker list, not "bookmakers") and per-outcome
+        "suspended" flags the provider sets around live events (goals, cards,
+        etc). Requires a live-odds-enabled API-Football plan; an unsupported
+        plan/response is handled by the caller, not here.
+
+        Args:
+            fixture_id: Restrict to a single live fixture. Omit to get every
+                fixture the provider currently has live odds for, in one call --
+                the cheap way to refresh all live markets on a single poll tick.
+
+        Returns:
+            List of live-odds dictionaries from response['response'], each
+            carrying its own 'fixture' object so results can be grouped back
+            to individual fixtures.
+        """
+        params = {}
+        if fixture_id:
+            params['fixture'] = fixture_id
+        response = self._request('odds/live', params)
+        return response.get('response', [])
+
     def get_standings(
         self,
         league_id: int,
