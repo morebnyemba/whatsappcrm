@@ -27,7 +27,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Optional
 
-from django.db.models import Prefetch
+from django.db.models import Case, IntegerField, Prefetch, Q, When
 from django.utils import timezone
 
 from .models import FootballFixture, Market, MarketOutcome
@@ -59,6 +59,10 @@ def _fixture_label(fixture: FootballFixture) -> str:
 
 
 def _kickoff_label(fixture: FootballFixture) -> str:
+    if fixture.status == FootballFixture.FixtureStatus.LIVE:
+        if fixture.home_team_score is not None and fixture.away_team_score is not None:
+            return f"🔴 LIVE · {fixture.home_team_score}-{fixture.away_team_score}"
+        return "🔴 LIVE"
     if not fixture.match_date:
         return 'TBD'
     return timezone.localtime(fixture.match_date).strftime('%a %d %b, %H:%M')
@@ -94,17 +98,29 @@ def _one_x_two_summary(fixture: FootballFixture) -> Optional[str]:
 
 
 def _bettable_fixtures_qs():
+    """Fixtures currently open for betting: upcoming scheduled fixtures
+    within the browse window, plus fixtures that have gone LIVE (kickoff has
+    passed, so the match_date window no longer applies to them) and still
+    have at least one active market -- a LIVE fixture whose markets were all
+    suspended by the live-odds provider is naturally excluded by the
+    markets__is_active=True join, same as any other fixture with no
+    currently-offered market."""
     now = timezone.now()
     return (
         FootballFixture.objects.filter(
-            match_date__gte=now,
-            match_date__lte=now + timedelta(days=BROWSE_WINDOW_DAYS),
-            status=FootballFixture.FixtureStatus.SCHEDULED,
+            Q(status=FootballFixture.FixtureStatus.SCHEDULED,
+              match_date__gte=now, match_date__lte=now + timedelta(days=BROWSE_WINDOW_DAYS))
+            | Q(status=FootballFixture.FixtureStatus.LIVE),
             markets__is_active=True,
         )
         .select_related('league', 'home_team', 'away_team')
         .distinct()
-        .order_by('match_date')
+        # LIVE fixtures first (sort key 0), then upcoming fixtures by kickoff.
+        .order_by(
+            Case(When(status=FootballFixture.FixtureStatus.LIVE, then=0), default=1,
+                 output_field=IntegerField()),
+            'match_date',
+        )
     )
 
 
@@ -135,7 +151,14 @@ def build_fixtures_screen(page: int = 0, preferred_league_ids: Optional[list[int
     # page is <= 9 fixtures so we never exceed the whole-list cap of 10).
     buckets: dict[tuple, dict] = {}
     for fx in page_fixtures:
-        sort_key, label = _day_bucket(fx.match_date)
+        if fx.status == FootballFixture.FixtureStatus.LIVE:
+            # Its own section ahead of "Today" -- a live fixture's match_date
+            # is now in the past and no longer means anything as a grouping
+            # key, and it shouldn't be mixed in with today's not-yet-started
+            # matches.
+            sort_key, label = (-1, '🔴 Live Now')
+        else:
+            sort_key, label = _day_bucket(fx.match_date)
         section = buckets.setdefault((sort_key, label), {'title': _truncate(label, 24), 'rows': []})
         desc_bits = [_kickoff_label(fx)]
         summary = _one_x_two_summary(fx)

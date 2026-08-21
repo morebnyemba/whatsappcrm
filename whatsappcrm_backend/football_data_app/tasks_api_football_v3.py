@@ -95,6 +95,85 @@ def parse_api_football_v3_datetime(timestamp_str: str) -> Optional[datetime]:
 
 
 @transaction.atomic
+def _map_bet_to_category_and_key(bet_name: str, bet_id):
+    """Map an API-Football v3 bet ('Match Winner', 'Asian Handicap', ...) to
+    our MarketCategory + api_market_key. Shared by the pre-match odds
+    processor and the live-odds processor so the mapping never drifts
+    between the two pipelines.
+
+    Based on API-Football v3 documentation: https://www.api-football.com/documentation-v3
+    """
+    if bet_name == 'Match Winner' or bet_id == 1:
+        category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
+        return category, 'h2h'
+    if bet_name == 'Double Chance' or bet_id == 2:
+        category, _ = MarketCategory.objects.get_or_create(name='Double Chance')
+        return category, 'double_chance'
+    if ('Asian Handicap' in bet_name or 'Handicap' in bet_name) or bet_id == 3:
+        if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 20:
+            category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (2nd Half)')
+            return category, 'handicap_2h'
+        if '1st Half' in bet_name or '1H' in bet_name or bet_id == 19:
+            category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (1st Half)')
+            return category, 'handicap_1h'
+        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
+        return category, 'handicap'
+    if 'Draw No Bet' in bet_name or bet_id == 4:
+        category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
+        return category, 'draw_no_bet'
+    if ('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5:
+        if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 22:
+            category, _ = MarketCategory.objects.get_or_create(name='Totals (2nd Half)')
+            return category, 'totals_2h'
+        if '1st Half' in bet_name or '1H' in bet_name or bet_id == 21:
+            category, _ = MarketCategory.objects.get_or_create(name='Totals (1st Half)')
+            return category, 'totals_1h'
+        category, _ = MarketCategory.objects.get_or_create(name='Totals')
+        return category, 'totals'
+    if 'Odd/Even' in bet_name or bet_id == 7:
+        category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
+        return category, 'odd_even'
+    if 'Both Teams Score' in bet_name or bet_id == 8:
+        category, _ = MarketCategory.objects.get_or_create(name='Both Teams To Score')
+        return category, 'btts'
+    if ('Exact Score' in bet_name or 'Correct Score' in bet_name) or bet_id == 9:
+        category, _ = MarketCategory.objects.get_or_create(name='Correct Score')
+        return category, 'correct_score'
+    category, _ = MarketCategory.objects.get_or_create(name=bet_name)
+    return category, (f"bet_{bet_id}" if bet_id else bet_name.lower().replace(' ', '_'))
+
+
+def _parse_outcome_name_and_point(api_market_key: str, outcome_value: str, fixture: FootballFixture):
+    """Derive (outcome_name, point_value) from a raw outcome value string
+    ('Home', 'Over 2.5', 'Home -1.5', ...), mapping Home/Away to real team
+    names where relevant. Shared by the pre-match and live-odds processors."""
+    outcome_name = outcome_value
+    point_value = None
+
+    if api_market_key in ('h2h', 'draw_no_bet'):
+        if outcome_value == 'Home':
+            outcome_name = fixture.home_team.name
+        elif outcome_value == 'Away':
+            outcome_name = fixture.away_team.name
+
+    if api_market_key in ('totals', 'handicap', 'handicap_1h', 'handicap_2h', 'totals_1h', 'totals_2h'):
+        parts = outcome_value.split()
+        if len(parts) >= 2:
+            try:
+                point_value = float(parts[-1])
+                if 'handicap' in api_market_key:
+                    if parts[0] == 'Home':
+                        outcome_name = fixture.home_team.name
+                    elif parts[0] == 'Away':
+                        outcome_name = fixture.away_team.name
+                else:
+                    outcome_name = parts[0]
+            except (ValueError, IndexError) as e:
+                logger.debug(f"Could not parse point value from '{outcome_value}' for market key '{api_market_key}': {e}")
+
+    return outcome_name, point_value
+
+
 def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List[dict]):
     """
     Processes and saves odds/market data from API-Football v3 for a fixture.
@@ -166,54 +245,8 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
             for bet_data in bets_list:
                 bet_name = bet_data.get('name', 'Unknown Market')
                 bet_id = bet_data.get('id')
-                
-                # Map bet names and IDs to our categories and api_market_keys
-                # Based on API-Football v3 documentation: https://www.api-football.com/documentation-v3
-                if (bet_name == 'Match Winner' or bet_id == 1):
-                    category, _ = MarketCategory.objects.get_or_create(name='Match Winner')
-                    api_market_key = 'h2h'
-                elif (bet_name == 'Double Chance' or bet_id == 2):
-                    category, _ = MarketCategory.objects.get_or_create(name='Double Chance')
-                    api_market_key = 'double_chance'
-                elif (('Asian Handicap' in bet_name or 'Handicap' in bet_name) or bet_id == 3):
-                    # Handle different handicap variants (full time, 1st half, 2nd half, etc.)
-                    if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 20:
-                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (2nd Half)')
-                        api_market_key = 'handicap_2h'
-                    elif '1st Half' in bet_name or '1H' in bet_name or bet_id == 19:
-                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap (1st Half)')
-                        api_market_key = 'handicap_1h'
-                    else:
-                        category, _ = MarketCategory.objects.get_or_create(name='Asian Handicap')
-                        api_market_key = 'handicap'
-                elif ('Draw No Bet' in bet_name or bet_id == 4):
-                    category, _ = MarketCategory.objects.get_or_create(name='Draw No Bet')
-                    api_market_key = 'draw_no_bet'
-                elif (('Goals' in bet_name and 'Over' in bet_name) or bet_id == 5):
-                    # Handle different totals variants (full time, 1st half, 2nd half, etc.)
-                    if '2nd Half' in bet_name or '2H' in bet_name or bet_id == 22:
-                        category, _ = MarketCategory.objects.get_or_create(name='Totals (2nd Half)')
-                        api_market_key = 'totals_2h'
-                    elif '1st Half' in bet_name or '1H' in bet_name or bet_id == 21:
-                        category, _ = MarketCategory.objects.get_or_create(name='Totals (1st Half)')
-                        api_market_key = 'totals_1h'
-                    else:
-                        category, _ = MarketCategory.objects.get_or_create(name='Totals')
-                        api_market_key = 'totals'
-                elif ('Odd/Even' in bet_name or bet_id == 7):
-                    category, _ = MarketCategory.objects.get_or_create(name='Odd/Even Goals')
-                    api_market_key = 'odd_even'
-                elif ('Both Teams Score' in bet_name or bet_id == 8):
-                    category, _ = MarketCategory.objects.get_or_create(name='Both Teams To Score')
-                    api_market_key = 'btts'
-                elif (('Exact Score' in bet_name or 'Correct Score' in bet_name) or bet_id == 9):
-                    category, _ = MarketCategory.objects.get_or_create(name='Correct Score')
-                    api_market_key = 'correct_score'
-                else:
-                    # Generic category for other markets
-                    category, _ = MarketCategory.objects.get_or_create(name=bet_name)
-                    api_market_key = f"bet_{bet_id}" if bet_id else bet_name.lower().replace(' ', '_')
-                
+                category, api_market_key = _map_bet_to_category_and_key(bet_name, bet_id)
+
                 # Update the existing market in place if one already exists for this
                 # fixture/bookmaker/market_key, instead of deleting and recreating it.
                 # Market -> MarketOutcome -> Bet are all on_delete=CASCADE, so deleting
@@ -244,37 +277,10 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
                     
                     if outcome_value and odd:
                         try:
-                            outcome_name = outcome_value
-                            point_value = None
-                            
-                            # Map Home/Away to actual team names for relevant markets
-                            if api_market_key in ['h2h', 'draw_no_bet']:
-                                if outcome_value == 'Home':
-                                    outcome_name = fixture.home_team.name
-                                elif outcome_value == 'Away':
-                                    outcome_name = fixture.away_team.name
-                            
-                            # Extract point values for totals and handicap markets
-                            # API-Football v3 format: "Over 2.5", "Under 2.5", "Home -1.5", "Away +1.5"
-                            if api_market_key in ['totals', 'handicap', 'handicap_1h', 'handicap_2h', 'totals_1h', 'totals_2h']:
-                                parts = outcome_value.split()
-                                if len(parts) >= 2:
-                                    try:
-                                        # Try to parse the last part as a number (handles +/- signs)
-                                        point_str = parts[-1]
-                                        point_value = float(point_str)
-                                        # For handicap, map Home/Away to team names
-                                        if 'handicap' in api_market_key:
-                                            if parts[0] == 'Home':
-                                                outcome_name = fixture.home_team.name
-                                            elif parts[0] == 'Away':
-                                                outcome_name = fixture.away_team.name
-                                        else:
-                                            # For totals, keep "Over" or "Under" as name
-                                            outcome_name = parts[0]
-                                    except (ValueError, IndexError) as e:
-                                        logger.debug(f"Could not parse point value from '{outcome_value}' for market '{bet_name}': {e}")
-                            
+                            outcome_name, point_value = _parse_outcome_name_and_point(
+                                api_market_key, outcome_value, fixture
+                            )
+
                             # update_or_create rather than always inserting a fresh row --
                             # keeps the same MarketOutcome id (and thus keeps any existing
                             # Bet.market_outcome pointing at it valid) across refreshes,
@@ -312,6 +318,141 @@ def _process_api_football_v3_odds_data(fixture: FootballFixture, odds_data: List
         ).exclude(id__in=seen_market_ids).update(is_active=False)
 
     logger.info(f"✓ Odds processing complete for fixture {fixture.id}: {bookmakers_encountered} bookmakers ({bookmakers_created} new), {total_markets_created} markets, {total_outcomes_created} outcomes")
+
+
+def _process_api_football_v3_live_odds_data(fixture: FootballFixture, live_odds_entry: dict):
+    """
+    Processes one fixture's worth of in-play odds from GET /odds/live and
+    upserts it the same way _process_api_football_v3_odds_data does for
+    pre-match odds -- same Market/MarketOutcome upsert-in-place semantics
+    (never delete-and-recreate, for the same cascade-delete-destroys-placed-
+    bets reason), same category/outcome-name mapping (via the shared
+    _map_bet_to_category_and_key / _parse_outcome_name_and_point helpers).
+
+    The one real difference: live odds carry a provider-set per-outcome
+    "suspended" flag (true around live events -- goals, cards, VAR reviews,
+    etc., while the provider's own pricing is momentarily unreliable).
+    upsert_market_outcome's is_active is set from that flag directly, so a
+    suspended outcome is immediately excluded from both the browse/outcome
+    list (which only ever shows is_active=True outcomes) and bet placement
+    (process_bet_ticket_submission only accepts is_active=True outcome ids)
+    -- no separate suspension mechanism needed.
+
+    /odds/live's response shape nests each bookmaker's markets under "odds"
+    rather than pre-match /odds's "bookmakers" key; both are checked
+    defensively in case the provider's shape shifts.
+    """
+    bookmakers_list = live_odds_entry.get('odds') or live_odds_entry.get('bookmakers') or []
+    if not bookmakers_list:
+        return
+
+    seen_market_ids_by_bookmaker_id = {}
+
+    for bookmaker_data in bookmakers_list:
+        bookmaker_name = bookmaker_data.get('name', 'Unknown')
+        bookmaker_id = bookmaker_data.get('id')
+        bookmaker, _ = Bookmaker.objects.get_or_create(
+            api_bookmaker_key=str(bookmaker_id) if bookmaker_id else bookmaker_name.lower().replace(' ', '_'),
+            defaults={'name': bookmaker_name}
+        )
+        seen_market_ids = seen_market_ids_by_bookmaker_id.setdefault(bookmaker.id, set())
+
+        for bet_data in bookmaker_data.get('bets', []):
+            bet_name = bet_data.get('name', 'Unknown Market')
+            bet_id = bet_data.get('id')
+            category, api_market_key = _map_bet_to_category_and_key(bet_name, bet_id)
+
+            market, _ = Market.objects.update_or_create(
+                fixture=fixture,
+                bookmaker=bookmaker,
+                api_market_key=api_market_key,
+                defaults={
+                    'category': category,
+                    'last_updated_odds_api': timezone.now(),
+                    'is_active': True,
+                }
+            )
+            seen_market_ids.add(market.id)
+
+            seen_outcome_ids = set()
+            for value_data in bet_data.get('values', []):
+                outcome_value = value_data.get('value')
+                odd = value_data.get('odd')
+                if not (outcome_value and odd):
+                    continue
+                try:
+                    outcome_name, point_value = _parse_outcome_name_and_point(
+                        api_market_key, outcome_value, fixture
+                    )
+                    suspended = bool(value_data.get('suspended', False))
+                    outcome = upsert_market_outcome(
+                        market, outcome_name, point_value, Decimal(str(odd)),
+                        is_active=not suspended,
+                    )
+                    seen_outcome_ids.add(outcome.id)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Live odds: could not parse odd value: {odd}, error: {e}")
+
+            # An outcome missing from this live-odds tick (not just flagged
+            # suspended -- genuinely absent) is deactivated the same way the
+            # pre-match pipeline does, not deleted.
+            market.outcomes.exclude(id__in=seen_outcome_ids).update(is_active=False)
+
+    for bookmaker_id, seen_market_ids in seen_market_ids_by_bookmaker_id.items():
+        Market.objects.filter(
+            fixture=fixture, bookmaker_id=bookmaker_id
+        ).exclude(id__in=seen_market_ids).update(is_active=False)
+
+
+@shared_task(name="football_data_app.fetch_live_odds_v3", queue='cpu_heavy')
+def fetch_live_odds_v3_task():
+    """
+    Refreshes in-play odds for every fixture currently LIVE that already has
+    at least one market (i.e. was bettable pre-match, so it's worth keeping
+    priced through kick-off). Cheap early-exit when nothing is live, so this
+    can run on a short Celery Beat interval without wasting API credits on
+    every tick -- see fetch-live-football-odds-v3 in CELERY_BEAT_SCHEDULE.
+
+    A single GET /odds/live call covers every live fixture the provider has
+    odds for in one request, so this scales with "how many matches are live
+    right now", not with a per-fixture request count.
+    """
+    live_fixture_ids = set(
+        FootballFixture.objects.filter(
+            status=FootballFixture.FixtureStatus.LIVE,
+            api_id__startswith='v3_',
+            markets__isnull=False,
+        ).distinct().values_list('id', flat=True)
+    )
+    if not live_fixture_ids:
+        logger.debug("fetch_live_odds_v3_task: no live fixtures with existing markets, skipping.")
+        return
+
+    client = APIFootballV3Client()
+    try:
+        live_odds = client.get_live_odds()
+    except Exception as e:
+        logger.error(f"fetch_live_odds_v3_task: get_live_odds() failed: {e}", exc_info=True)
+        return
+
+    if not live_odds:
+        logger.debug("fetch_live_odds_v3_task: provider returned no live odds this tick.")
+        return
+
+    processed = 0
+    for entry in live_odds:
+        api_fixture_id = entry.get('fixture', {}).get('id')
+        if not api_fixture_id:
+            continue
+        fixture_api_id = f"v3_{api_fixture_id}"
+        try:
+            fixture = FootballFixture.objects.get(api_id=fixture_api_id, id__in=live_fixture_ids)
+        except FootballFixture.DoesNotExist:
+            continue
+        _process_api_football_v3_live_odds_data(fixture, entry)
+        processed += 1
+
+    logger.info(f"fetch_live_odds_v3_task: refreshed live odds for {processed} fixture(s).")
 
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---

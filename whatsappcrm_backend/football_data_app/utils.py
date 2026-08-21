@@ -31,7 +31,7 @@ MAX_FIXTURES_IN_PDF = 150  # Maximum number of fixtures to include in a single P
 MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
 
-def upsert_market_outcome(market, outcome_name, point_value, odds):
+def upsert_market_outcome(market, outcome_name, point_value, odds, is_active=True):
     """update_or_create a MarketOutcome, tolerating pre-existing duplicate rows.
 
     MarketOutcome has no DB-level uniqueness constraint on
@@ -45,6 +45,12 @@ def upsert_market_outcome(market, outcome_name, point_value, odds):
     tasks_apifootball.py, tasks_theoddsapi_backup.py for why they upsert
     in place instead of delete-and-recreate).
 
+    `is_active` defaults to True (a refresh normally means "this outcome is
+    currently offered"), but the live-odds pipeline passes False for outcomes
+    the provider itself flags as momentarily suspended (around goals, cards,
+    etc.) -- ticket_processing already only offers/accepts is_active=True
+    outcomes, so this is the single place that gate needs to be set.
+
     Returns the MarketOutcome instance (its id is what callers track to know
     which outcomes were "seen" in this refresh).
     """
@@ -54,7 +60,7 @@ def upsert_market_outcome(market, outcome_name, point_value, odds):
             market=market,
             outcome_name=outcome_name,
             point_value=point_value,
-            defaults={'odds': odds, 'is_active': True}
+            defaults={'odds': odds, 'is_active': is_active}
         )
         return outcome
     except MarketOutcome.MultipleObjectsReturned:
@@ -68,7 +74,7 @@ def upsert_market_outcome(market, outcome_name, point_value, odds):
             market=market, outcome_name=outcome_name, point_value=point_value
         ).order_by('id').first()
         outcome.odds = odds
-        outcome.is_active = True
+        outcome.is_active = is_active
         outcome.save(update_fields=['odds', 'is_active'])
         return outcome
 
