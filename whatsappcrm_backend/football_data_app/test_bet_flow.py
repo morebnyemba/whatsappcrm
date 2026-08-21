@@ -264,3 +264,75 @@ class BetFlowHandlerTests(TestCase):
         self.assertEqual(s['screen'], 'BET_CONFIRM')
         self.assertTrue(s['data']['is_error'])
         self.assertEqual(BetTicket.objects.filter(user=self.user).count(), 0)
+
+
+class BetBrowsePaginationTests(TestCase):
+    """The native Flow's BET_BROWSE fixture dropdown used to take a flat
+    MAX_FLOW_OPTIONS-sized slice with no way to reach fixtures beyond it --
+    confirmed on a real device to be a genuine gap (the rest of the native
+    flow -- menu, markets, outcomes, stake, placement -- works end to end).
+    'more:<n>'/'prev:<n>' sentinel option ids let the dropdown page back and
+    forth without ever switching away from BET_BROWSE itself (a self-return,
+    which Meta's forward-only routing model allows -- only switching to a
+    *different* declared screen is restricted)."""
+
+    def setUp(self):
+        self.wa = '263779990000'
+        self.user = User.objects.create_user('paginationbettor')
+        self.contact = Contact.objects.create(whatsapp_id=self.wa)
+        CustomerProfile.objects.create(contact=self.contact, user=self.user,
+                                       date_of_birth=timezone.localdate().replace(year=1990))
+        league = League.objects.create(name='EPL', api_id='v3_page', sport_key='soccer')
+        bk = Bookmaker.objects.create(name='bet365', api_bookmaker_key='8')
+        cat = MarketCategory.objects.create(name='Match Winner')
+        # H.MAX_FLOW_OPTIONS is 20 and FIXTURES_PAGE_SIZE reserves 2 nav
+        # slots (=18/page); 25 fixtures spans two pages with fixtures left
+        # on the second, forcing a real "more" -> "prev" round trip.
+        for i in range(25):
+            home = Team.objects.create(name=f'PagHome{i}')
+            away = Team.objects.create(name=f'PagAway{i}')
+            fx = FootballFixture.objects.create(
+                league=league, home_team=home, away_team=away, api_id=f'v3_pag_{i}',
+                match_date=timezone.now() + timedelta(hours=1 + i),
+                status=FootballFixture.FixtureStatus.SCHEDULED)
+            mk = Market.objects.create(fixture=fx, bookmaker=bk, api_market_key='h2h',
+                                       category=cat, last_updated_odds_api=timezone.now())
+            MarketOutcome.objects.create(market=mk, outcome_name='Home', odds=Decimal('2.00'))
+        H._save_server_slip(self.wa, [])
+
+    def tearDown(self):
+        H._save_server_slip(self.wa, [])
+
+    def _ids(self, screen_data):
+        return {o['id'] for o in screen_data['fixtures']}
+
+    def test_first_page_has_more_row_but_no_previous_row(self):
+        s = H.handle_data_exchange('BET_MENU', {'menu_action': 'browse', 'slip': ''}, self.wa)
+        ids = self._ids(s['data'])
+        nav_ids = {i for i in ids if i.startswith('more:') or i.startswith('prev:')}
+        self.assertEqual(nav_ids, {'more:1'})
+        # Never exceeds the dropdown's practical item cap.
+        self.assertLessEqual(len(ids), H.MAX_FLOW_OPTIONS)
+
+    def test_tapping_more_stays_on_browse_and_reveals_the_rest(self):
+        s = H.handle_data_exchange('BET_BROWSE', {'fixture_id': 'more:1', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_BROWSE')  # self-return, not a screen switch
+        ids = self._ids(s['data'])
+        self.assertIn('prev:0', ids)
+        self.assertNotIn('more:2', ids)  # only 25 fixtures: page 2 is the last
+        self.assertLessEqual(len(ids), H.MAX_FLOW_OPTIONS)
+
+    def test_previous_returns_to_the_first_page(self):
+        s = H.handle_data_exchange('BET_BROWSE', {'fixture_id': 'prev:0', 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_BROWSE')
+        ids = self._ids(s['data'])
+        self.assertIn('more:1', ids)
+        self.assertNotIn('prev:', ''.join(i for i in ids if i.startswith('prev')))
+
+    def test_selecting_a_real_fixture_on_a_later_page_still_reaches_markets(self):
+        # Confirms paging doesn't break the (confirmed-working) forward path
+        # into BET_MARKETS for a fixture that only exists on page 2.
+        second_page = H.handle_data_exchange('BET_BROWSE', {'fixture_id': 'more:1', 'slip': ''}, self.wa)
+        real_fixture_id = next(i for i in self._ids(second_page['data']) if i.isdigit())
+        s = H.handle_data_exchange('BET_BROWSE', {'fixture_id': real_fixture_id, 'slip': ''}, self.wa)
+        self.assertEqual(s['screen'], 'BET_MARKETS')
