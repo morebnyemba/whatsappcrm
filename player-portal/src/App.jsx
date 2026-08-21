@@ -6,6 +6,7 @@ import Matches from './pages/Matches';
 import Tickets from './pages/Tickets';
 import Wallet from './pages/Wallet';
 import Profile from './pages/Profile';
+import { IconBall, IconTicket, IconWallet, IconUser, IconLogout } from './icons';
 
 function RequireAuth({ children }) {
   const { isAuthed } = useAuth();
@@ -16,23 +17,30 @@ function Shell({ children }) {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const tabs = [
-    { to: '/matches', label: 'Matches', icon: '⚽' },
-    { to: '/tickets', label: 'Bets', icon: '🎫' },
-    { to: '/wallet', label: 'Wallet', icon: '💰' },
-    { to: '/profile', label: 'Profile', icon: '👤' },
+    { to: '/matches', label: 'Matches', Icon: IconBall },
+    { to: '/tickets', label: 'Bets', Icon: IconTicket },
+    { to: '/wallet', label: 'Wallet', Icon: IconWallet },
+    { to: '/profile', label: 'Profile', Icon: IconUser },
   ];
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand">BetBlitz</span>
-        <button className="link" onClick={() => { logout(); navigate('/login'); }}>Log out</button>
+        <div className="brand-mark">
+          <div className="brand-logo" style={{ width: 30, height: 30, borderRadius: 8 }}>
+            <IconBall size={16} color="#fff" />
+          </div>
+          <span className="brand-lg">BetBlitz</span>
+        </div>
+        <button className="icon-btn" onClick={() => { logout(); navigate('/login'); }}>
+          <IconLogout size={15} /> Log out
+        </button>
       </header>
       <main className="content">{children}</main>
       <nav className="tabbar">
-        {tabs.map((t) => (
-          <NavLink key={t.to} to={t.to} className={({ isActive }) => 'tab' + (isActive ? ' active' : '')}>
-            <span className="tab-icon">{t.icon}</span>
-            <span>{t.label}</span>
+        {tabs.map(({ to, label, Icon }) => (
+          <NavLink key={to} to={to} className={({ isActive }) => 'tab' + (isActive ? ' active' : '')}>
+            <Icon size={20} />
+            <span>{label}</span>
           </NavLink>
         ))}
       </nav>
