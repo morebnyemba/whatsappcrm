@@ -67,6 +67,7 @@ class FootballFixture(models.Model):
     status = models.CharField(max_length=20, choices=FixtureStatus.choices, default=FixtureStatus.SCHEDULED)
     home_team_score = models.IntegerField(null=True, blank=True)
     away_team_score = models.IntegerField(null=True, blank=True)
+    elapsed_minutes = models.IntegerField(null=True, blank=True, help_text="Minutes elapsed in a LIVE match (e.g. 62), from the provider's fixture status. Meaningless once the match isn't LIVE.")
     last_odds_update = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last successful odds fetch.")
     last_score_update = models.DateTimeField(null=True, blank=True, help_text="Timestamp of the last successful score fetch.")
     created_at = models.DateTimeField(auto_now_add=True)

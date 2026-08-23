@@ -467,7 +467,17 @@ def _mybets_screen(flow_token, slip_str=''):
     user = _user_for(flow_token)
     if not user:
         return _done_screen("You need an account to view your bets. Type 'login' to sign in.", heading="My bets")
-    tickets = list(BetTicket.objects.filter(user=user).order_by('-created_at')[:MAX_FLOW_OPTIONS])
+    OPEN_STATUSES = ('PENDING', 'PLACED')
+    # Open bets first (regardless of recency) so a still-live bet can't be
+    # bumped out of the dropdown's MAX_FLOW_OPTIONS window by more recently
+    # settled ones -- the native Flow's single dropdown has no equivalent of
+    # the conversational flow's sectioned "Open bets"/"Settled bets" lists.
+    tickets = list(
+        BetTicket.objects.filter(user=user, status__in=OPEN_STATUSES).order_by('-created_at')
+    ) + list(
+        BetTicket.objects.filter(user=user).exclude(status__in=OPEN_STATUSES).order_by('-created_at')
+    )
+    tickets = tickets[:MAX_FLOW_OPTIONS]
     if not tickets:
         return _done_screen("You have no bets yet. Choose *Place a bet* to get started!", heading="My bets")
     emoji = {'WON': '✅', 'LOST': '❌', 'PLACED': '⏳', 'PENDING': '⏳', 'REFUNDED': '↩️'}

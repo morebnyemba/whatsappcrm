@@ -229,27 +229,42 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
     if action_type == 'my_bets':
         if not user:
             return _fail("You need an account to view your bets.", route='no_user')
-        tickets = (
-            BetTicket.objects.filter(user=user)
-            .order_by('-created_at')[:10]
-        )
-        rows = []
-        for t in tickets:
+        OPEN_STATUSES = {'PENDING', 'PLACED'}
+        MAX_ROWS = 10  # WhatsApp interactive list cap, shared across all sections
+
+        def _bet_row(t):
             status = t.get_status_display()
             emoji = {'WON': '✅', 'LOST': '❌', 'PLACED': '⏳', 'PENDING': '⏳',
                      'REFUNDED': '↩️'}.get(t.status, '•')
-            rows.append({
+            return {
                 'id': f"mybet:{t.id}",
                 'title': ux._truncate(f"#{t.id} · ${float(t.total_stake):.2f}", 24),
                 'description': ux._truncate(
                     f"{emoji} {status} · win ${float(t.potential_winnings):.2f}", 72),
-            })
-        if not rows:
+            }
+
+        tickets = list(BetTicket.objects.filter(user=user).order_by('-created_at')[:30])
+        if not tickets:
             return _ok("You have no bets yet. Tap *Browse matches* to place your first bet!",
                        route='empty', my_bets_count=0)
-        flow_context['my_bets_sections'] = [{'title': 'Your bets', 'rows': rows[:10]}]
+
+        # Open bets take priority for the shared row budget -- a settled
+        # ticket from a moment ago shouldn't be able to bump a still-open
+        # bet out of view.
+        open_tickets = [t for t in tickets if t.status in OPEN_STATUSES]
+        settled_tickets = [t for t in tickets if t.status not in OPEN_STATUSES]
+        open_rows = [_bet_row(t) for t in open_tickets[:MAX_ROWS]]
+        settled_rows = [_bet_row(t) for t in settled_tickets[:MAX_ROWS - len(open_rows)]]
+
+        sections = []
+        if open_rows:
+            sections.append({'title': 'Open bets', 'rows': open_rows})
+        if settled_rows:
+            sections.append({'title': 'Settled bets', 'rows': settled_rows})
+
+        flow_context['my_bets_sections'] = sections
         return _ok("Here are your recent bets. Tap one to see details.",
-                   route='has_bets', my_bets_count=len(rows))
+                   route='has_bets', my_bets_count=len(open_rows) + len(settled_rows))
 
     # ------------------------------------------------------- view a ticket
     if action_type == 'view_ticket':

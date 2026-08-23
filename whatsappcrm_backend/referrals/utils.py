@@ -64,6 +64,42 @@ def apply_to_be_agent(user: User) -> dict:
     logger.info(f"User {user.username} applied to become an agent.")
     return {"success": True, "message": "Thanks! Your agent application has been submitted for review. We'll notify you once it's been reviewed."}
 
+def get_referral_list_text(user: User, limit: int = 15) -> str:
+    """
+    Formats an agent's referred users into a readable list -- who they
+    referred and whether that referral's qualifying first deposit has
+    landed yet, not just a bare count (get_total_referrals only ever
+    returned a number, giving an agent no way to see who's actually on
+    their list). Most recently joined first.
+    """
+    referred_profiles = (
+        ReferralProfile.objects.filter(referred_by=user)
+        .select_related('user__customer_profile')
+        .order_by('-user__date_joined')[:limit]
+    )
+    if not referred_profiles:
+        return "You haven't referred anyone yet. Share your agent code to get started!"
+
+    lines = ["👥 *Your Referrals*", ""]
+    for i, profile in enumerate(referred_profiles, 1):
+        referred_user = profile.user
+        try:
+            name = referred_user.customer_profile.first_name or referred_user.username
+        except CustomerProfile.DoesNotExist:
+            name = referred_user.username
+        status = "✅ Active (made first deposit)" if profile.referral_bonus_applied else "⏳ Pending first deposit"
+        joined = referred_user.date_joined.strftime('%d %b %Y')
+        lines.append(f"{i}. {name} — {status}")
+        lines.append(f"   Joined {joined}")
+
+    total = ReferralProfile.objects.filter(referred_by=user).count()
+    lines.append("")
+    if total > len(referred_profiles):
+        lines.append(f"...and {total - len(referred_profiles)} more.")
+    lines.append(f"Total referrals: {total}")
+
+    return "\n".join(lines)
+
 def get_referrer_details_from_code(referral_code: str) -> dict:
     """
     Finds a referrer by their code and returns their details for confirmation.

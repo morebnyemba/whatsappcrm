@@ -405,16 +405,17 @@ def _process_api_football_v3_live_odds_data(fixture: FootballFixture, live_odds_
 
 
 def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[FootballFixture]) -> None:
-    """Keep home/away score fresh for currently-LIVE fixtures at the same
-    per-minute cadence as their odds. Without this, the "LIVE 1-0" a bettor
-    sees next to freshly-refreshed odds could still be up to 5 minutes stale
-    (score/status transitions are otherwise only refreshed by
-    run_score_and_settlement_v3_task on its own 5-minute schedule).
+    """Keep home/away score and elapsed match-minute fresh for currently-LIVE
+    fixtures at the same per-minute cadence as their odds. Without this, the
+    "LIVE 1-0" a bettor sees next to freshly-refreshed odds could still be
+    up to 5 minutes stale (score/status transitions are otherwise only
+    refreshed by run_score_and_settlement_v3_task on its own 5-minute
+    schedule).
 
     Uses one GET /fixtures?live=all call -- cheap (score/status only, not
     full odds trees) and provider-side already covers every live fixture
     worldwide in a single request, unlike /odds/live's much heavier payload.
-    Only touches the score fields here; LIVE -> FINISHED transitions and
+    Only touches score/elapsed here; LIVE -> FINISHED transitions and
     settlement dispatch stay owned exclusively by the 5-minute pipeline so
     there's one single place that ever triggers settlement.
     """
@@ -426,17 +427,19 @@ def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[Footba
     if not live_from_api:
         return
 
-    goals_by_api_id = {}
+    info_by_api_id = {}
     for entry in live_from_api:
         api_fixture_id = entry.get('fixture', {}).get('id')
         if api_fixture_id:
-            goals_by_api_id[f"v3_{api_fixture_id}"] = entry.get('goals') or {}
+            info_by_api_id[f"v3_{api_fixture_id}"] = entry
 
     to_update = []
     for fixture in live_fixtures:
-        goals = goals_by_api_id.get(fixture.api_id)
-        if not goals:
+        entry = info_by_api_id.get(fixture.api_id)
+        if not entry:
             continue
+        goals = entry.get('goals') or {}
+        status_info = entry.get('fixture', {}).get('status') or {}
         try:
             home = int(goals['home']) if goals.get('home') is not None else None
         except (TypeError, ValueError):
@@ -445,6 +448,10 @@ def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[Footba
             away = int(goals['away']) if goals.get('away') is not None else None
         except (TypeError, ValueError):
             away = None
+        try:
+            elapsed = int(status_info['elapsed']) if status_info.get('elapsed') is not None else None
+        except (TypeError, ValueError):
+            elapsed = None
 
         changed = False
         if home is not None and fixture.home_team_score != home:
@@ -453,12 +460,17 @@ def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[Footba
         if away is not None and fixture.away_team_score != away:
             fixture.away_team_score = away
             changed = True
+        if elapsed is not None and fixture.elapsed_minutes != elapsed:
+            fixture.elapsed_minutes = elapsed
+            changed = True
         if changed:
             fixture.last_score_update = timezone.now()
             to_update.append(fixture)
 
     if to_update:
-        FootballFixture.objects.bulk_update(to_update, ['home_team_score', 'away_team_score', 'last_score_update'])
+        FootballFixture.objects.bulk_update(
+            to_update, ['home_team_score', 'away_team_score', 'elapsed_minutes', 'last_score_update']
+        )
         logger.info(f"_refresh_live_scores: updated the score for {len(to_update)} live fixture(s).")
 
 
@@ -1256,29 +1268,38 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
                         # Get scores
                         home_score = goals_info.get('home')
                         away_score = goals_info.get('away')
-                        fixture_status = fixture_info.get('status', {}).get('short', '')
-                        
+                        status_info = fixture_info.get('status', {}) or {}
+                        fixture_status = status_info.get('short', '')
+                        elapsed = status_info.get('elapsed')
+
                         # Parse scores
                         try:
                             home_score = int(home_score) if home_score is not None and home_score != '' else None
                         except (ValueError, TypeError):
                             home_score = None
-                        
+
                         try:
                             away_score = int(away_score) if away_score is not None and away_score != '' else None
                         except (ValueError, TypeError):
                             away_score = None
-                        
+
+                        try:
+                            elapsed = int(elapsed) if elapsed is not None else None
+                        except (ValueError, TypeError):
+                            elapsed = None
+
                         # Update scores if available
                         if home_score is not None:
                             fixture.home_team_score = home_score
                         if away_score is not None:
                             fixture.away_team_score = away_score
-                        
+                        if elapsed is not None:
+                            fixture.elapsed_minutes = elapsed
+
                         fixture.last_score_update = timezone.now()
                         fixture.match_updated = timezone.now()
-                        
-                        update_fields = ['home_team_score', 'away_team_score', 'status', 'last_score_update', 'match_updated']
+
+                        update_fields = ['home_team_score', 'away_team_score', 'elapsed_minutes', 'status', 'last_score_update', 'match_updated']
                         
                         # Update status
                         if fixture_status in ['FT', 'AET', 'PEN']:  # Finished statuses

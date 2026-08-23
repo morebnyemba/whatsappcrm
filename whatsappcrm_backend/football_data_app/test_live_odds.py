@@ -336,6 +336,13 @@ class LiveFixturesInBrowseTests(TestCase):
             home_team_score=2, away_team_score=1)
         self.assertEqual(ux._kickoff_label(live_fx), '🔴 LIVE · 2-1')
 
+    def test_kickoff_label_shows_elapsed_minutes_when_available(self):
+        live_fx = self._fixture_with_market(
+            'ClockHome', 'ClockAway', FootballFixture.FixtureStatus.LIVE,
+            match_date=timezone.now() - timedelta(minutes=62),
+            home_team_score=0, away_team_score=0, elapsed_minutes=62)
+        self.assertEqual(ux._kickoff_label(live_fx), '🔴 62′ · LIVE · 0-0')
+
     def test_live_fixture_with_every_outcome_suspended_has_no_active_market_and_is_excluded(self):
         live_fx = self._fixture_with_market(
             'SuspHome', 'SuspAway', FootballFixture.FixtureStatus.LIVE,
