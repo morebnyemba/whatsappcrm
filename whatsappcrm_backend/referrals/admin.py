@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.utils import timezone
 from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus, AgentApplication
 from .utils import get_or_create_referral_profile
+from .tasks import send_bonus_notification_task
 
 @admin.register(ReferralProfile)
 class ReferralProfileAdmin(admin.ModelAdmin):
@@ -180,17 +181,27 @@ class AgentApplicationAdmin(admin.ModelAdmin):
             application.reviewed_at = timezone.now()
             application.reviewed_by = request.user
             application.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+            send_bonus_notification_task.delay(
+                application.user.id,
+                "🎉 Your agent application has been approved! Type 'agent' to get your referral code and start earning."
+            )
             approved += 1
         self.message_user(request, f"Approved {approved} application(s) and granted agent status.")
 
     @admin.action(description="Reject selected applications")
     def reject_applications(self, request, queryset):
-        updated = queryset.filter(status=AgentApplication.Status.PENDING).update(
-            status=AgentApplication.Status.REJECTED,
-            reviewed_at=timezone.now(),
-            reviewed_by=request.user,
-        )
-        self.message_user(request, f"Rejected {updated} application(s).")
+        rejected = 0
+        for application in queryset.filter(status=AgentApplication.Status.PENDING):
+            application.status = AgentApplication.Status.REJECTED
+            application.reviewed_at = timezone.now()
+            application.reviewed_by = request.user
+            application.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+            send_bonus_notification_task.delay(
+                application.user.id,
+                "Thanks for your interest in the agent program. Your application wasn't approved this time. Contact support if you have questions."
+            )
+            rejected += 1
+        self.message_user(request, f"Rejected {rejected} application(s).")
 
     def has_add_permission(self, request):
         return False
