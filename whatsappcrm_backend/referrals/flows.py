@@ -208,8 +208,8 @@ def create_referral_flow():
                 "config": {
                     "actions_to_run": [
                         {
-                            "action_type": "get_total_referrals",
-                            "output_variable_name": "total_referrals_count"
+                            "action_type": "get_referral_list",
+                            "output_variable_name": "referral_list_message"
                         }
                     ]
                 },
@@ -221,7 +221,7 @@ def create_referral_flow():
                 "config": {
                     "message_type": "text",
                     "text": {
-                        "body": "You have a total of *{{ flow_context.total_referrals_count }}* referred user(s). Keep up the great work! 🚀"
+                        "body": "{{ flow_context.referral_list_message }}"
                     }
                 },
                 "transitions": [{"to_step": "ask_next_action_after_referral", "condition_config": {"type": "always_true"}}]

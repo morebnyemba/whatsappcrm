@@ -103,7 +103,7 @@ except ImportError as e:
 # Conditional import for the new referrals app
 REFERRALS_ENABLED = False
 try:
-    from referrals.utils import get_or_create_referral_profile, get_referrer_details_from_code, apply_to_be_agent
+    from referrals.utils import get_or_create_referral_profile, get_referrer_details_from_code, apply_to_be_agent, get_referral_list_text
     from referrals.models import ReferralProfile, ReferralSettings
     REFERRALS_ENABLED = True
 except ImportError:
@@ -363,6 +363,7 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     HANDLE_BETTING_ACTION = "handle_betting_action"
     GENERATE_REFERRAL_CODE = "generate_referral_code"
     GET_TOTAL_REFERRALS = "get_total_referrals"
+    GET_REFERRAL_LIST = "get_referral_list"
     GET_PENDING_REFERRALS = "get_pending_referrals"
     GET_REFERRAL_SETTINGS = "get_referral_settings"
     GET_REFERRER_DETAILS = "get_referrer_details"
@@ -450,6 +451,10 @@ class GetTotalReferralsConfig(BasePydanticConfig):
     action_type: Literal["get_total_referrals"] = "get_total_referrals"
     output_variable_name: str
 
+class GetReferralListConfig(BasePydanticConfig):
+    action_type: Literal["get_referral_list"] = "get_referral_list"
+    output_variable_name: str
+
 class GetPendingReferralsConfig(BasePydanticConfig):
     action_type: Literal["get_pending_referrals"] = "get_pending_referrals"
     output_variable_name: str
@@ -499,6 +504,7 @@ class ActionItem(BaseModel):
         HandleBettingActionConfig,
         GenerateReferralCodeConfig,
         GetTotalReferralsConfig,
+        GetReferralListConfig,
         GetPendingReferralsConfig,
         GetReferralSettingsConfig,
         GetReferrerDetailsConfig,
@@ -1608,6 +1614,22 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot get total referrals, CustomerProfile does not exist for contact {contact.id}.")
                         current_step_context[action_item_root.output_variable_name] = 0
+
+                elif action_type == ActionType.GET_REFERRAL_LIST:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'get_referral_list' action called, but referrals app not available.")
+                        current_step_context[action_item_root.output_variable_name] = "Agent system unavailable."
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            current_step_context[action_item_root.output_variable_name] = get_referral_list_text(user)
+                        else:
+                            logger.error(f"Step '{step.name}': Cannot get referral list, no User linked to CustomerProfile for contact {contact.id}.")
+                            current_step_context[action_item_root.output_variable_name] = "No linked account found."
+                    except CustomerProfile.DoesNotExist:
+                        logger.error(f"Step '{step.name}': Cannot get referral list, CustomerProfile does not exist for contact {contact.id}.")
+                        current_step_context[action_item_root.output_variable_name] = "No linked account found."
 
                 elif action_type == ActionType.GET_PENDING_REFERRALS:
                     if not REFERRALS_ENABLED:
