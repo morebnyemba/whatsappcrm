@@ -60,9 +60,10 @@ def _fixture_label(fixture: FootballFixture) -> str:
 
 def _kickoff_label(fixture: FootballFixture) -> str:
     if fixture.status == FootballFixture.FixtureStatus.LIVE:
+        clock = f"{fixture.elapsed_minutes}′ · " if fixture.elapsed_minutes is not None else ""
         if fixture.home_team_score is not None and fixture.away_team_score is not None:
-            return f"🔴 LIVE · {fixture.home_team_score}-{fixture.away_team_score}"
-        return "🔴 LIVE"
+            return f"🔴 {clock}LIVE · {fixture.home_team_score}-{fixture.away_team_score}"
+        return f"🔴 {clock}LIVE" if clock else "🔴 LIVE"
     if not fixture.match_date:
         return 'TBD'
     return timezone.localtime(fixture.match_date).strftime('%a %d %b, %H:%M')
