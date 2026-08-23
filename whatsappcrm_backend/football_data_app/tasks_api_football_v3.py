@@ -404,14 +404,73 @@ def _process_api_football_v3_live_odds_data(fixture: FootballFixture, live_odds_
         ).exclude(id__in=seen_market_ids).update(is_active=False)
 
 
+def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[FootballFixture]) -> None:
+    """Keep home/away score fresh for currently-LIVE fixtures at the same
+    per-minute cadence as their odds. Without this, the "LIVE 1-0" a bettor
+    sees next to freshly-refreshed odds could still be up to 5 minutes stale
+    (score/status transitions are otherwise only refreshed by
+    run_score_and_settlement_v3_task on its own 5-minute schedule).
+
+    Uses one GET /fixtures?live=all call -- cheap (score/status only, not
+    full odds trees) and provider-side already covers every live fixture
+    worldwide in a single request, unlike /odds/live's much heavier payload.
+    Only touches the score fields here; LIVE -> FINISHED transitions and
+    settlement dispatch stay owned exclusively by the 5-minute pipeline so
+    there's one single place that ever triggers settlement.
+    """
+    try:
+        live_from_api = client.get_live_fixtures()
+    except Exception as e:
+        logger.warning(f"_refresh_live_scores: get_live_fixtures() failed: {e}")
+        return
+    if not live_from_api:
+        return
+
+    goals_by_api_id = {}
+    for entry in live_from_api:
+        api_fixture_id = entry.get('fixture', {}).get('id')
+        if api_fixture_id:
+            goals_by_api_id[f"v3_{api_fixture_id}"] = entry.get('goals') or {}
+
+    to_update = []
+    for fixture in live_fixtures:
+        goals = goals_by_api_id.get(fixture.api_id)
+        if not goals:
+            continue
+        try:
+            home = int(goals['home']) if goals.get('home') is not None else None
+        except (TypeError, ValueError):
+            home = None
+        try:
+            away = int(goals['away']) if goals.get('away') is not None else None
+        except (TypeError, ValueError):
+            away = None
+
+        changed = False
+        if home is not None and fixture.home_team_score != home:
+            fixture.home_team_score = home
+            changed = True
+        if away is not None and fixture.away_team_score != away:
+            fixture.away_team_score = away
+            changed = True
+        if changed:
+            fixture.last_score_update = timezone.now()
+            to_update.append(fixture)
+
+    if to_update:
+        FootballFixture.objects.bulk_update(to_update, ['home_team_score', 'away_team_score', 'last_score_update'])
+        logger.info(f"_refresh_live_scores: updated the score for {len(to_update)} live fixture(s).")
+
+
 @shared_task(name="football_data_app.fetch_live_odds_v3", queue='cpu_heavy')
 def fetch_live_odds_v3_task():
     """
-    Refreshes in-play odds for every fixture currently LIVE that already has
-    at least one market (i.e. was bettable pre-match, so it's worth keeping
-    priced through kick-off). Cheap early-exit when nothing is live, so this
-    can run on a short Celery Beat interval without wasting API credits on
-    every tick -- see fetch-live-football-odds-v3 in CELERY_BEAT_SCHEDULE.
+    Refreshes in-play odds (and, alongside them, the live score) for every
+    fixture currently LIVE that already has at least one market (i.e. was
+    bettable pre-match, so it's worth keeping priced through kick-off).
+    Cheap early-exit when nothing is live, so this can run on a short Celery
+    Beat interval without wasting API credits on every tick -- see
+    fetch-live-football-odds-v3 in CELERY_BEAT_SCHEDULE.
 
     Fetches GET /odds/live per fixture (?fixture=<id>), keyed to the exact
     fixtures we hold open markets for, rather than one global bulk call: the
@@ -434,6 +493,8 @@ def fetch_live_odds_v3_task():
         return
 
     client = APIFootballV3Client()
+    _refresh_live_scores(client, live_fixtures)
+
     processed = 0
     for fixture in live_fixtures:
         try:

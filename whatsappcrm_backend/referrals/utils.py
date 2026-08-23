@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from decimal import Decimal
 from django.contrib.auth import get_user_model
-from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus
+from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus, AgentApplication
 from customer_data.models import UserWallet, WalletTransaction, CustomerProfile
 from .tasks import send_bonus_notification_task
 
@@ -43,6 +43,26 @@ def link_referral(new_user: User, referral_code: str):
         logger.info(f"User {new_user.username} was successfully referred by {referrer_profile.user.username}")
     except ReferralProfile.DoesNotExist:
         logger.warning(f"Invalid referral code '{referral_code}' used by user {new_user.username}.")
+
+def apply_to_be_agent(user: User) -> dict:
+    """
+    Records a user's self-service request to become an agent. is_agent
+    itself stays admin-only (see AgentApplicationAdmin.approve_applications)
+    -- this just gives the user a real path forward instead of the old
+    dead-end "contact support" message, and gives an admin a queue to work
+    from instead of needing shell/DB access to enroll anyone.
+    """
+    profile = get_or_create_referral_profile(user)
+    if profile.is_agent:
+        return {"success": False, "message": "You're already an agent! Type 'agent' to see your options."}
+
+    existing = AgentApplication.objects.filter(user=user, status=AgentApplication.Status.PENDING).first()
+    if existing:
+        return {"success": False, "message": "You already have an application pending review. We'll notify you once it's been reviewed."}
+
+    AgentApplication.objects.create(user=user)
+    logger.info(f"User {user.username} applied to become an agent.")
+    return {"success": True, "message": "Thanks! Your agent application has been submitted for review. We'll notify you once it's been reviewed."}
 
 def get_referrer_details_from_code(referral_code: str) -> dict:
     """

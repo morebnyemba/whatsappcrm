@@ -1,6 +1,8 @@
 # whatsappcrm_backend/referrals/admin.py
 from django.contrib import admin
-from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus
+from django.utils import timezone
+from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus, AgentApplication
+from .utils import get_or_create_referral_profile
 
 @admin.register(ReferralProfile)
 class ReferralProfileAdmin(admin.ModelAdmin):
@@ -151,4 +153,44 @@ class ReferralSettingsAdmin(admin.ModelAdmin):
         return not ReferralSettings.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+@admin.register(AgentApplication)
+class AgentApplicationAdmin(admin.ModelAdmin):
+    """
+    Admin queue for self-service "become an agent" requests submitted from
+    the WhatsApp agent-program flow. Approving here is the one-click
+    equivalent of manually ticking is_agent on the user's ReferralProfile.
+    """
+    list_display = ('user', 'status', 'requested_at', 'reviewed_at', 'reviewed_by')
+    list_filter = ('status', 'requested_at')
+    search_fields = ('user__username',)
+    raw_id_fields = ('user', 'reviewed_by')
+    readonly_fields = ('user', 'requested_at')
+    actions = ['approve_applications', 'reject_applications']
+
+    @admin.action(description="Approve selected applications (grants is_agent)")
+    def approve_applications(self, request, queryset):
+        approved = 0
+        for application in queryset.filter(status=AgentApplication.Status.PENDING):
+            profile = get_or_create_referral_profile(application.user)
+            profile.is_agent = True
+            profile.save(update_fields=['is_agent'])
+            application.status = AgentApplication.Status.APPROVED
+            application.reviewed_at = timezone.now()
+            application.reviewed_by = request.user
+            application.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+            approved += 1
+        self.message_user(request, f"Approved {approved} application(s) and granted agent status.")
+
+    @admin.action(description="Reject selected applications")
+    def reject_applications(self, request, queryset):
+        updated = queryset.filter(status=AgentApplication.Status.PENDING).update(
+            status=AgentApplication.Status.REJECTED,
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user,
+        )
+        self.message_user(request, f"Rejected {updated} application(s).")
+
+    def has_add_permission(self, request):
         return False

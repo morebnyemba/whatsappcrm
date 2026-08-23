@@ -247,6 +247,7 @@ def create_betting_flow():
             "do_place", "place_slip",
             transitions=[
                 {"to_step": "place_success", "priority": 1, "condition_config": _eq("route", "placed")},
+                {"to_step": "confirm_bet", "priority": 2, "condition_config": _eq("route", "odds_changed")},
                 {"to_step": "place_failed", "priority": 99, "condition_config": _ALWAYS},
             ],
         ),
