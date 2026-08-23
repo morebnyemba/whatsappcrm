@@ -215,3 +215,37 @@ class ReferralSettings(models.Model):
     def load(cls):
         obj, created = cls.objects.get_or_create(pk=1)
         return obj
+
+class AgentApplication(models.Model):
+    """
+    A user's self-service request to become an agent, submitted from the
+    WhatsApp agent-program flow. is_agent itself is still admin-only to
+    flip (see ReferralProfile) -- this just gives a user a way to ask,
+    and gives an admin a queue to review, instead of the previous dead-end
+    "contact support" message with no actual path forward.
+    """
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        APPROVED = 'APPROVED', 'Approved'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='agent_applications'
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='+'
+    )
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    def __str__(self):
+        return f"Agent application for {self.user.username} ({self.get_status_display()})"

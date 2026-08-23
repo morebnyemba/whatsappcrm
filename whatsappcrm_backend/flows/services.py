@@ -103,7 +103,7 @@ except ImportError as e:
 # Conditional import for the new referrals app
 REFERRALS_ENABLED = False
 try:
-    from referrals.utils import get_or_create_referral_profile, get_referrer_details_from_code
+    from referrals.utils import get_or_create_referral_profile, get_referrer_details_from_code, apply_to_be_agent
     from referrals.models import ReferralProfile, ReferralSettings
     REFERRALS_ENABLED = True
 except ImportError:
@@ -367,6 +367,7 @@ class ActionType(str, Enum): # This Enum is fine for internal use and defining L
     GET_REFERRAL_SETTINGS = "get_referral_settings"
     GET_REFERRER_DETAILS = "get_referrer_details"
     GET_AGENT_EARNINGS = "get_agent_earnings"
+    APPLY_TO_BE_AGENT = "apply_to_be_agent"
     VERIFY_PIN = "verify_pin"
     CHECK_SESSION = "check_session"
 
@@ -466,6 +467,10 @@ class GetAgentEarningsConfig(BasePydanticConfig):
     action_type: Literal["get_agent_earnings"] = "get_agent_earnings"
     output_variable_name: str
 
+class ApplyToBeAgentConfig(BasePydanticConfig):
+    action_type: Literal["apply_to_be_agent"] = "apply_to_be_agent"
+    output_variable_name: str
+
 class VerifyPinConfig(BasePydanticConfig):
     action_type: Literal["verify_pin"] = "verify_pin"
     pin_variable: str  # Path to the context variable holding the PIN (e.g., "flow_context.provided_pin")
@@ -498,6 +503,7 @@ class ActionItem(BaseModel):
         GetReferralSettingsConfig,
         GetReferrerDetailsConfig,
         GetAgentEarningsConfig,
+        ApplyToBeAgentConfig,
         VerifyPinConfig,
         CheckSessionConfig
     ] = Field(discriminator='action_type')
@@ -1706,6 +1712,23 @@ def _execute_step_actions(step: FlowStep, contact: Contact, flow_context: dict, 
                     except CustomerProfile.DoesNotExist:
                         logger.error(f"Step '{step.name}': Cannot get agent earnings, CustomerProfile does not exist for contact {contact.id}.")
                         current_step_context[action_item_root.output_variable_name] = {}
+
+                elif action_type == ActionType.APPLY_TO_BE_AGENT:
+                    if not REFERRALS_ENABLED:
+                        logger.error(f"Step '{step.name}': 'apply_to_be_agent' action called, but referrals app not available.")
+                        current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "Agent system unavailable."}
+                        continue
+                    try:
+                        user = contact.customerprofile.user
+                        if user:
+                            result = apply_to_be_agent(user)
+                            current_step_context[action_item_root.output_variable_name] = result
+                        else:
+                            logger.error(f"Step '{step.name}': Cannot apply to be agent, no User linked to CustomerProfile for contact {contact.id}.")
+                            current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "No linked account found."}
+                    except CustomerProfile.DoesNotExist:
+                        logger.error(f"Step '{step.name}': Cannot apply to be agent, CustomerProfile does not exist for contact {contact.id}.")
+                        current_step_context[action_item_root.output_variable_name] = {"success": False, "message": "No linked account found."}
 
                 elif action_type == ActionType.CHECK_SESSION:
                     from conversations.models import ContactSession

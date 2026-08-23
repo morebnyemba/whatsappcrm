@@ -4,8 +4,10 @@ def create_referral_flow():
     """
     Defines the flow for the agent program.
     Only admin-designated agents (is_agent=True on their ReferralProfile) can
-    access options. Regular users without agent status are directed to contact
-    support. The flow never prompts users to register/sign up.
+    access options. Regular users without agent status are offered a
+    self-service application (an AgentApplication an admin reviews in
+    Django admin) instead of a dead-end "contact support" message. The flow
+    never prompts users to register/sign up.
     """
     return {
         "name": "Agent Program",
@@ -243,10 +245,50 @@ def create_referral_flow():
             },
             {
                 "name": "not_an_agent_message",
+                "step_type": "question",
+                "config": {
+                    "message_config": {
+                        "message_type": "interactive",
+                        "interactive": {
+                            "type": "button",
+                            "body": {"text": "You're not currently enrolled as an agent.\n\nWould you like to apply? An admin will review your request."},
+                            "action": {
+                                "buttons": [
+                                    {"type": "reply", "reply": {"id": "apply_to_be_agent", "title": "Apply to be an Agent"}},
+                                    {"type": "reply", "reply": {"id": "not_now", "title": "Not now"}}
+                                ]
+                            }
+                        }
+                    },
+                    "reply_config": {
+                        "save_to_variable": "agent_apply_choice",
+                        "expected_type": "interactive_id"
+                    }
+                },
+                "transitions": [
+                    {"to_step": "submit_agent_application", "condition_config": {"type": "interactive_reply_id_equals", "value": "apply_to_be_agent"}},
+                    {"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}
+                ]
+            },
+            {
+                "name": "submit_agent_application",
+                "step_type": "action",
+                "config": {
+                    "actions_to_run": [
+                        {
+                            "action_type": "apply_to_be_agent",
+                            "output_variable_name": "agent_application_result"
+                        }
+                    ]
+                },
+                "transitions": [{"to_step": "send_agent_application_result", "condition_config": {"type": "always_true"}}]
+            },
+            {
+                "name": "send_agent_application_result",
                 "step_type": "send_message",
                 "config": {
                     "message_type": "text",
-                    "text": {"body": "You are not currently enrolled as an agent. Please contact support to be designated as an agent."}
+                    "text": {"body": "{{ flow_context.agent_application_result.message }}"}
                 },
                 "transitions": [{"to_step": "end_referral_flow", "condition_config": {"type": "always_true"}}]
             },
