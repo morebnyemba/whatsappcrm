@@ -429,9 +429,11 @@ class APIFootballV3Client:
         plan/response is handled by the caller, not here.
 
         Args:
-            fixture_id: Restrict to a single live fixture. Omit to get every
-                fixture the provider currently has live odds for, in one call --
-                the cheap way to refresh all live markets on a single poll tick.
+            fixture_id: Restrict to a single live fixture -- what
+                fetch_live_odds_v3_task() uses, one call per fixture we
+                actually hold open markets for. Omit to get every fixture the
+                provider currently has live odds for in one call, which is
+                usually far more matches than we care about.
 
         Returns:
             List of live-odds dictionaries from response['response'], each

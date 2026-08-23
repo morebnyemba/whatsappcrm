@@ -220,9 +220,8 @@ class FetchLiveOddsTaskTests(TestCase):
         mock_get_live_odds.assert_not_called()
 
     def test_live_fixture_with_a_market_gets_refreshed(self):
-        # fetch_live_odds_v3_task() matches the provider's numeric fixture id
-        # back to our FootballFixture via api_id == f"v3_{numeric_id}", so the
-        # two must agree here.
+        # fetch_live_odds_v3_task() fetches by the fixture's own numeric API
+        # id (api_id == f"v3_{numeric_id}"), not a global bulk call.
         fx = self._make_fixture('v3_555', FootballFixture.FixtureStatus.LIVE)
         outcome = MarketOutcome.objects.get(market__fixture=fx)
         live_response = [{
@@ -232,10 +231,60 @@ class FetchLiveOddsTaskTests(TestCase):
             ]}]}],
         }]
         with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
-                patch.object(APIFootballV3Client, 'get_live_odds', return_value=live_response):
+                patch.object(APIFootballV3Client, 'get_live_odds', return_value=live_response) as mock_get_live_odds:
             fetch_live_odds_v3_task()
+        mock_get_live_odds.assert_called_once_with(fixture_id=555)
         outcome.refresh_from_db()
         self.assertEqual(outcome.odds, Decimal('3.00'))
+
+    def test_each_live_fixture_is_fetched_by_its_own_id_not_one_bulk_call(self):
+        fx1 = self._make_fixture('v3_111', FootballFixture.FixtureStatus.LIVE)
+        fx2 = self._make_fixture('v3_222', FootballFixture.FixtureStatus.LIVE)
+        outcome1 = MarketOutcome.objects.get(market__fixture=fx1)
+        outcome2 = MarketOutcome.objects.get(market__fixture=fx2)
+
+        def fake_get_live_odds(fixture_id=None):
+            odds_by_fixture = {111: '5.00', 222: '6.00'}
+            return [{
+                'fixture': {'id': fixture_id},
+                'odds': [{'id': 8, 'name': 'bet365', 'bets': [{'id': 1, 'name': 'Match Winner', 'values': [
+                    {'value': 'Home', 'odd': odds_by_fixture[fixture_id], 'suspended': False},
+                ]}]}],
+            }]
+
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_odds', side_effect=fake_get_live_odds) as mock_get_live_odds:
+            fetch_live_odds_v3_task()
+
+        self.assertEqual(mock_get_live_odds.call_count, 2)
+        called_fixture_ids = {c.kwargs.get('fixture_id') for c in mock_get_live_odds.call_args_list}
+        self.assertEqual(called_fixture_ids, {111, 222})
+        outcome1.refresh_from_db()
+        outcome2.refresh_from_db()
+        self.assertEqual(outcome1.odds, Decimal('5.00'))
+        self.assertEqual(outcome2.odds, Decimal('6.00'))
+
+    def test_one_fixtures_api_failure_does_not_block_the_others(self):
+        fx1 = self._make_fixture('v3_301', FootballFixture.FixtureStatus.LIVE)
+        fx2 = self._make_fixture('v3_302', FootballFixture.FixtureStatus.LIVE)
+        outcome2 = MarketOutcome.objects.get(market__fixture=fx2)
+
+        def fake_get_live_odds(fixture_id=None):
+            if fixture_id == 301:
+                raise RuntimeError("provider timeout")
+            return [{
+                'fixture': {'id': fixture_id},
+                'odds': [{'id': 8, 'name': 'bet365', 'bets': [{'id': 1, 'name': 'Match Winner', 'values': [
+                    {'value': 'Home', 'odd': '9.00', 'suspended': False},
+                ]}]}],
+            }]
+
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_odds', side_effect=fake_get_live_odds):
+            fetch_live_odds_v3_task()  # must not raise
+
+        outcome2.refresh_from_db()
+        self.assertEqual(outcome2.odds, Decimal('9.00'))
 
 
 class LiveFixturesInBrowseTests(TestCase):

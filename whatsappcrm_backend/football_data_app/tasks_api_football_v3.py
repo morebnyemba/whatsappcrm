@@ -413,46 +413,49 @@ def fetch_live_odds_v3_task():
     can run on a short Celery Beat interval without wasting API credits on
     every tick -- see fetch-live-football-odds-v3 in CELERY_BEAT_SCHEDULE.
 
-    A single GET /odds/live call covers every live fixture the provider has
-    odds for in one request, so this scales with "how many matches are live
-    right now", not with a per-fixture request count.
+    Fetches GET /odds/live per fixture (?fixture=<id>), keyed to the exact
+    fixtures we hold open markets for, rather than one global bulk call: the
+    unfiltered bulk response covers every live match worldwide the provider
+    has odds for, the vast majority of which aren't fixtures we ever opened
+    for betting, so it wastes bandwidth/parse time on data we'd throw away
+    and (on providers that page or cap that response) risks silently missing
+    one of ours. A handful of live fixtures easily fits the 300 req/min rate
+    limit the client already enforces per-request.
     """
-    live_fixture_ids = set(
+    live_fixtures = list(
         FootballFixture.objects.filter(
             status=FootballFixture.FixtureStatus.LIVE,
             api_id__startswith='v3_',
             markets__isnull=False,
-        ).distinct().values_list('id', flat=True)
+        ).distinct()
     )
-    if not live_fixture_ids:
+    if not live_fixtures:
         logger.debug("fetch_live_odds_v3_task: no live fixtures with existing markets, skipping.")
         return
 
     client = APIFootballV3Client()
-    try:
-        live_odds = client.get_live_odds()
-    except Exception as e:
-        logger.error(f"fetch_live_odds_v3_task: get_live_odds() failed: {e}", exc_info=True)
-        return
-
-    if not live_odds:
-        logger.debug("fetch_live_odds_v3_task: provider returned no live odds this tick.")
-        return
-
     processed = 0
-    for entry in live_odds:
-        api_fixture_id = entry.get('fixture', {}).get('id')
-        if not api_fixture_id:
-            continue
-        fixture_api_id = f"v3_{api_fixture_id}"
+    for fixture in live_fixtures:
         try:
-            fixture = FootballFixture.objects.get(api_id=fixture_api_id, id__in=live_fixture_ids)
-        except FootballFixture.DoesNotExist:
+            api_fixture_id = int(fixture.api_id.replace('v3_', '', 1))
+        except (TypeError, ValueError):
+            logger.warning(f"fetch_live_odds_v3_task: fixture {fixture.id} has a malformed api_id {fixture.api_id!r}, skipping.")
             continue
-        _process_api_football_v3_live_odds_data(fixture, entry)
+
+        try:
+            live_odds = client.get_live_odds(fixture_id=api_fixture_id)
+        except Exception as e:
+            logger.error(f"fetch_live_odds_v3_task: get_live_odds(fixture_id={api_fixture_id}) failed: {e}", exc_info=True)
+            continue
+
+        if not live_odds:
+            continue
+
+        for entry in live_odds:
+            _process_api_football_v3_live_odds_data(fixture, entry)
         processed += 1
 
-    logger.info(f"fetch_live_odds_v3_task: refreshed live odds for {processed} fixture(s).")
+    logger.info(f"fetch_live_odds_v3_task: refreshed live odds for {processed}/{len(live_fixtures)} fixture(s).")
 
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
