@@ -346,3 +346,42 @@ def slip_summary_text(slip: list, stake: Optional[float] = None) -> str:
 
 def slip_outcome_ids(slip: list) -> list[str]:
     return [str(item['outcome_id']) for item in (slip or [])]
+
+
+def refresh_slip_odds(slip: list) -> tuple[list, bool]:
+    """Re-check every slip item's odds against the current MarketOutcome
+    row. The conversational flow's slip caches each item's odds at the
+    moment it was added to flow_context, so a preview shown minutes later
+    (or a placement submitted after that) can otherwise silently drift from
+    what the bettor actually agreed to -- especially now that live odds can
+    move every minute. A selection that's no longer active/available
+    (suspended, or the outcome vanished) is dropped from the slip.
+
+    Returns (refreshed_slip, changed) -- changed is True if any odds moved
+    or any selection was dropped, signalling the caller should show the
+    bettor the new numbers and require an explicit re-confirm rather than
+    placing at a price they never actually saw.
+    """
+    slip = list(slip or [])
+    if not slip:
+        return slip, False
+
+    outcome_ids = [item['outcome_id'] for item in slip]
+    current_by_id = {
+        o.id: o for o in MarketOutcome.objects.filter(id__in=outcome_ids, is_active=True)
+        .select_related('market__fixture__home_team', 'market__fixture__away_team', 'market__category')
+    }
+
+    refreshed = []
+    changed = False
+    for item in slip:
+        outcome = current_by_id.get(item['outcome_id'])
+        if not outcome:
+            changed = True
+            continue
+        new_odds = float(outcome.odds)
+        if abs(new_odds - item['odds']) > 1e-9:
+            changed = True
+        refreshed.append({**item, 'odds': new_odds})
+
+    return refreshed, changed

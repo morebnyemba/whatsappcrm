@@ -162,6 +162,16 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
             return _fail("Please enter a valid stake amount (e.g. 10).", route='invalid_stake')
         if stake_val <= 0:
             return _fail("Stake must be greater than zero.", route='invalid_stake')
+        # Refresh against current odds before showing the confirm preview --
+        # legs may have been added a while ago (live odds move every minute).
+        slip, _changed = ux.refresh_slip_odds(slip)
+        flow_context['slip'] = slip
+        if not slip:
+            flow_context['stake'] = None
+            return _fail(
+                "Those selections are no longer available. Your slip has been cleared — please pick again.",
+                route='empty',
+            )
         flow_context['stake'] = stake_val
         summary = ux.slip_summary_text(slip, stake=stake_val)
         flow_context['bet_confirmation_message'] = summary
@@ -174,6 +184,26 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
         stake_val = flow_context.get('stake')
         if not stake_val:
             return _fail("Please choose a stake first.", route='no_stake')
+        # Odds can move between the confirm screen rendering and the bettor
+        # actually tapping "Place bet" (especially in-play). Re-check right
+        # before submission rather than silently placing at a different
+        # price than what was last shown.
+        refreshed_slip, changed = ux.refresh_slip_odds(slip)
+        if changed:
+            flow_context['slip'] = refreshed_slip
+            if not refreshed_slip:
+                flow_context['stake'] = None
+                return _fail(
+                    "Those selections are no longer available. Your slip has been cleared — please pick again.",
+                    route='empty',
+                )
+            summary = ux.slip_summary_text(refreshed_slip, stake=stake_val)
+            flow_context['bet_confirmation_message'] = summary
+            return _fail(
+                "⚠️ Odds have changed since you confirmed. Here's the updated slip — please review and confirm again:\n\n" + summary,
+                route='odds_changed',
+                bet_confirmation_message=summary,
+            )
         result = process_bet_ticket_submission(
             whatsapp_id=contact.whatsapp_id,
             market_outcome_ids=ux.slip_outcome_ids(slip),
