@@ -247,11 +247,19 @@ docker compose exec backend python manage.py prune_old_fixtures --apply        #
 docker compose exec backend python manage.py prune_old_fixtures --days 365 --apply
 ```
 
-It never deletes a fixture that has any bet attached, at any age — the FK
-chain cascades into `Bet` rows, so doing so would destroy settled betting
-history. `SCHEDULED` and `LIVE` fixtures are never touched either. Safe to run
-from cron (e.g. monthly); it is deliberately **not** on the Celery Beat
-schedule, so deleting production data is always an explicit choice.
+It never deletes a fixture that has any bet attached, at any age, and
+`SCHEDULED`/`LIVE` fixtures are never touched either. Safe to run from cron
+(e.g. monthly); it is deliberately **not** on the Celery Beat schedule, so
+deleting production data is always an explicit choice.
+
+> **Betting history is protected at the model level.** `Bet.market_outcome`
+> uses `on_delete=PROTECT`, so deleting a League, Team, Fixture, Market or
+> Outcome that any bet references — from this command, the Django admin, a
+> shell, or future code — is refused with a `ProtectedError` and nothing is
+> deleted. Previously that chain was `CASCADE` all the way down, meaning
+> deleting a single Team in the admin would have silently wiped every bet ever
+> placed on that team's fixtures. To remove such data deliberately you must
+> delete the bet tickets first.
 
 ---
 

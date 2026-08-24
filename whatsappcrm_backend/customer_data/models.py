@@ -311,8 +311,29 @@ class Bet(models.Model):
         PUSH = 'REFUNDED', 'Refunded' # Renamed from REFUNDED to PUSH for clarity
 
 
+    # A ticket owns its legs, so deleting a ticket should take its bets with
+    # it -- CASCADE is correct here.
     ticket = models.ForeignKey(BetTicket, on_delete=models.CASCADE, related_name='bets')
-    market_outcome = models.ForeignKey('football_data_app.MarketOutcome', on_delete=models.CASCADE, related_name='bets')
+    # PROTECT, deliberately, and load-bearing: this is what stops market data
+    # cleanup from destroying financial records.
+    #
+    # A Bet is a financial/audit record. The reference chain above it is
+    #     League/Team -> FootballFixture -> Market -> MarketOutcome -> Bet
+    # and every one of those links is CASCADE, so while this FK was also
+    # CASCADE, deleting *any* of them silently deleted the bets underneath.
+    # That was not hypothetical: the odds-refresh pipeline hit exactly this
+    # and had to be rewritten to upsert-in-place, and Django admin still
+    # exposes one-click deletion of Leagues, Teams, Fixtures, Markets and
+    # Outcomes to staff -- deleting a single Team from the admin would have
+    # wiped every bet ever placed on that team's fixtures.
+    #
+    # PROTECT moves that invariant into the ORM instead of relying on every
+    # present and future call site to remember to filter bets out first: the
+    # delete now raises ProtectedError and nothing is deleted. Deliberately
+    # NOT SET_NULL -- a Bet with no outcome can't be settled or audited
+    # (settlement reads bet.market_outcome.odds), so it would lose the very
+    # meaning the record exists to preserve.
+    market_outcome = models.ForeignKey('football_data_app.MarketOutcome', on_delete=models.PROTECT, related_name='bets')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=BetStatus.choices, default=BetStatus.PENDING)
