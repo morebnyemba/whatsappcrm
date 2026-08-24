@@ -31,6 +31,79 @@ MAX_FIXTURES_IN_PDF = 150  # Maximum number of fixtures to include in a single P
 MAX_BOOKMAKERS = 3  # Maximum number of bookmakers to include in odds (to limit data volume)
 
 
+def prune_old_fixtures(older_than_days: int = 180, dry_run: bool = False, batch_size: int = 1000) -> dict:
+    """Delete long-finished fixtures that nobody ever bet on.
+
+    Nothing ever pruned fixtures/markets/outcomes, so those tables grow for
+    the life of the deployment. Since every hot query filters on the
+    fixture table (browse, the per-minute live-odds task, the odds-dispatch
+    sweep, settlement), unbounded growth slows all of them down forever.
+
+    SAFETY -- the FK chain is:
+        FootballFixture -CASCADE-> Market -CASCADE-> MarketOutcome -CASCADE-> Bet
+
+    so deleting a fixture would silently take any Bet rows hanging off it
+    with it, destroying settled betting history (financial/audit records).
+    This therefore only ever deletes fixtures that have **no Bet at all**
+    referencing any of their outcomes -- i.e. pure never-bet-on market data.
+    A fixture anyone ever placed a bet on is kept forever, regardless of age.
+
+    Args:
+        older_than_days: only consider fixtures whose match_date is at least
+            this far in the past. Also requires the fixture to be in a
+            terminal state (FINISHED/CANCELLED/POSTPONED) -- never touches
+            SCHEDULED or LIVE.
+        dry_run: count what would be deleted without deleting anything.
+        batch_size: how many fixtures to delete per transaction, so a large
+            first run doesn't hold one enormous lock.
+
+    Returns a dict of counts (for logging / management-command output).
+    """
+    from .models import FootballFixture
+
+    cutoff = timezone.now() - timedelta(days=older_than_days)
+    terminal = [
+        FootballFixture.FixtureStatus.FINISHED,
+        FootballFixture.FixtureStatus.CANCELLED,
+        FootballFixture.FixtureStatus.POSTPONED,
+    ]
+
+    candidates = FootballFixture.objects.filter(
+        status__in=terminal,
+        match_date__lt=cutoff,
+    ).exclude(
+        # The safety guard: anything with a bet anywhere under it is kept.
+        markets__outcomes__bets__isnull=False
+    )
+
+    total = candidates.count()
+    if dry_run or not total:
+        logger.info(
+            f"prune_old_fixtures: {total} fixture(s) older than {older_than_days} days "
+            f"with no bets attached{' (dry run, nothing deleted)' if dry_run else ''}."
+        )
+        return {'eligible': total, 'deleted': 0, 'dry_run': dry_run}
+
+    deleted = 0
+    while True:
+        batch_ids = list(
+            FootballFixture.objects.filter(
+                status__in=terminal, match_date__lt=cutoff,
+            ).exclude(
+                markets__outcomes__bets__isnull=False
+            ).values_list('id', flat=True)[:batch_size]
+        )
+        if not batch_ids:
+            break
+        with transaction.atomic():
+            count, _detail = FootballFixture.objects.filter(id__in=batch_ids).delete()
+        deleted += len(batch_ids)
+        logger.info(f"prune_old_fixtures: deleted {deleted}/{total} fixture(s) so far...")
+
+    logger.info(f"prune_old_fixtures: done, deleted {deleted} fixture(s) with no betting history.")
+    return {'eligible': total, 'deleted': deleted, 'dry_run': False}
+
+
 def upsert_market_outcome(market, outcome_name, point_value, odds, is_active=True):
     """update_or_create a MarketOutcome, tolerating pre-existing duplicate rows.
 
