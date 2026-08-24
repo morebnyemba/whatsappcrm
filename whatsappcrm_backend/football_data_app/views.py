@@ -16,6 +16,7 @@ from rest_framework.response import Response
 
 from customer_data.models import UserWallet, WalletTransaction, BetTicket
 from .models import FootballFixture
+from .betting_ux import _bettable_fixtures_qs
 from .serializers import (
     FootballFixtureSerializer, UserWalletSerializer,
     WalletTransactionSerializer, BetTicketSerializer,
@@ -23,21 +24,24 @@ from .serializers import (
 
 
 class FixtureViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    """Upcoming, bettable fixtures with representative markets/odds."""
+    """Upcoming and LIVE, bettable fixtures with representative markets/odds."""
     serializer_class = FootballFixtureSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = (
-            FootballFixture.objects
-            .select_related('league', 'home_team', 'away_team')
-            .prefetch_related('markets__category', 'markets__outcomes')
-        )
-        # Default to upcoming scheduled fixtures; allow ?status=all for history.
-        if self.request.query_params.get('status') != 'all':
-            qs = qs.filter(status=FootballFixture.FixtureStatus.SCHEDULED,
-                           match_date__gte=timezone.now())
-        return qs.order_by('match_date')
+        if self.request.query_params.get('status') == 'all':
+            return (
+                FootballFixture.objects
+                .select_related('league', 'home_team', 'away_team')
+                .prefetch_related('markets__category', 'markets__outcomes')
+                .order_by('match_date')
+            )
+        # Default: the same "bettable right now" definition the WhatsApp
+        # flows use (upcoming SCHEDULED within the browse window, or LIVE,
+        # with an active market), LIVE sorted first -- previously
+        # SCHEDULED-only, which silently hid every LIVE fixture from the
+        # web portal even though WhatsApp already supports betting on them.
+        return _bettable_fixtures_qs().prefetch_related('markets__category', 'markets__outcomes')
 
 
 class WalletViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):

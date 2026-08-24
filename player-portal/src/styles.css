@@ -251,8 +251,21 @@ input::placeholder { color: var(--muted-2); }
   display: grid; place-items: center; font-weight: 800; font-size: 0.72rem; color: var(--ink-700);
 }
 .team-name { font-weight: 700; font-size: 0.94rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-score { font-weight: 800; font-size: 1.05rem; color: var(--ink); flex: none; padding: 0 2px; }
 .vs-mark {
   font-size: 0.68rem; font-weight: 800; color: var(--muted-2); flex: none; padding: 0 2px;
+}
+
+.live-chip {
+  font-size: 0.72rem; font-weight: 700; color: #991b1b; background: #fee2e2;
+  padding: 3px 9px; border-radius: var(--r-pill); display: inline-flex; align-items: center; gap: 5px;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--red); animation: live-pulse 1.4s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
 }
 
 .odds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
