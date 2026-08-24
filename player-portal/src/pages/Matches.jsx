@@ -41,19 +41,29 @@ function SkeletonCards() {
 
 function FixtureCard({ fx }) {
   const o = odds(fx.markets);
+  const isLive = fx.status === 'LIVE';
   return (
     <div className="card fixture-card">
       <div className="fixture-meta">
         <span className="league-chip">{fx.league}</span>
-        <span className="kickoff-chip"><IconClock size={13} /> {timeLabel(fx.match_date)}</span>
+        {isLive ? (
+          <span className="live-chip">
+            <span className="live-dot" />
+            LIVE{fx.elapsed_minutes != null ? ` · ${fx.elapsed_minutes}'` : ''}
+          </span>
+        ) : (
+          <span className="kickoff-chip"><IconClock size={13} /> {timeLabel(fx.match_date)}</span>
+        )}
       </div>
       <div className="matchup">
         <div className="team">
           <div className="team-badge">{initials(fx.home_team)}</div>
           <div className="team-name">{fx.home_team}</div>
+          {isLive && fx.home_team_score != null && <div className="team-score">{fx.home_team_score}</div>}
         </div>
-        <div className="vs-mark">VS</div>
+        <div className="vs-mark">{isLive ? '' : 'VS'}</div>
         <div className="team" style={{ justifyContent: 'flex-end', textAlign: 'right' }}>
+          {isLive && fx.away_team_score != null && <div className="team-score">{fx.away_team_score}</div>}
           <div className="team-name">{fx.away_team}</div>
           <div className="team-badge">{initials(fx.away_team)}</div>
         </div>
@@ -86,21 +96,24 @@ export default function Matches() {
   }, []);
 
   const groups = useMemo(() => {
+    const live = [];
     const byDay = new Map();
     for (const fx of fixtures) {
+      if (fx.status === 'LIVE') { live.push(fx); continue; }
       const key = dayLabel(fx.match_date);
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key).push(fx);
     }
-    return Array.from(byDay.entries());
+    const dayGroups = Array.from(byDay.entries());
+    return live.length ? [['🔴 Live Now', live], ...dayGroups] : dayGroups;
   }, [fixtures]);
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Upcoming Matches</h1>
-          <p className="muted small">Live odds from BetBlitz. Reply <b>bet</b> on WhatsApp to place a bet.</p>
+          <h1>Matches</h1>
+          <p className="muted small">Live and upcoming odds from BetBlitz. Reply <b>bet</b> on WhatsApp to place a bet.</p>
         </div>
       </div>
 

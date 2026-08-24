@@ -231,6 +231,7 @@ class FetchLiveOddsTaskTests(TestCase):
             ]}]}],
         }]
         with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', return_value=[]), \
                 patch.object(APIFootballV3Client, 'get_live_odds', return_value=live_response) as mock_get_live_odds:
             fetch_live_odds_v3_task()
         mock_get_live_odds.assert_called_once_with(fixture_id=555)
@@ -253,6 +254,7 @@ class FetchLiveOddsTaskTests(TestCase):
             }]
 
         with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', return_value=[]), \
                 patch.object(APIFootballV3Client, 'get_live_odds', side_effect=fake_get_live_odds) as mock_get_live_odds:
             fetch_live_odds_v3_task()
 
@@ -280,6 +282,7 @@ class FetchLiveOddsTaskTests(TestCase):
             }]
 
         with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', return_value=[]), \
                 patch.object(APIFootballV3Client, 'get_live_odds', side_effect=fake_get_live_odds):
             fetch_live_odds_v3_task()  # must not raise
 

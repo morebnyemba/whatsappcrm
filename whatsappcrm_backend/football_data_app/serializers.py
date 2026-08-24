@@ -39,7 +39,7 @@ class FootballFixtureSerializer(serializers.ModelSerializer):
         model = FootballFixture
         fields = [
             'id', 'league', 'home_team', 'away_team', 'match_date', 'status',
-            'home_team_score', 'away_team_score', 'markets', 'prediction',
+            'home_team_score', 'away_team_score', 'elapsed_minutes', 'markets', 'prediction',
         ]
 
     def get_prediction(self, obj):
