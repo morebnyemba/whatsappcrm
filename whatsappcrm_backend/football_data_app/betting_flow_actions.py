@@ -299,7 +299,7 @@ def handle_betting_ux_action(contact, action_type, flow_context, user, selection
             fx = bet.market_outcome.market.fixture
             lines.append(f"• {fx.home_team.name} v {fx.away_team.name}")
             lines.append(f"   {bet.market_outcome.market.category.name}: "
-                         f"{bet.market_outcome.outcome_name} @ {float(bet.market_outcome.odds):.2f} "
+                         f"{bet.market_outcome.outcome_name} @ {float(bet.agreed_odds):.2f} "
                          f"({bet.get_status_display()})")
         msg = "\n".join(lines)[:4096]
         flow_context['ticket_detail_message'] = msg
