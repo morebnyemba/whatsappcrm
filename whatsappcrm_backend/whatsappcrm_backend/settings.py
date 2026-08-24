@@ -232,6 +232,34 @@ CORS_ALLOWED_ORIGINS_STRING = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhos
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_STRING.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
+# --- Django Cache ---
+# Backs football_data_app.rate_limiter's API-Football rate limiting, which is
+# only correctly "distributed" (its own docstring's claim) if this is a
+# cache shared across every process that can call the API-Football client --
+# with no CACHES setting at all, Django silently falls back to LocMemCache
+# (in-process memory), so each worker container/process would get its own
+# independent 300-req/min budget instead of one shared one. That was a
+# latent bug (worked "by accident" while every API-Football task ran serially
+# in a single celery_cpu_worker process) that a second, concurrent worker
+# process would have turned into real API-Football rate-limit violations.
+# Reuses the same Redis instance as the Celery broker, on DB 1 so cache keys
+# never collide with broker/queue data on DB 0. Django 5's built-in
+# RedisCache backend needs no extra dependency.
+def _cache_redis_url_from_broker(broker_url: str) -> str:
+    if broker_url.startswith('redis://'):
+        return f"{broker_url.rsplit('/', 1)[0]}/1"
+    return broker_url
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.getenv(
+            'DJANGO_CACHE_REDIS_URL',
+            _cache_redis_url_from_broker(os.getenv('CELERY_BROKER_URL', 'redis://:@localhost:6379/0')),
+        ),
+    }
+}
+
 # --- Celery Configuration ---
 # Ensure your Redis server is running and accessible at this URL.
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://:@localhost:6379/0')
