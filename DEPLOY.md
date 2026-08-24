@@ -86,8 +86,9 @@ Environment overrides: `DOCKER_START_WAIT` (daemon-ready attempts, default 30).
 | `db` | PostgreSQL 15 |
 | `redis` | Redis 7 (password-protected) — Celery broker/result backend |
 | `backend` | Django app (Gunicorn/Daphne) on port 8000 |
-| `celery_io_worker` | Celery worker, `celery` queue (I/O, gevent) |
-| `celery_cpu_worker` | Celery worker, `cpu_heavy` queue (data/settlement) |
+| `celery_io_worker` | Celery worker, `celery` queue (general I/O, gevent) |
+| `celery_football_io_worker` | Celery worker, `football_io` queue (API-Football odds/events/scores/settlement, gevent) |
+| `celery_cpu_worker` | Celery worker, `cpu_heavy` queue (fixture outcome predictions only — genuinely CPU-bound) |
 | `celery_beat` | Celery beat scheduler (django-celery-beat) |
 | `frontend` | Admin CRM (React/Vite) — served at `admin.<domain>` |
 | `player_portal` | Player portal (React/Vite) — served at `app.<domain>` |

@@ -474,7 +474,7 @@ def _refresh_live_scores(client: APIFootballV3Client, live_fixtures: List[Footba
         logger.info(f"_refresh_live_scores: updated the score for {len(to_update)} live fixture(s).")
 
 
-@shared_task(name="football_data_app.fetch_live_odds_v3", queue='cpu_heavy')
+@shared_task(name="football_data_app.fetch_live_odds_v3", queue='football_io')
 def fetch_live_odds_v3_task():
     """
     Refreshes in-play odds (and, alongside them, the live score) for every
@@ -533,7 +533,7 @@ def fetch_live_odds_v3_task():
 
 # --- PIPELINE 1: Full Data Update (Leagues, Events, Odds) ---
 
-@shared_task(name="football_data_app.run_api_football_v3_full_update", queue='cpu_heavy')
+@shared_task(name="football_data_app.run_api_football_v3_full_update", queue='football_io')
 def run_api_football_v3_full_update_task():
     """Main entry point for the API-Football v3 data fetching pipeline."""
     logger.info("="*80)
@@ -553,7 +553,7 @@ def run_api_football_v3_full_update_task():
         raise
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300, queue='cpu_heavy')
+@shared_task(bind=True, max_retries=3, default_retry_delay=300, queue='football_io')
 def fetch_and_update_leagues_v3_task(self, _=None):
     """Step 1: Fetches all available football leagues from API-Football v3."""
     logger.info("="*80)
@@ -630,7 +630,7 @@ def fetch_and_update_leagues_v3_task(self, _=None):
         raise self.retry(exc=e)
 
 
-@shared_task(name="football_data_app._prepare_and_launch_event_odds_chord_v3", queue='cpu_heavy')
+@shared_task(name="football_data_app._prepare_and_launch_event_odds_chord_v3", queue='football_io')
 def _prepare_and_launch_event_odds_chord_v3(league_ids: List[int]):
     """
     Intermediate task: Receives league_ids and launches event fetching chord.
@@ -682,7 +682,7 @@ def _prepare_and_launch_event_odds_chord_v3(league_ids: List[int]):
         raise
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=600, queue='cpu_heavy')
+@shared_task(bind=True, max_retries=2, default_retry_delay=600, queue='football_io')
 def fetch_events_for_league_v3_task(self, league_id: int):
     """Fetches and updates events (fixtures) for a single league from API-Football v3."""
     logger.info("="*80)
@@ -887,7 +887,7 @@ def fetch_events_for_league_v3_task(self, league_id: int):
         return {"league_id": league_id, "status": "error", "message": str(e)}
 
 
-@shared_task(bind=True, name="football_data_app.dispatch_odds_fetching_after_events_v3", queue='cpu_heavy')
+@shared_task(bind=True, name="football_data_app.dispatch_odds_fetching_after_events_v3", queue='football_io')
 def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches=None):
     """
     Dispatches individual tasks to fetch odds for each upcoming fixture that
@@ -967,7 +967,7 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
     logger.info("="*80)
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='cpu_heavy')
+@shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='football_io')
 def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
     """Fetches odds for a single fixture from API-Football v3."""
     # Add jitter to spread out API requests
@@ -1030,7 +1030,7 @@ def fetch_odds_for_single_event_v3_task(self, fixture_id: int):
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='cpu_heavy')
+@shared_task(bind=True, max_retries=2, default_retry_delay=300, queue='football_io')
 def fetch_odds_for_league_date_v3_task(self, league_pk: int, date_str: str):
     """
     Fetch odds in bulk for every fixture of one league on one day.
@@ -1111,7 +1111,7 @@ def fetch_odds_for_league_date_v3_task(self, league_pk: int, date_str: str):
 
 # --- PIPELINE 2: Score Fetching and Settlement ---
 
-@shared_task(name="football_data_app.run_score_and_settlement_v3_task", queue='cpu_heavy')
+@shared_task(name="football_data_app.run_score_and_settlement_v3_task", queue='football_io')
 def run_score_and_settlement_v3_task():
     """Entry point for fetching scores and updating statuses using API-Football v3."""
     logger.info("="*80)
@@ -1157,7 +1157,7 @@ def run_score_and_settlement_v3_task():
         raise
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=900, queue='cpu_heavy')
+@shared_task(bind=True, max_retries=2, default_retry_delay=900, queue='football_io')
 def fetch_scores_for_league_v3_task(self, league_id: int):
     """
     Fetches live and finished match scores for a league from API-Football v3.
@@ -1384,7 +1384,7 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
 
 # --- Task Aliases for Backward Compatibility ---
 
-@shared_task(name="football_data_app.run_api_football_v3_full_update_alias", queue='cpu_heavy')
+@shared_task(name="football_data_app.run_api_football_v3_full_update_alias", queue='football_io')
 def run_api_football_v3_full_update():
     """
     Alias for run_api_football_v3_full_update_task with a simplified name.
@@ -1392,7 +1392,7 @@ def run_api_football_v3_full_update():
     return run_api_football_v3_full_update_task()
 
 
-@shared_task(name="football_data_app.run_score_and_settlement_v3_alias", queue='cpu_heavy')
+@shared_task(name="football_data_app.run_score_and_settlement_v3_alias", queue='football_io')
 def run_score_and_settlement_v3():
     """
     Alias for run_score_and_settlement_v3_task with a simplified name.

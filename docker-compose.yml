@@ -103,10 +103,49 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Handles genuinely CPU-bound work only (fixture outcome predictions) --
+  # prefork + low concurrency is the right shape for that, but everything
+  # else used to share this same single-concurrency queue too (see
+  # celery_football_io_worker below), which meant a burst of odds/events
+  # tasks could fully block the every-minute live-odds refresh behind it.
   celery_cpu_worker:
     build: ./whatsappcrm_backend
     container_name: whatsappcrm_celery_cpu_worker
     command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --pool=prefork --concurrency=1
+    volumes:
+      - ./whatsappcrm_backend:/app
+    env_file:
+      - ./.env # Load variables from the root .env file
+    environment:
+      - DJANGO_SETTINGS_MODULE=whatsappcrm_backend.settings
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=db
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # API-Football odds/events/scores/live-odds tasks: all network-I/O-bound
+  # (waiting on HTTP responses, not CPU), previously serialized one-at-a-time
+  # through celery_cpu_worker alongside genuinely CPU-bound prediction work.
+  # A burst from the ~30-min full-update pipeline (events + odds fetched
+  # across every active league) could take long enough to starve the
+  # every-minute live-odds refresh and delay bet settlement behind it.
+  # gevent (like celery_io_worker) gives real I/O concurrency here; the
+  # shared APIFootballRateLimiter (Django cache-backed, not per-process)
+  # still enforces the true API-Football rate limit across every worker, so
+  # raising this concurrency cannot cause the provider's limit to be
+  # exceeded -- it only lets queued tasks stop blocking each other.
+  # Tune CELERY_FOOTBALL_IO_CONCURRENCY in .env to match your host's
+  # capacity (each concurrent task holds its own DB connection).
+  celery_football_io_worker:
+    build: ./whatsappcrm_backend
+    container_name: whatsappcrm_celery_football_io_worker
+    command: celery -A whatsappcrm_backend worker -Q football_io -l INFO --pool=gevent --concurrency=${CELERY_FOOTBALL_IO_CONCURRENCY:-8}
     volumes:
       - ./whatsappcrm_backend:/app
     env_file:

@@ -2,7 +2,17 @@
 
 ## Overview
 
-This document explains the Celery worker setup for the WhatsApp CRM application, which now uses **two separate workers** for better task isolation and performance optimization.
+This document explains the Celery worker setup for the WhatsApp CRM application, which now uses **three separate workers** for better task isolation and performance optimization.
+
+> **Update**: `celery_cpu_worker` originally also handled all API-Football
+> odds/events/scores/settlement tasks. Those are network-I/O-bound (waiting
+> on HTTP responses, not CPU), not a good fit for a `prefork`,
+> `--concurrency=1` pool -- a burst from the ~30-minute full-update pipeline
+> could take long enough to fully block the every-minute live-odds refresh
+> and bet settlement behind it. They now run on a dedicated
+> `celery_football_io_worker` (`football_io` queue, `gevent` pool, real
+> concurrency). `celery_cpu_worker` now handles only the genuinely CPU-bound
+> fixture-prediction task.
 
 > **⚠️ SECURITY NOTE**: The `.env` files in this repository contain sensitive credentials and should NOT be committed to version control in production deployments. Use `.env.example` as a template and ensure `.env` files are properly excluded via `.gitignore`.
 
@@ -46,17 +56,25 @@ Two specialized workers are now configured:
   - Referral tasks
   - Media management
 
-#### **Football Data Worker** (`celery_cpu_worker`)
-- **Container Name**: `whatsappcrm_celery_cpu_worker`
-- **Queue**: `cpu_heavy`
-- **Pool Type**: `prefork` (for CPU-bound tasks) - **Note**: Pool type must be explicitly set in docker-compose.yml command with `--pool=prefork`
-- **Concurrency**: 1 worker
+#### **Football Data Worker** (`celery_football_io_worker`)
+- **Container Name**: `whatsappcrm_celery_football_io_worker`
+- **Queue**: `football_io`
+- **Pool Type**: `gevent` (network-I/O-bound: HTTP calls to API-Football, not CPU work) - **Note**: Pool type must be explicitly set in docker-compose.yml command with `--pool=gevent`
+- **Concurrency**: 8 by default, tunable via `CELERY_FOOTBALL_IO_CONCURRENCY` in `.env` (each concurrent task holds its own DB connection -- size to your host)
 - **Handles**:
-  - Football fixture fetching
-  - Odds updates
+  - Football fixture/league/event fetching
+  - Pre-match and live odds updates
   - Score fetching
   - Bet settlement
   - Ticket processing
+
+#### **Prediction Worker** (`celery_cpu_worker`)
+- **Container Name**: `whatsappcrm_celery_cpu_worker`
+- **Queue**: `cpu_heavy`
+- **Pool Type**: `prefork` (for genuinely CPU-bound tasks) - **Note**: Pool type must be explicitly set in docker-compose.yml command with `--pool=prefork`
+- **Concurrency**: 1 worker
+- **Handles**:
+  - Fixture outcome predictions only (`football_data_app.prediction_tasks.*`)
 
 ### 3. Task Queue Configuration
 
@@ -71,21 +89,24 @@ Currently, tasks are routed based on the `queue` parameter in their task decorat
 - `referrals.tasks.*` - Referral tasks
 - `media_manager.tasks.*` - Media management
 
-#### cpu_heavy queue (handled by celery_cpu_worker)
-- `football_data_app.tasks.*` - Football fixture fetching
-- `football_data_app.tasks_apifootball.*` - Odds updates
-- `football_data_app.tasks_api_football_v3.*` - API Football v3 tasks
+#### football_io queue (handled by celery_football_io_worker)
+- `football_data_app.tasks_apifootball.*` - Legacy odds/settlement helpers
+- `football_data_app.tasks_api_football_v3.*` - API Football v3 tasks (odds, events, scores, live odds, settlement)
 
-Tasks default to the `celery` queue unless explicitly specified with `queue='cpu_heavy'` in the task decorator.
+#### cpu_heavy queue (handled by celery_cpu_worker)
+- `football_data_app.prediction_tasks.*` - Fixture outcome predictions (genuinely CPU-bound)
+
+Tasks default to the `celery` queue unless explicitly specified with `queue='football_io'` or `queue='cpu_heavy'` in the task decorator.
 
 ## Benefits
 
-1. **Task Isolation**: Football data processing won't interfere with WhatsApp message handling
-2. **Optimized Performance**: 
+1. **Task Isolation**: Football data processing won't interfere with WhatsApp message handling, and neither blocks the other
+2. **Optimized Performance**:
    - Gevent pool for I/O-bound WhatsApp tasks (handles many concurrent connections)
-   - Prefork pool for CPU-bound football data tasks (better for data processing)
+   - Gevent pool for I/O-bound API-Football tasks too -- real concurrency instead of a single-process queue, so the every-minute live-odds refresh and bet settlement can't get stuck behind a heavy odds/events batch
+   - Prefork pool for the genuinely CPU-bound prediction task (better for numeric computation)
 3. **Better Resource Management**: Each worker can be scaled independently
-4. **Improved Reliability**: If one worker crashes, the other continues operating
+4. **Improved Reliability**: If one worker crashes, the others continue operating
 5. **Concurrent Message Processing**: With gevent pool, multiple messages can be sent simultaneously (fixes issue where only first fixture message was sent)
 
 ## Important: Pool Type Configuration
@@ -103,6 +124,9 @@ If not specified, the worker defaults to the 'solo' pool from settings.py, which
 celery_io_worker:
   command: celery -A whatsappcrm_backend worker -Q celery -l INFO --pool=gevent --concurrency=20
 
+celery_football_io_worker:
+  command: celery -A whatsappcrm_backend worker -Q football_io -l INFO --pool=gevent --concurrency=${CELERY_FOOTBALL_IO_CONCURRENCY:-8}
+
 celery_cpu_worker:
   command: celery -A whatsappcrm_backend worker -Q cpu_heavy -l INFO --pool=prefork --concurrency=1
 ```
@@ -111,11 +135,12 @@ celery_cpu_worker:
 
 ## Docker Compose Services
 
-The `docker-compose.yml` now includes three Celery-related services:
+The `docker-compose.yml` now includes four Celery-related services:
 
-1. **celery_io_worker** (WhatsApp worker)
-2. **celery_worker_football** (Football data worker)
-3. **celery_beat** (Scheduler for periodic tasks)
+1. **celery_io_worker** (general WhatsApp/CRM worker)
+2. **celery_football_io_worker** (football data worker -- odds/events/scores/settlement)
+3. **celery_cpu_worker** (prediction worker -- genuinely CPU-bound only)
+4. **celery_beat** (Scheduler for periodic tasks)
 
 > **⚠️ Important**: After deployment, you must configure periodic tasks in Django Admin. See [SCHEDULED_TASKS_SETUP.md](SCHEDULED_TASKS_SETUP.md) for detailed instructions on scheduling football data updates and bet settlement tasks.
 
@@ -131,6 +156,19 @@ CELERY_BROKER_URL='redis://:your_redis_password@redis:6379/0'
 # Worker Configuration (for WhatsApp worker only)
 CELERY_WORKER_POOL_TYPE=gevent
 CELERY_WORKER_CONCURRENCY=100
+
+# Football data worker concurrency (celery_football_io_worker). Each
+# concurrent task holds its own DB connection -- size to your host. Default
+# is 8 if unset.
+CELERY_FOOTBALL_IO_CONCURRENCY=8
+
+# Optional: point the Django cache (API-Football rate limiter) at a
+# different Redis instance/DB than the Celery broker. Defaults to the same
+# host/password as CELERY_BROKER_URL, on DB 1 instead of DB 0, so cache keys
+# never collide with broker/queue data. The rate limiter only works as a
+# true cross-process limit if this cache is actually shared -- do not point
+# it at per-process/local memory.
+# DJANGO_CACHE_REDIS_URL='redis://:your_redis_password@redis:6379/1'
 ```
 
 ## Deployment
@@ -148,8 +186,9 @@ docker-compose up -d --build
 docker-compose ps
 
 # Check worker logs
-docker-compose logs -f celery_worker
-docker-compose logs -f celery_worker_football
+docker-compose logs -f celery_io_worker
+docker-compose logs -f celery_football_io_worker
+docker-compose logs -f celery_cpu_worker
 ```
 
 ## Monitoring
@@ -160,7 +199,10 @@ To check if tasks are being routed correctly:
 # Monitor WhatsApp worker
 docker exec -it whatsappcrm_celery_io_worker celery -A whatsappcrm_backend inspect active
 
-# Monitor Football worker
+# Monitor football data worker (odds/events/scores/settlement)
+docker exec -it whatsappcrm_celery_football_io_worker celery -A whatsappcrm_backend inspect active
+
+# Monitor prediction worker
 docker exec -it whatsappcrm_celery_cpu_worker celery -A whatsappcrm_backend inspect active
 
 # Check registered tasks
@@ -190,6 +232,7 @@ If you see authentication errors:
 1. Check worker logs for errors:
    ```bash
    docker-compose logs celery_io_worker
+   docker-compose logs celery_football_io_worker
    docker-compose logs celery_cpu_worker
    ```
 
@@ -209,6 +252,7 @@ If you see authentication errors:
 4. Verify task queue configuration:
    - Check that tasks have the correct `queue` parameter in their decorator
    - `queue='celery'` → handled by celery_io_worker
+   - `queue='football_io'` → handled by celery_football_io_worker
    - `queue='cpu_heavy'` → handled by celery_cpu_worker
 
 ### Tasks Going to Wrong Queue
@@ -225,17 +269,17 @@ To scale workers independently:
 # Scale WhatsApp worker to 2 instances
 docker-compose up -d --scale celery_io_worker=2
 
-# Scale Football worker to 3 instances
-docker-compose up -d --scale celery_worker_football=3
+# Scale football data worker to 3 instances
+docker-compose up -d --scale celery_football_io_worker=3
 ```
 
-Note: When scaling, you'll need to remove the `container_name` directives or use different names.
+Note: When scaling, you'll need to remove the `container_name` directives or use different names. Also note that if you scale `celery_football_io_worker` across multiple *containers* (not just raising `CELERY_FOOTBALL_IO_CONCURRENCY` within one), the API-Football rate limiter's cache-backed counter must actually be a shared Redis cache (see `DJANGO_CACHE_REDIS_URL` above) for the 300-req/min budget to still apply across all of them combined, rather than each replica getting its own independent budget.
 
 ## Future Improvements
 
 Consider:
 1. Adding Flower for web-based monitoring
 2. Implementing task prioritization
-3. Adding more specialized workers for different task types
+3. ~~Adding more specialized workers for different task types~~ — done: football data (I/O-bound) now has its own worker, separate from CPU-bound predictions
 4. Setting up alerts for failed tasks
 5. Implementing circuit breakers for external API calls
