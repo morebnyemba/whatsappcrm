@@ -231,7 +231,27 @@ load_flow_definitions          # (re)load WhatsApp conversational flows
 football_league_setup_v3       # fetch leagues from API-Football v3
 createsuperuser                # add an admin user
 update_affiliate_percentages   # one-off: bump an existing Agent Program's commission % off its old 5% default (see below)
+prune_old_fixtures             # housekeeping: drop old never-bet-on fixtures/odds (dry run by default)
 ```
+
+### Housekeeping: pruning old fixture data
+
+Fixtures, markets and odds are never deleted automatically, so those tables
+grow for the life of the deployment — and every hot query (browse, the
+per-minute live-odds refresh, the odds-dispatch sweep) reads that table.
+`prune_old_fixtures` drops long-finished fixtures **that nobody ever bet on**:
+
+```bash
+docker compose exec backend python manage.py prune_old_fixtures                # dry run: report only
+docker compose exec backend python manage.py prune_old_fixtures --apply        # actually delete
+docker compose exec backend python manage.py prune_old_fixtures --days 365 --apply
+```
+
+It never deletes a fixture that has any bet attached, at any age — the FK
+chain cascades into `Bet` rows, so doing so would destroy settled betting
+history. `SCHEDULED` and `LIVE` fixtures are never touched either. Safe to run
+from cron (e.g. monthly); it is deliberately **not** on the Celery Beat
+schedule, so deleting production data is always an explicit choice.
 
 ---
 
