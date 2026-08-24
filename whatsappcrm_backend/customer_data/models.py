@@ -334,6 +334,21 @@ class Bet(models.Model):
     # (settlement reads bet.market_outcome.odds), so it would lose the very
     # meaning the record exists to preserve.
     market_outcome = models.ForeignKey('football_data_app.MarketOutcome', on_delete=models.PROTECT, related_name='bets')
+    # The price the bettor actually agreed to, captured at placement.
+    #
+    # This is what the bet is settled at. Reading the live
+    # market_outcome.odds at settlement time instead means paying out at
+    # whatever the price drifted to during the match -- with in-play odds
+    # refreshing every 60 seconds, a winning selection's price has usually
+    # collapsed by full time, so the bettor would be paid a fraction of what
+    # they were quoted (and an underdog that drifted out would be overpaid).
+    #
+    # Nullable only so that bets placed before this field existed keep
+    # working; those fall back to the live FK, which is the old behaviour.
+    # Anything placed from now on always has it set.
+    odds = models.DecimalField(
+        max_digits=10, decimal_places=3, null=True, blank=True,
+        help_text="Odds agreed at placement. Settlement pays at this price, not the current market price.")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     potential_winnings = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=BetStatus.choices, default=BetStatus.PENDING)
@@ -343,6 +358,28 @@ class Bet(models.Model):
     def __str__(self):
         user_display = self.ticket.user.username if self.ticket and self.ticket.user else "Anonymous"
         return f"{user_display}'s bet on {self.market_outcome} - ${self.amount}"
+
+    @property
+    def agreed_odds(self):
+        """The price this bet settles at.
+
+        Prefers the odds captured at placement; falls back to the live
+        MarketOutcome only for bets placed before that field existed (where
+        it's the best information available). Always use this rather than
+        self.market_outcome.odds when computing money -- the latter is the
+        current market price, which for an in-play market has moved since
+        placement.
+        """
+        if self.odds is not None:
+            return self.odds
+        # Legacy bets, placed before `odds` existed, didn't store the price --
+        # but potential_winnings was computed as amount * odds at placement,
+        # so the agreed price is exactly recoverable from what they did store.
+        # That's strictly better than reading the live market price, which for
+        # an in-play market has moved since.
+        if self.amount and self.potential_winnings:
+            return (self.potential_winnings / self.amount).quantize(Decimal('0.001'))
+        return self.market_outcome.odds
 
     def place_bet(self):
         """Place a bet"""

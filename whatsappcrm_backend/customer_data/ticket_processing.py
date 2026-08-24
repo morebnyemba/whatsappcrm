@@ -163,6 +163,10 @@ def process_bet_ticket_submission(
                 Bet.objects.create(
                     ticket=bet_ticket,
                     market_outcome=outcome,
+                    # Freeze the agreed price onto the bet. Settlement pays at
+                    # this, not at whatever the market has moved to by full
+                    # time -- see Bet.agreed_odds.
+                    odds=outcome.odds,
                     amount=bet_amount, # Use the full stake
                     potential_winnings=potential_winnings_for_bet, # Provide the value here
                     status='PENDING'

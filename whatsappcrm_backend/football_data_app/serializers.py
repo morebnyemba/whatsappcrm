@@ -97,7 +97,9 @@ class BetSerializer(serializers.ModelSerializer):
     fixture = serializers.SerializerMethodField()
     market = serializers.CharField(source='market_outcome.market.category.name', read_only=True)
     outcome = serializers.CharField(source='market_outcome.outcome_name', read_only=True)
-    odds = serializers.DecimalField(source='market_outcome.odds', max_digits=10, decimal_places=3, coerce_to_string=False, read_only=True)
+    # agreed_odds, not market_outcome.odds -- the price this bet was actually
+    # struck at, which for an in-play market has since moved.
+    odds = serializers.DecimalField(source='agreed_odds', max_digits=10, decimal_places=3, coerce_to_string=False, read_only=True)
 
     class Meta:
         model = Bet

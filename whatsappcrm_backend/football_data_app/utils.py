@@ -902,7 +902,12 @@ def settle_ticket(ticket_id: int):
                 total_odds = Decimal('1.0')
                 for bet in bets:
                     if bet.status == 'WON':
-                        total_odds *= bet.market_outcome.odds
+                        # bet.agreed_odds, NOT bet.market_outcome.odds: the
+                        # latter is the current market price, which for an
+                        # in-play market has moved (usually collapsed) since
+                        # this bet was placed. Paying at it would settle the
+                        # bet at a price the bettor never agreed to.
+                        total_odds *= bet.agreed_odds
                     # For REFUNDED/PUSH bets, multiply by 1.0 (no effect)
                 
                 # Calculate actual winnings

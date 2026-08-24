@@ -525,7 +525,7 @@ def _ticket_detail(flow_token, ticket_id):
         fx = bet.market_outcome.market.fixture
         lines.append(f"• {fx.home_team.name} v {fx.away_team.name}")
         lines.append(f"   {bet.market_outcome.market.category.name}: "
-                     f"{bet.market_outcome.outcome_name} @ {float(bet.market_outcome.odds):.2f} "
+                     f"{bet.market_outcome.outcome_name} @ {float(bet.agreed_odds):.2f} "
                      f"({bet.get_status_display()})")
     return _done_screen("\n".join(lines), heading=f"Ticket #{ticket.id}")
 
