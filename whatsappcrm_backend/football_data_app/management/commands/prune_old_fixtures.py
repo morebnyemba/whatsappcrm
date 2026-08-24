@@ -48,7 +48,12 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f"Deleted {result['deleted']} fixture(s) older than {days} days with no betting history."
             ))
+        if result.get('protected'):
+            self.stdout.write(self.style.WARNING(
+                f"{result['protected']} fixture(s) were skipped because they still had bets "
+                f"attached (betting history is never deleted)."
+            ))
         self.stdout.write(
-            "Fixtures with any bet attached were left untouched (deleting them would "
-            "cascade into Bet rows and destroy settled betting history)."
+            "Fixtures with any bet attached are left untouched -- Bet.market_outcome is "
+            "PROTECT, so deleting them is refused rather than destroying betting history."
         )

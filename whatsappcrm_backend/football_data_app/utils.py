@@ -4,6 +4,7 @@ import re
 import logging
 import statistics
 from django.db import transaction
+from django.db.models import ProtectedError
 from django.db.models import Q, Prefetch
 from django.apps import apps
 from django.utils import timezone
@@ -40,13 +41,18 @@ def prune_old_fixtures(older_than_days: int = 180, dry_run: bool = False, batch_
     sweep, settlement), unbounded growth slows all of them down forever.
 
     SAFETY -- the FK chain is:
-        FootballFixture -CASCADE-> Market -CASCADE-> MarketOutcome -CASCADE-> Bet
+        FootballFixture -CASCADE-> Market -CASCADE-> MarketOutcome -PROTECT-> Bet
 
-    so deleting a fixture would silently take any Bet rows hanging off it
-    with it, destroying settled betting history (financial/audit records).
-    This therefore only ever deletes fixtures that have **no Bet at all**
-    referencing any of their outcomes -- i.e. pure never-bet-on market data.
-    A fixture anyone ever placed a bet on is kept forever, regardless of age.
+    Bets are financial/audit records, so this only ever deletes fixtures that
+    have **no Bet at all** referencing any of their outcomes -- i.e. pure
+    never-bet-on market data. A fixture anyone ever placed a bet on is kept
+    forever, regardless of age.
+
+    That last link is PROTECT (see customer_data.models.Bet.market_outcome),
+    so this is belt and braces: the query below excludes bet-bearing
+    fixtures, and if one ever slipped through anyway the delete raises
+    ProtectedError rather than destroying the bet. The loop below catches
+    that and skips the fixture instead of aborting the run.
 
     Args:
         older_than_days: only consider fixtures whose match_date is at least
@@ -85,23 +91,50 @@ def prune_old_fixtures(older_than_days: int = 180, dry_run: bool = False, batch_
         return {'eligible': total, 'deleted': 0, 'dry_run': dry_run}
 
     deleted = 0
+    # Bet.market_outcome is PROTECT, so a fixture that somehow still has a bet
+    # under it makes .delete() raise instead of quietly destroying the bet.
+    # That's the desired backstop, but it must not abort the whole run (or,
+    # worse, spin forever re-selecting the same undeletable batch), so any
+    # protected id is recorded and excluded from subsequent batches.
+    protected_ids = set()
     while True:
         batch_ids = list(
             FootballFixture.objects.filter(
                 status__in=terminal, match_date__lt=cutoff,
             ).exclude(
                 markets__outcomes__bets__isnull=False
+            ).exclude(
+                id__in=protected_ids
             ).values_list('id', flat=True)[:batch_size]
         )
         if not batch_ids:
             break
-        with transaction.atomic():
-            count, _detail = FootballFixture.objects.filter(id__in=batch_ids).delete()
-        deleted += len(batch_ids)
+        try:
+            with transaction.atomic():
+                FootballFixture.objects.filter(id__in=batch_ids).delete()
+            deleted += len(batch_ids)
+        except ProtectedError:
+            # A bet exists under something in this batch (e.g. placed between
+            # the select and the delete). Retry the batch one at a time so a
+            # single protected fixture doesn't block the rest of it.
+            for fixture_id in batch_ids:
+                try:
+                    with transaction.atomic():
+                        FootballFixture.objects.filter(id=fixture_id).delete()
+                    deleted += 1
+                except ProtectedError:
+                    protected_ids.add(fixture_id)
+                    logger.warning(
+                        f"prune_old_fixtures: fixture {fixture_id} still has bets attached; "
+                        f"keeping it (betting history is never deleted)."
+                    )
         logger.info(f"prune_old_fixtures: deleted {deleted}/{total} fixture(s) so far...")
 
-    logger.info(f"prune_old_fixtures: done, deleted {deleted} fixture(s) with no betting history.")
-    return {'eligible': total, 'deleted': deleted, 'dry_run': False}
+    logger.info(
+        f"prune_old_fixtures: done, deleted {deleted} fixture(s) with no betting history"
+        + (f"; kept {len(protected_ids)} that unexpectedly still had bets." if protected_ids else ".")
+    )
+    return {'eligible': total, 'deleted': deleted, 'dry_run': False, 'protected': len(protected_ids)}
 
 
 def upsert_market_outcome(market, outcome_name, point_value, odds, is_active=True):
