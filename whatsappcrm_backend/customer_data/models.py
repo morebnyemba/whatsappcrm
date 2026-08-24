@@ -287,6 +287,18 @@ class BetTicket(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            # "My Bets" (both WhatsApp flows, the web portal and the AI
+            # gateway) always reads filter(user=...) ordered by -created_at,
+            # often further narrowed by status. The plain user FK index
+            # doesn't cover the ordering, so every read sorts that user's
+            # whole ticket history.
+            models.Index(fields=['user', '-created_at'], name='ticket_user_created_idx'),
+            # Settlement reconciliation sweeps filter(status='PENDING')
+            # across all users, which otherwise scans every ticket ever
+            # placed -- a table that only grows.
+            models.Index(fields=['status'], name='ticket_status_idx'),
+        ]
 
 class Bet(models.Model):
     """
