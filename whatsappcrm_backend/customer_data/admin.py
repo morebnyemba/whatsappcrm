@@ -2,13 +2,15 @@
 from django.contrib import admin, messages
 from django.db import transaction
 from django.utils import timezone
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
+from unfold.decorators import display as unfold_display
 from .models import CustomerProfile, UserWallet, WalletTransaction, BetTicket, Bet, PendingWithdrawal, ResponsibleGamblingControls
 from .utils import process_manual_deposit_approval, process_withdrawal_approval
 from football_data_app.models import FootballFixture
 from football_data_app.tasks import settle_fixture_pipeline_task
 
 @admin.register(CustomerProfile)
-class CustomerProfileAdmin(admin.ModelAdmin):
+class CustomerProfileAdmin(UnfoldModelAdmin):
     """
     Admin interface for Customer Profiles.
     """
@@ -24,7 +26,7 @@ class CustomerProfileAdmin(admin.ModelAdmin):
     )
 
 @admin.register(ResponsibleGamblingControls)
-class ResponsibleGamblingControlsAdmin(admin.ModelAdmin):
+class ResponsibleGamblingControlsAdmin(UnfoldModelAdmin):
     """Staff view to set self-exclusion, deposit/stake limits and KYC status."""
     list_display = ('user', 'kyc_verified', 'self_excluded_until', 'daily_deposit_limit', 'daily_stake_limit', 'updated_at')
     list_filter = ('kyc_verified',)
@@ -33,7 +35,7 @@ class ResponsibleGamblingControlsAdmin(admin.ModelAdmin):
 
 
 @admin.register(UserWallet)
-class UserWalletAdmin(admin.ModelAdmin):
+class UserWalletAdmin(UnfoldModelAdmin):
     """
     Admin interface for User Wallets.
     """
@@ -43,17 +45,32 @@ class UserWalletAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at')
 
 @admin.register(WalletTransaction)
-class WalletTransactionAdmin(admin.ModelAdmin):
+class WalletTransactionAdmin(UnfoldModelAdmin):
     """
     Admin interface for Wallet Transactions.
     """
-    list_display = ('id', 'wallet', 'transaction_type', 'amount', 'status', 'payment_method', 'reference', 'external_reference', 'payment_details', 'created_at')
+    list_display = ('id', 'wallet', 'transaction_type', 'amount_display', 'status_badge',
+                    'payment_method', 'reference', 'created_at')
     list_filter = ('transaction_type', 'status', 'payment_method')
     search_fields = ('wallet__user__username', 'reference', 'external_reference', 'description')
     raw_id_fields = ('wallet',)
     readonly_fields = ('created_at', 'external_reference', 'payment_details')
     date_hierarchy = 'created_at'
     actions = ['approve_selected_manual_deposits', 'approve_selected_withdrawal_requests', 'reject_selected_withdrawal_requests']
+
+    @unfold_display(description="Status", ordering="status", label={
+        "Completed": "success", "Pending": "warning",
+        "Failed": "danger", "Cancelled": "danger",
+    })
+    def status_badge(self, obj):
+        return obj.get_status_display()
+
+    @unfold_display(description="Amount", ordering="amount")
+    def amount_display(self, obj):
+        # Deductions are stored negative; show the sign explicitly so money
+        # out is never mistaken for money in at a glance.
+        sign = "-" if obj.amount < 0 else "+"
+        return f"{sign}${abs(obj.amount):,.2f}"
 
     def _process_transactions(self, request, queryset, action_name, process_func, filter_kwargs, success_message, **process_kwargs):
         """
@@ -152,7 +169,7 @@ class PendingWithdrawalAdmin(WalletTransactionAdmin):
         return 'N/A'
     phone_number.short_description = "Phone Number"
 
-class BetInline(admin.TabularInline):
+class BetInline(UnfoldTabularInline):
     """
     Inline for displaying Bets within a BetTicket.
     """
@@ -163,11 +180,12 @@ class BetInline(admin.TabularInline):
     fields = ('market_outcome', 'amount', 'status', 'potential_winnings', 'created_at', 'updated_at')
 
 @admin.register(BetTicket)
-class BetTicketAdmin(admin.ModelAdmin):
+class BetTicketAdmin(UnfoldModelAdmin):
     """
     Admin interface for Bet Tickets.
     """
-    list_display = ('id', 'user', 'total_stake', 'total_odds', 'potential_winnings', 'status', 'bet_type', 'created_at')
+    list_display = ('id', 'user', 'stake_display', 'odds_display', 'winnings_display',
+                    'status_badge', 'bet_type', 'created_at')
     list_filter = ('status', 'bet_type')
     search_fields = ('user__username', 'id')
     raw_id_fields = ('user',)
@@ -175,6 +193,27 @@ class BetTicketAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at', 'potential_winnings', 'total_odds')
     actions = ['force_settle_tickets']
     list_select_related = ('user',)
+
+    # Status is the single most scannable attribute in a betting list, so it
+    # renders as a coloured chip rather than plain text.
+    @unfold_display(description="Status", ordering="status", label={
+        "Won": "success", "Lost": "danger", "Placed": "info",
+        "Pending": "warning", "Refunded": "info", "Cancelled": "danger",
+    })
+    def status_badge(self, obj):
+        return obj.get_status_display()
+
+    @unfold_display(description="Stake", ordering="total_stake")
+    def stake_display(self, obj):
+        return f"${obj.total_stake:,.2f}"
+
+    @unfold_display(description="Odds", ordering="total_odds")
+    def odds_display(self, obj):
+        return f"{obj.total_odds:.2f}"
+
+    @unfold_display(description="To pay", ordering="potential_winnings")
+    def winnings_display(self, obj):
+        return f"${obj.potential_winnings:,.2f}"
 
     @admin.action(description="Force settle selected PENDING tickets")
     def force_settle_tickets(self, request, queryset):
@@ -211,7 +250,7 @@ class BetTicketAdmin(admin.ModelAdmin):
             self.message_user(request, "No pending bets found in the selected tickets, or their fixtures are already settled.", level=messages.WARNING)
 
 @admin.register(Bet)
-class BetAdmin(admin.ModelAdmin):
+class BetAdmin(UnfoldModelAdmin):
     """
     Admin interface for individual Bets.
     """

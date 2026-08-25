@@ -117,3 +117,96 @@ def _collect():
         'new_players_today': new_players_today,
         'player_float': player_float,
     }
+
+
+def unfold_dashboard_callback(request, context):
+    """Inject the operator KPIs into Unfold's admin index.
+
+    Wired up as UNFOLD["DASHBOARD_CALLBACK"]. Unfold calls this with the
+    admin index context and expects the (mutated) context back; the KPI
+    cards themselves are rendered by templates/admin/index.html.
+
+    Shaped as groups of cards here rather than in the template so the
+    template stays declarative and the "which cards, in what order, with
+    what emphasis" decisions live in Python where they can be tested.
+    """
+    from django.urls import reverse
+
+    stats = get_dashboard_stats()
+    if not stats:
+        context["kpi_groups"] = []
+        return context
+
+    groups = []
+
+    attention = []
+    if stats.get("pending_withdrawal_count"):
+        attention.append({
+            # Amount leads: it's what decides how urgently to act.
+            "value": f"${stats['pending_withdrawal_total']:,.2f}",
+            "label": "Withdrawals awaiting approval",
+            "sub": f"{stats['pending_withdrawal_count']} request(s)",
+            "url": reverse("admin:customer_data_pendingwithdrawal_changelist"),
+            "tone": "warning",
+            "icon": "payments",
+        })
+    if stats.get("pending_agent_applications"):
+        attention.append({
+            "value": stats["pending_agent_applications"],
+            "label": "Agent applications pending",
+            "sub": "awaiting review",
+            "url": reverse("admin:referrals_agentapplication_changelist") + "?status__exact=PENDING",
+            "tone": "info",
+            "icon": "person_add",
+        })
+    if stats.get("unsettled_finished"):
+        attention.append({
+            "value": stats["unsettled_finished"],
+            "label": "Open tickets on finished matches",
+            "sub": "settlement may be stalled",
+            "url": reverse("admin:customer_data_betticket_changelist") + "?status__exact=PLACED",
+            "tone": "danger",
+            "icon": "warning",
+        })
+    if attention:
+        groups.append({"title": "Needs your attention", "icon": "notifications", "cards": attention})
+
+    groups.append({
+        "title": "Live position",
+        "icon": "sensors",
+        "cards": [
+            {"value": stats["live_matches"], "label": "Matches live now", "sub": "in play",
+             "url": reverse("admin:football_data_app_footballfixture_changelist") + "?status__exact=LIVE",
+             "tone": "danger", "icon": "cell_tower"},
+            {"value": stats["open_ticket_count"], "label": "Open tickets",
+             "sub": f"${stats['open_stake']:,.2f} staked",
+             "url": reverse("admin:customer_data_betticket_changelist") + "?status__exact=PLACED",
+             "tone": "default", "icon": "confirmation_number"},
+            {"value": f"${stats['exposure']:,.2f}", "label": "Exposure",
+             "sub": "if every open ticket won", "tone": "warning", "icon": "balance"},
+            {"value": f"${stats['player_float']:,.2f}", "label": "Player balances held",
+             "sub": "total wallet float",
+             "url": reverse("admin:customer_data_userwallet_changelist"),
+             "tone": "default", "icon": "account_balance_wallet"},
+        ],
+    })
+
+    groups.append({
+        "title": "Today",
+        "icon": "trending_up",
+        "cards": [
+            {"value": f"${stats['stakes_today']:,.2f}", "label": "Stakes taken",
+             "sub": "money in", "tone": "success", "icon": "south"},
+            {"value": f"${stats['payouts_today']:,.2f}", "label": "Payouts",
+             "sub": "money out", "tone": "danger", "icon": "north"},
+            {"value": f"${stats['gross_today']:,.2f}", "label": "Gross",
+             "sub": "stakes minus payouts",
+             "tone": "success" if stats["gross_today_positive"] else "danger", "icon": "savings"},
+            {"value": stats["new_players_today"], "label": "New players",
+             "sub": f"${stats['deposits_today']:,.2f} deposited",
+             "tone": "info", "icon": "person_check"},
+        ],
+    })
+
+    context["kpi_groups"] = groups
+    return context

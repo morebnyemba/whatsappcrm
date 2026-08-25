@@ -1,177 +1,77 @@
-{% extends "admin/index.html" %}
-{% load i18n betblitz_admin %}
+{% extends "unfold/layouts/base_simple.html" %}
+{% load i18n %}
 
 {% comment %}
-  BetBlitz operator dashboard.
+  BetBlitz operator dashboard (Unfold).
 
-  Jazzmin's own admin/index.html renders the app/model list, which tells an
-  operator nothing about the state of the book. This prepends the numbers
-  someone actually opens the admin to check -- what needs approving, what's
-  live, how today is going -- then falls through to Jazzmin's normal content
-  via block.super, so nothing standard is lost.
+  The KPI groups come from UNFOLD["DASHBOARD_CALLBACK"] ->
+  customer_data.dashboard.unfold_dashboard_callback, which decides which
+  cards exist and how they're emphasised. This template just renders them,
+  then falls through to Unfold's normal app list so nothing standard is lost.
 
-  Uses AdminLTE's own small-box / info-box widgets (Jazzmin is AdminLTE-based)
-  so it looks native and inherits the configured theme colours rather than
-  hard-coded ones. Every card links through to the relevant filtered
-  changelist, so a number is always one click from the rows behind it.
+  Styling uses Tailwind utility classes, which is what Unfold itself is built
+  on, so the cards inherit the theme (including dark mode) instead of
+  hard-coding colours.
 {% endcomment %}
 
+{% comment %}
+  base_simple.html doesn't fill these in on its own -- Unfold's own
+  admin/index.html defines them, and we're replacing that file.
+{% endcomment %}
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+  {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block breadcrumbs %}{% endblock %}
+
 {% block content %}
-{% dashboard_stats as stats %}
+  {% for group in kpi_groups %}
+    <div class="mb-8">
+      <h2 class="flex items-center font-semibold gap-2 mb-3 text-font-important-light text-sm dark:text-font-important-dark">
+        <span class="material-symbols-outlined text-base leading-none">{{ group.icon }}</span>
+        {{ group.title }}
+      </h2>
 
-{% if stats %}
-<div class="betblitz-dashboard">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {% for card in group.cards %}
+          {% if card.url %}<a href="{{ card.url }}" class="group block">{% else %}<div class="block">{% endif %}
+            <div class="bg-white border border-base-200 rounded-default shadow-sm p-5 h-full transition-all
+                        {% if card.url %}group-hover:shadow-md group-hover:-translate-y-0.5{% endif %}
+                        dark:bg-base-900 dark:border-base-800">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="font-medium text-font-subtle-light text-xs uppercase tracking-wide truncate dark:text-font-subtle-dark">
+                    {{ card.label }}
+                  </p>
+                  <p class="font-bold mt-1 text-2xl text-font-important-light truncate dark:text-font-important-dark">
+                    {{ card.value }}
+                  </p>
+                  {% if card.sub %}
+                    <p class="mt-1 text-font-subtle-light text-xs truncate dark:text-font-subtle-dark">{{ card.sub }}</p>
+                  {% endif %}
+                </div>
 
-  {% if stats.needs_attention %}
-  <h5 class="mb-2 text-muted"><i class="fas fa-bell mr-1"></i> {% trans "Needs your attention" %}</h5>
-  <div class="row">
-    {% if stats.pending_withdrawal_count %}
-    <div class="col-lg-4 col-md-6 col-12">
-      <div class="small-box bg-warning">
-        <div class="inner">
-          {% comment %}
-            The amount leads, not the count: it's what decides how urgently an
-            operator needs to act. The count is the qualifier underneath.
-          {% endcomment %}
-          <h3>${{ stats.pending_withdrawal_total|floatformat:2 }}</h3>
-          <p>{% blocktrans count n=stats.pending_withdrawal_count %}{{ n }} withdrawal awaiting approval{% plural %}{{ n }} withdrawals awaiting approval{% endblocktrans %}</p>
-        </div>
-        <div class="icon"><i class="fas fa-hand-holding-usd"></i></div>
-        <a href="{% url 'admin:customer_data_pendingwithdrawal_changelist' %}" class="small-box-footer">
-          {% trans "Review" %} <i class="fas fa-arrow-circle-right"></i>
-        </a>
+                {% comment %}
+                  Tone maps to a colour so the attention row reads as urgent
+                  at a glance without needing to read the numbers.
+                {% endcomment %}
+                <span class="flex flex-none h-10 items-center justify-center rounded-default w-10
+                  {% if card.tone == 'danger' %}bg-red-50 text-red-600 dark:bg-red-500/20 dark:text-red-400
+                  {% elif card.tone == 'warning' %}bg-amber-50 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400
+                  {% elif card.tone == 'success' %}bg-green-50 text-green-600 dark:bg-green-500/20 dark:text-green-400
+                  {% elif card.tone == 'info' %}bg-blue-50 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400
+                  {% else %}bg-primary-50 text-primary-600 dark:bg-primary-500/20 dark:text-primary-400{% endif %}">
+                  <span class="material-symbols-outlined text-xl leading-none">{{ card.icon }}</span>
+                </span>
+              </div>
+            </div>
+          {% if card.url %}</a>{% else %}</div>{% endif %}
+        {% endfor %}
       </div>
     </div>
-    {% endif %}
+  {% endfor %}
 
-    {% if stats.pending_agent_applications %}
-    <div class="col-lg-4 col-md-6 col-12">
-      <div class="small-box bg-info">
-        <div class="inner">
-          <h3>{{ stats.pending_agent_applications }}</h3>
-          <p>{% trans "Agent applications pending" %}</p>
-        </div>
-        <div class="icon"><i class="fas fa-user-plus"></i></div>
-        <a href="{% url 'admin:referrals_agentapplication_changelist' %}?status__exact=PENDING" class="small-box-footer">
-          {% trans "Review" %} <i class="fas fa-arrow-circle-right"></i>
-        </a>
-      </div>
-    </div>
-    {% endif %}
-
-    {% if stats.unsettled_finished %}
-    <div class="col-lg-4 col-md-6 col-12">
-      <div class="small-box bg-danger">
-        <div class="inner">
-          <h3>{{ stats.unsettled_finished }}</h3>
-          <p>{% trans "Open tickets on finished matches" %}</p>
-        </div>
-        <div class="icon"><i class="fas fa-exclamation-triangle"></i></div>
-        <a href="{% url 'admin:customer_data_betticket_changelist' %}?status__exact=PLACED" class="small-box-footer">
-          {% trans "Investigate" %} <i class="fas fa-arrow-circle-right"></i>
-        </a>
-      </div>
-    </div>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  <h5 class="mb-2 text-muted"><i class="fas fa-satellite-dish mr-1"></i> {% trans "Live position" %}</h5>
-  <div class="row">
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-danger"><i class="fas fa-broadcast-tower"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Matches live now" %}</span>
-          <span class="info-box-number">{{ stats.live_matches }}</span>
-          <a href="{% url 'admin:football_data_app_footballfixture_changelist' %}?status__exact=LIVE"
-             class="text-muted small">{% trans "View" %} &rarr;</a>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-primary"><i class="fas fa-ticket-alt"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Open tickets" %}</span>
-          <span class="info-box-number">{{ stats.open_ticket_count }}</span>
-          <span class="text-muted small">${{ stats.open_stake|floatformat:2 }} {% trans "staked" %}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-warning"><i class="fas fa-balance-scale"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Exposure" %}</span>
-          <span class="info-box-number">${{ stats.exposure|floatformat:2 }}</span>
-          <span class="text-muted small">{% trans "if every open ticket won" %}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-secondary"><i class="fas fa-wallet"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Player balances held" %}</span>
-          <span class="info-box-number">${{ stats.player_float|floatformat:2 }}</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <h5 class="mb-2 text-muted"><i class="fas fa-chart-line mr-1"></i> {% trans "Today" %}</h5>
-  <div class="row">
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-success"><i class="fas fa-arrow-down"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Stakes taken" %}</span>
-          <span class="info-box-number">${{ stats.stakes_today|floatformat:2 }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-danger"><i class="fas fa-arrow-up"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Payouts" %}</span>
-          <span class="info-box-number">${{ stats.payouts_today|floatformat:2 }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon {% if stats.gross_today_positive %}bg-success{% else %}bg-danger{% endif %}">
-          <i class="fas fa-coins"></i>
-        </span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "Gross (stakes − payouts)" %}</span>
-          <span class="info-box-number">${{ stats.gross_today|floatformat:2 }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-3 col-md-6 col-12">
-      <div class="info-box">
-        <span class="info-box-icon bg-info"><i class="fas fa-user-check"></i></span>
-        <div class="info-box-content">
-          <span class="info-box-text">{% trans "New players" %}</span>
-          <span class="info-box-number">{{ stats.new_players_today }}</span>
-          <span class="text-muted small">${{ stats.deposits_today|floatformat:2 }} {% trans "deposited" %}</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <hr class="mb-3">
-</div>
-{% endif %}
-
-{{ block.super }}
+  {% include "unfold/helpers/app_list_default.html" %}
 {% endblock %}
