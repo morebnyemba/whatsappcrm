@@ -1,10 +1,11 @@
 # whatsappcrm_backend/conversations/admin.py
 
 from django.contrib import admin
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import Contact, Message, ContactSession
 
 @admin.register(Contact)
-class ContactAdmin(admin.ModelAdmin):
+class ContactAdmin(UnfoldModelAdmin):
     list_display = ('whatsapp_id', 'name', 'first_seen', 'last_seen', 'is_blocked') # Add 'associated_app_config_name' if using the FK
     search_fields = ('whatsapp_id', 'name')
     list_filter = ('is_blocked', 'last_seen', 'first_seen') # Add 'associated_app_config' if using the FK
@@ -21,7 +22,7 @@ class ContactAdmin(admin.ModelAdmin):
     # associated_app_config_name.short_description = "App Config"
 
 
-class MessageInline(admin.TabularInline): # Or admin.StackedInline for a different layout
+class MessageInline(UnfoldTabularInline): # Or UnfoldStackedInline for a different layout
     model = Message
     fields = ('timestamp', 'direction', 'message_type', 'text_content_preview', 'status', 'wamid')
     readonly_fields = ('timestamp', 'direction', 'message_type', 'text_content_preview', 'status', 'wamid')
@@ -43,7 +44,7 @@ class MessageInline(admin.TabularInline): # Or admin.StackedInline for a differe
 
 
 @admin.register(Message)
-class MessageAdmin(admin.ModelAdmin):
+class MessageAdmin(UnfoldModelAdmin):
     list_display = ('id', 'contact_link', 'direction', 'message_type', 'status', 'timestamp', 'wamid_short')
     list_filter = ('timestamp', 'direction', 'message_type', 'status', 'contact__name') # Add 'app_config' if using the FK
     search_fields = ('wamid', 'text_content', 'contact__whatsapp_id', 'contact__name', 'content_payload') # Be careful with JSON search
@@ -78,7 +79,7 @@ class MessageAdmin(admin.ModelAdmin):
 
 
 @admin.register(ContactSession)
-class ContactSessionAdmin(admin.ModelAdmin):
+class ContactSessionAdmin(UnfoldModelAdmin):
     list_display = ('contact', 'is_authenticated', 'authenticated_at', 'expires_at', 'last_activity_at')
     search_fields = ('contact__whatsapp_id', 'contact__name')
     list_filter = ('is_authenticated',)

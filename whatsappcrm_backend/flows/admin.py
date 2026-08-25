@@ -1,16 +1,17 @@
 # whatsappcrm_backend/flows/admin.py
 
 from django.contrib import admin
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import Flow, FlowStep, FlowTransition, ContactFlowState, WhatsAppFlow, WhatsAppFlowResponse
 
 # @admin.register(MessageTemplate)
-# class MessageTemplateAdmin(admin.ModelAdmin):
+# class MessageTemplateAdmin(UnfoldModelAdmin):
 #     list_display = ('name', 'created_at', 'updated_at') # 'app_config',
 #     search_fields = ('name',)
 #     # list_filter = ('app_config',)
 
 
-class FlowStepInline(admin.TabularInline): # Or StackedInline
+class FlowStepInline(UnfoldTabularInline): # Or StackedInline
     model = FlowStep
     fields = ('name', 'step_type', 'is_entry_point', 'config')
     extra = 1
@@ -18,7 +19,7 @@ class FlowStepInline(admin.TabularInline): # Or StackedInline
     ordering = ('is_entry_point', 'name',) # Show entry point first
 
 @admin.register(Flow)
-class FlowAdmin(admin.ModelAdmin):
+class FlowAdmin(UnfoldModelAdmin):
     list_display = ('name', 'description', 'is_active', 'requires_login', 'created_at', 'updated_at') # 'app_config',
     search_fields = ('name', 'description')
     list_filter = ('is_active', 'requires_login', 'created_at') # 'app_config',
@@ -34,7 +35,7 @@ class FlowAdmin(admin.ModelAdmin):
     deactivate_flows.short_description = "Deactivate selected flows"
 
 
-class FlowTransitionInline(admin.TabularInline):
+class FlowTransitionInline(UnfoldTabularInline):
     model = FlowTransition
     fk_name = 'current_step' # Explicitly define the foreign key to FlowStep
     fields = ('next_step', 'condition_config', 'priority')
@@ -43,7 +44,7 @@ class FlowTransitionInline(admin.TabularInline):
     ordering = ('priority',)
 
 @admin.register(FlowStep)
-class FlowStepAdmin(admin.ModelAdmin):
+class FlowStepAdmin(UnfoldModelAdmin):
     list_display = ('name', 'flow_name', 'step_type', 'is_entry_point', 'created_at')
     search_fields = ('name', 'flow__name', 'config')
     list_filter = ('flow', 'step_type', 'is_entry_point')
@@ -57,7 +58,7 @@ class FlowStepAdmin(admin.ModelAdmin):
 
 
 @admin.register(FlowTransition)
-class FlowTransitionAdmin(admin.ModelAdmin):
+class FlowTransitionAdmin(UnfoldModelAdmin):
     list_display = ('id', 'current_step_name', 'next_step_name', 'priority', 'condition_summary')
     search_fields = ('current_step__name', 'next_step__name', 'condition_config')
     list_filter = ('current_step__flow', 'priority') # Filter by flow via current_step
@@ -85,7 +86,7 @@ class FlowTransitionAdmin(admin.ModelAdmin):
 
 
 @admin.register(ContactFlowState)
-class ContactFlowStateAdmin(admin.ModelAdmin):
+class ContactFlowStateAdmin(UnfoldModelAdmin):
     list_display = ('contact', 'current_flow_name', 'current_step_name', 'last_updated_at')
     search_fields = ('contact__whatsapp_id', 'contact__name', 'current_flow__name', 'current_step__name')
     list_filter = ('current_flow', 'current_step__step_type', 'last_updated_at')
@@ -102,7 +103,7 @@ class ContactFlowStateAdmin(admin.ModelAdmin):
 
 
 @admin.register(WhatsAppFlow)
-class WhatsAppFlowAdmin(admin.ModelAdmin):
+class WhatsAppFlowAdmin(UnfoldModelAdmin):
     list_display = ('friendly_name', 'name', 'sync_status', 'flow_id', 'is_active', 'version', 'last_synced_at')
     search_fields = ('name', 'friendly_name', 'flow_id', 'description')
     list_filter = ('sync_status', 'is_active', 'meta_app_config', 'created_at')
@@ -225,7 +226,7 @@ class WhatsAppFlowAdmin(admin.ModelAdmin):
 
 
 @admin.register(WhatsAppFlowResponse)
-class WhatsAppFlowResponseAdmin(admin.ModelAdmin):
+class WhatsAppFlowResponseAdmin(UnfoldModelAdmin):
     list_display = ('id', 'whatsapp_flow_name', 'contact_display', 'is_processed', 'created_at', 'processed_at')
     search_fields = ('contact__whatsapp_id', 'contact__name', 'whatsapp_flow__name', 'flow_token')
     list_filter = ('is_processed', 'whatsapp_flow', 'created_at')

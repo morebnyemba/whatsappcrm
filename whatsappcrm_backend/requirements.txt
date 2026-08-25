@@ -6,7 +6,7 @@ drf-nested-routers>=0.95.0
 python-dotenv>=1.0.0
 
 # Admin interface theme
-django-jazzmin>=3.0.0
+django-unfold>=0.91.0
 
 # REST API framework - Updated to latest secure versions
 djangorestframework>=3.15.2,<4.0

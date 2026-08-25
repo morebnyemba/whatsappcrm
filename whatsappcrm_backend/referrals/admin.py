@@ -1,12 +1,13 @@
 # whatsappcrm_backend/referrals/admin.py
 from django.contrib import admin
 from django.utils import timezone
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import ReferralProfile, ReferralSettings, AgentEarning, AgentDeduction, AgentDepositBonus, AgentApplication
 from .utils import get_or_create_referral_profile
 from .tasks import send_bonus_notification_task
 
 @admin.register(ReferralProfile)
-class ReferralProfileAdmin(admin.ModelAdmin):
+class ReferralProfileAdmin(UnfoldModelAdmin):
     """
     Admin view for the ReferralProfile model (Agent Profile).
     Set is_agent=True to designate a user as an active agent who can
@@ -43,7 +44,7 @@ class ReferralProfileAdmin(admin.ModelAdmin):
         return f"${obj.net_earnings:.2f}"
 
 @admin.register(AgentEarning)
-class AgentEarningAdmin(admin.ModelAdmin):
+class AgentEarningAdmin(UnfoldModelAdmin):
     """
     Admin view for the AgentEarning model.
     """
@@ -72,7 +73,7 @@ class AgentEarningAdmin(admin.ModelAdmin):
         return False
 
 @admin.register(AgentDeduction)
-class AgentDeductionAdmin(admin.ModelAdmin):
+class AgentDeductionAdmin(UnfoldModelAdmin):
     """
     Admin view for the AgentDeduction model — amounts deducted from an
     agent's wallet when a referred user wins a bet.
@@ -102,7 +103,7 @@ class AgentDeductionAdmin(admin.ModelAdmin):
         return False
 
 @admin.register(AgentDepositBonus)
-class AgentDepositBonusAdmin(admin.ModelAdmin):
+class AgentDepositBonusAdmin(UnfoldModelAdmin):
     """
     Admin view for the AgentDepositBonus model — an agent's own bonus,
     earned when a referred user makes their qualifying first deposit.
@@ -132,7 +133,7 @@ class AgentDepositBonusAdmin(admin.ModelAdmin):
         return False
 
 @admin.register(ReferralSettings)
-class ReferralSettingsAdmin(admin.ModelAdmin):
+class ReferralSettingsAdmin(UnfoldModelAdmin):
     """
     Admin view for the ReferralSettings singleton model.
     """
@@ -157,7 +158,7 @@ class ReferralSettingsAdmin(admin.ModelAdmin):
         return False
 
 @admin.register(AgentApplication)
-class AgentApplicationAdmin(admin.ModelAdmin):
+class AgentApplicationAdmin(UnfoldModelAdmin):
     """
     Admin queue for self-service "become an agent" requests submitted from
     the WhatsApp agent-program flow. Approving here is the one-click

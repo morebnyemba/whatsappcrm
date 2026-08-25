@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import timedelta
 from celery.schedules import crontab
 import dotenv # For loading .env file
+from django.urls import reverse_lazy
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -48,7 +49,15 @@ CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in CSRF_TRUSTED_ORIGINS_STRING
 
 # Application definition
 INSTALLED_APPS = [
-    'jazzmin', # Jazzmin must be before django.contrib.admin
+    # Unfold (admin theme) must come before django.contrib.admin so its
+    # templates win. Its contrib packages are optional add-ons: `filters`
+    # gives the richer changelist filter widgets (date ranges, numeric
+    # ranges), `forms` the styled widgets, `inlines` the styled inline
+    # tables. Replaced Jazzmin -- see UNFOLD below.
+    'unfold',
+    'unfold.contrib.filters',
+    'unfold.contrib.forms',
+    'unfold.contrib.inlines',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -146,10 +155,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles' # For production `collectstatic`
-# Project-level static assets (e.g. the admin dashboard's stylesheet, wired up
-# as JAZZMIN_SETTINGS["custom_css"]). Collected into STATIC_ROOT by
-# `collectstatic`, which entrypoint.sh already runs for the web service.
-STATICFILES_DIRS = [BASE_DIR / 'static']
+# Project-level static assets, collected into STATIC_ROOT by `collectstatic`
+# (entrypoint.sh already runs it for the web service). Guarded because the
+# directory is optional -- Django errors on a STATICFILES_DIRS entry that
+# doesn't exist, and Unfold ships its own prebuilt CSS so we need none of
+# our own by default.
+STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').is_dir() else []
 
 # Media files (User-uploaded content)
 MEDIA_URL = '/media/'
@@ -370,95 +381,131 @@ LOGGING = {
 }
 
 
-WHATSAPP_APP_SECRET = os.getenv('WHATSAPP_APP_SECRET', None)
-# --- Jazzmin Admin Theme Settings ---
-JAZZMIN_SETTINGS = {
-    "site_title": "BetBlitz Admin",
-    "site_header": "BetBlitz",
-    "site_brand": "BetBlitz",
-    "site_logo_classes": "img-circle",
-    # "site_logo": "path/to/your/logo.png", # Optional: Add your logo
-    "welcome_sign": "BetBlitz Operations",
-    "copyright": "Slyker Tech Web Services.",
-    # Jazzmin renders one search box per entry, so keep this short -- more
-    # than a couple turns the navbar into a row of cramped inputs. Contacts
-    # (find a player) and fixtures (find a match) cover the common lookups.
-    "search_model": ["conversations.Contact", "football_data_app.FootballFixture"],
-    "user_avatar": None,
-    "topmenu_links": [
-        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
-        {"name": "Pending withdrawals", "url": "admin:customer_data_pendingwithdrawal_changelist",
-         "permissions": ["customer_data.view_wallettransaction"]},
-        {"name": "Bet tickets", "url": "admin:customer_data_betticket_changelist",
-         "permissions": ["customer_data.view_betticket"]},
-        {"model": "auth.User"},
-    ],
-    "show_sidebar": True,
-    "navigation_expanded": True,
-    "hide_apps": [],
-    "hide_models": [],
-    # Operator-first ordering: the money and betting apps sit above the
-    # plumbing, since that's what the admin is opened for day to day.
-    "order_with_respect_to": [
-        "customer_data", "football_data_app", "referrals",
-        "conversations", "flows", "meta_integration", "paynow_integration", "auth",
-    ],
-    "icons": {
-        "football_data_app": "fas fa-futbol",
-        "football_data_app.FootballFixture": "fas fa-calendar-alt",
-        "football_data_app.League": "fas fa-trophy",
-        "football_data_app.Team": "fas fa-shield-alt",
-        "football_data_app.Market": "fas fa-store",
-        "football_data_app.MarketOutcome": "fas fa-percentage",
-        "football_data_app.MarketCategory": "fas fa-tags",
-        "football_data_app.Bookmaker": "fas fa-building",
-        "football_data_app.Configuration": "fas fa-sliders-h",
-        "football_data_app.FixturePrediction": "fas fa-chart-line",
-        "auth": "fas fa-users-cog", "auth.user": "fas fa-user", "auth.Group": "fas fa-users",
-        "meta_integration": "fab fa-whatsapp-square",
-        "meta_integration.MetaAppConfig": "fas fa-cogs", "meta_integration.WebhookEventLog": "fas fa-history",
-        "conversations": "fas fa-comments",
-        "conversations.Contact": "fas fa-address-book", "conversations.Message": "fas fa-envelope",
-        "conversations.ContactSession": "fas fa-clock",
-        "flows": "fas fa-project-diagram",
-        "flows.Flow": "fas fa-bezier-curve", "flows.FlowStep": "fas fa-shoe-prints",
-        "flows.FlowTransition": "fas fa-route", "flows.ContactFlowState": "fas fa-map-signs",
-        "flows.WhatsAppFlow": "fab fa-whatsapp",
-        "customer_data": "fas fa-coins",
-        "customer_data.CustomerProfile": "fas fa-user-tag",
-        "customer_data.UserWallet": "fas fa-wallet",
-        "customer_data.WalletTransaction": "fas fa-exchange-alt",
-        "customer_data.PendingWithdrawal": "fas fa-hand-holding-usd",
-        "customer_data.BetTicket": "fas fa-ticket-alt",
-        "customer_data.Bet": "fas fa-dice",
-        "customer_data.ResponsibleGamblingControls": "fas fa-shield-virus",
-        "referrals": "fas fa-user-friends",
-        "referrals.ReferralProfile": "fas fa-id-badge",
-        "referrals.AgentApplication": "fas fa-user-plus",
-        "referrals.AgentEarning": "fas fa-money-bill-wave",
-        "referrals.AgentDeduction": "fas fa-file-invoice-dollar",
-        "referrals.AgentDepositBonus": "fas fa-gift",
-        "referrals.ReferralSettings": "fas fa-percent",
-        "paynow_integration": "fas fa-credit-card",
+# --- Unfold Admin Theme ---
+# Replaced django-jazzmin. Unfold is Tailwind-based, ships prebuilt CSS (no
+# node build step), and supports dark mode out of the box.
+#
+# Note the two-level structure: this dict controls chrome (branding, colours,
+# sidebar) while per-model appearance comes from each ModelAdmin, which must
+# subclass unfold.admin.ModelAdmin to pick up the styled widgets.
+UNFOLD = {
+    "SITE_TITLE": "BetBlitz Admin",
+    "SITE_HEADER": "BetBlitz",
+    "SITE_SUBHEADER": "Operations",
+    "SITE_SYMBOL": "sports_soccer",  # Material symbol shown as the logo mark
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "SHOW_BACK_BUTTON": True,
+    "THEME": None,  # None = respect the operator's OS light/dark preference
+    "BORDER_RADIUS": "8px",
+    "DASHBOARD_CALLBACK": "customer_data.dashboard.unfold_dashboard_callback",
+    "COLORS": {
+        # Emerald, matching the player portal's primary so the two surfaces
+        # read as one product. Unfold expects bare "R G B" triplets.
+        "primary": {
+            "50": "236 253 245", "100": "209 250 229", "200": "167 243 208",
+            "300": "110 231 183", "400": "52 211 153", "500": "16 185 129",
+            "600": "5 150 105", "700": "4 120 87", "800": "6 95 70",
+            "900": "6 78 59", "950": "2 44 34",
+        },
     },
-    "default_icon_parents": "fas fa-chevron-circle-right",
-    "default_icon_children": "fas fa-circle",
-    "related_modal_active": True,
-    "show_ui_builder": False, # Set to True in dev to customize Jazzmin theme via UI
-    "changeform_format": "horizontal_tabs",
-    "custom_css": "admin/betblitz_admin.css",
-}
-
-JAZZMIN_UI_TWEAKS = {
-    "navbar_small_text": False, "footer_small_text": False, "body_small_text": False,
-    "brand_small_text": False, "brand_colour": "navbar-success", "accent": "accent-teal",
-    "navbar": "navbar-dark navbar-success", "no_navbar_border": False, "navbar_fixed": True,
-    "layout_boxed": False, "footer_fixed": False, "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-success", "sidebar_nav_small_text": False,
-    "sidebar_disable_expand": False, "sidebar_nav_child_indent": False,
-    "sidebar_nav_compact_style": False, "sidebar_nav_flat_style": False,
-    "sidebar_nav_legacy_style": False, "sidebar_nav_accordion": True,
-    "actions_sticky_top": True
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
+            {
+                "title": "Operations",
+                "separator": False,
+                "items": [
+                    {"title": "Dashboard", "icon": "dashboard",
+                     "link": reverse_lazy("admin:index")},
+                    {"title": "Pending withdrawals", "icon": "payments",
+                     "link": reverse_lazy("admin:customer_data_pendingwithdrawal_changelist")},
+                    {"title": "Agent applications", "icon": "person_add",
+                     "link": reverse_lazy("admin:referrals_agentapplication_changelist")},
+                ],
+            },
+            {
+                "title": "Betting",
+                "separator": True,
+                "items": [
+                    {"title": "Bet tickets", "icon": "confirmation_number",
+                     "link": reverse_lazy("admin:customer_data_betticket_changelist")},
+                    {"title": "Bets", "icon": "casino",
+                     "link": reverse_lazy("admin:customer_data_bet_changelist")},
+                    {"title": "Fixtures", "icon": "sports_soccer",
+                     "link": reverse_lazy("admin:football_data_app_footballfixture_changelist")},
+                    {"title": "Markets", "icon": "storefront",
+                     "link": reverse_lazy("admin:football_data_app_market_changelist")},
+                    {"title": "Market outcomes", "icon": "percent",
+                     "link": reverse_lazy("admin:football_data_app_marketoutcome_changelist")},
+                    {"title": "Leagues", "icon": "trophy",
+                     "link": reverse_lazy("admin:football_data_app_league_changelist")},
+                    {"title": "Teams", "icon": "shield",
+                     "link": reverse_lazy("admin:football_data_app_team_changelist")},
+                ],
+            },
+            {
+                "title": "Money",
+                "separator": True,
+                "items": [
+                    {"title": "Wallets", "icon": "account_balance_wallet",
+                     "link": reverse_lazy("admin:customer_data_userwallet_changelist")},
+                    {"title": "Transactions", "icon": "swap_horiz",
+                     "link": reverse_lazy("admin:customer_data_wallettransaction_changelist")},
+                    {"title": "Customer profiles", "icon": "badge",
+                     "link": reverse_lazy("admin:customer_data_customerprofile_changelist")},
+                    {"title": "Safer gambling", "icon": "health_and_safety",
+                     "link": reverse_lazy("admin:customer_data_responsiblegamblingcontrols_changelist")},
+                ],
+            },
+            {
+                "title": "Agents",
+                "separator": True,
+                "items": [
+                    {"title": "Agent profiles", "icon": "supervisor_account",
+                     "link": reverse_lazy("admin:referrals_referralprofile_changelist")},
+                    {"title": "Earnings", "icon": "paid",
+                     "link": reverse_lazy("admin:referrals_agentearning_changelist")},
+                    {"title": "Deductions", "icon": "receipt_long",
+                     "link": reverse_lazy("admin:referrals_agentdeduction_changelist")},
+                    {"title": "Program settings", "icon": "tune",
+                     "link": reverse_lazy("admin:referrals_referralsettings_changelist")},
+                ],
+            },
+            {
+                "title": "WhatsApp",
+                "separator": True,
+                "items": [
+                    {"title": "Contacts", "icon": "contacts",
+                     "link": reverse_lazy("admin:conversations_contact_changelist")},
+                    {"title": "Messages", "icon": "chat",
+                     "link": reverse_lazy("admin:conversations_message_changelist")},
+                    {"title": "Flows", "icon": "account_tree",
+                     "link": reverse_lazy("admin:flows_flow_changelist")},
+                    {"title": "WhatsApp Flows", "icon": "dynamic_form",
+                     "link": reverse_lazy("admin:flows_whatsappflow_changelist")},
+                    {"title": "Meta config", "icon": "settings",
+                     "link": reverse_lazy("admin:meta_integration_metaappconfig_changelist")},
+                ],
+            },
+            {
+                "title": "System",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {"title": "Users", "icon": "person",
+                     "link": reverse_lazy("admin:auth_user_changelist")},
+                    {"title": "Groups", "icon": "group",
+                     "link": reverse_lazy("admin:auth_group_changelist")},
+                    {"title": "Periodic tasks", "icon": "schedule",
+                     "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist")},
+                    {"title": "Task results", "icon": "task_alt",
+                     "link": reverse_lazy("admin:django_celery_results_taskresult_changelist")},
+                ],
+            },
+        ],
+    },
 }
 
 # Ensure your .env file has DJANGO_SECRET_KEY and other sensitive variables.

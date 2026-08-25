@@ -1,8 +1,9 @@
 from django.contrib import admin
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import PaynowConfig
 
 @admin.register(PaynowConfig)
-class PaynowConfigAdmin(admin.ModelAdmin):
+class PaynowConfigAdmin(UnfoldModelAdmin):
     """
     Admin interface for the Paynow Configuration.
     Ensures that only one configuration can be created.

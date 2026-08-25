@@ -1,6 +1,8 @@
 # football_data_app/admin.py
 from django.contrib import admin
 from django.utils.html import format_html
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
+from unfold.decorators import display as unfold_display
 from .models import (
     League,
     Team,
@@ -15,7 +17,7 @@ from .models import (
 
 
 @admin.register(FixturePrediction)
-class FixturePredictionAdmin(admin.ModelAdmin):
+class FixturePredictionAdmin(UnfoldModelAdmin):
     """Admin view for model-generated fixture predictions (read-only, advisory)."""
     list_display = ('fixture', 'prob_home', 'prob_draw', 'prob_away', 'method', 'data_points', 'computed_at')
     list_filter = ('method',)
@@ -23,7 +25,7 @@ class FixturePredictionAdmin(admin.ModelAdmin):
     readonly_fields = ('computed_at',)
 
 @admin.register(League)
-class LeagueAdmin(admin.ModelAdmin):
+class LeagueAdmin(UnfoldModelAdmin):
     """Admin configuration for the League model."""
     list_display = ('name', 'api_id', 'sport_key', 'league_season', 'active', 'last_fetched_events')
     list_filter = ('active', 'sport_key')
@@ -58,7 +60,7 @@ class LeagueAdmin(admin.ModelAdmin):
     mark_as_inactive.short_description = "Mark selected leagues as inactive"
 
 @admin.register(Team)
-class TeamAdmin(admin.ModelAdmin):
+class TeamAdmin(UnfoldModelAdmin):
     """Admin configuration for the Team model."""
     list_display = ('name', 'display_logo')
     search_fields = ('name', 'api_team_id')
@@ -69,7 +71,7 @@ class TeamAdmin(admin.ModelAdmin):
         return "No Logo"
     display_logo.short_description = 'Logo'
 
-class MarketInline(admin.TabularInline):
+class MarketInline(UnfoldTabularInline):
     """
     Allows viewing and editing Markets directly within the FootballFixture admin page.
     This provides a nested view, making it easy to see all markets for a given fixture.
@@ -82,9 +84,25 @@ class MarketInline(admin.TabularInline):
     show_change_link = True
 
 @admin.register(FootballFixture)
-class FootballFixtureAdmin(admin.ModelAdmin):
+class FootballFixtureAdmin(UnfoldModelAdmin):
     """Admin configuration for the FootballFixture model."""
-    list_display = ('id', 'fixture_display', 'league', 'status', 'match_date', 'match_updated', 'last_odds_update', 'last_score_update')
+    list_display = ('id', 'fixture_display', 'league', 'status_badge', 'score_display',
+                    'match_date', 'last_odds_update', 'last_score_update')
+
+    @unfold_display(description="Status", ordering="status", label={
+        "Live": "danger", "Scheduled": "info", "Finished": "success",
+        "Postponed": "warning", "Cancelled": "warning",
+    })
+    def status_badge(self, obj):
+        return obj.get_status_display()
+
+    @unfold_display(description="Score")
+    def score_display(self, obj):
+        if obj.home_team_score is None or obj.away_team_score is None:
+            return "—"
+        clock = f" {obj.elapsed_minutes}'" if obj.elapsed_minutes is not None and obj.status == obj.FixtureStatus.LIVE else ""
+        return f"{obj.home_team_score}–{obj.away_team_score}{clock}"
+
     list_filter = ('status', 'league', 'match_date')
     search_fields = ('home_team__name', 'away_team__name', 'league__name', 'api_id')
     date_hierarchy = 'match_date'
@@ -99,18 +117,18 @@ class FootballFixtureAdmin(admin.ModelAdmin):
     fixture_display.admin_order_field = 'match_date'
 
 @admin.register(Bookmaker)
-class BookmakerAdmin(admin.ModelAdmin):
+class BookmakerAdmin(UnfoldModelAdmin):
     """Admin configuration for the Bookmaker model."""
     list_display = ('name', 'api_bookmaker_key')
     search_fields = ('name', 'api_bookmaker_key')
 
 @admin.register(MarketCategory)
-class MarketCategoryAdmin(admin.ModelAdmin):
+class MarketCategoryAdmin(UnfoldModelAdmin):
     """Admin configuration for the MarketCategory model."""
     list_display = ('name', 'description')
     search_fields = ('name',)
 
-class MarketOutcomeInline(admin.TabularInline):
+class MarketOutcomeInline(UnfoldTabularInline):
     """Allows viewing and editing MarketOutcomes directly within the Market admin page."""
     model = MarketOutcome
     extra = 0
@@ -118,7 +136,7 @@ class MarketOutcomeInline(admin.TabularInline):
     readonly_fields = ('result_status',) # Result is set by settlement tasks
 
 @admin.register(Market)
-class MarketAdmin(admin.ModelAdmin):
+class MarketAdmin(UnfoldModelAdmin):
     """Admin configuration for the Market model."""
     list_display = ('get_fixture_representation', 'category', 'bookmaker', 'is_active', 'last_updated_odds_api')
     list_filter = ('is_active', 'category', 'bookmaker')
@@ -135,7 +153,7 @@ class MarketAdmin(admin.ModelAdmin):
     get_fixture_representation.admin_order_field = 'fixture'
 
 @admin.register(MarketOutcome)
-class MarketOutcomeAdmin(admin.ModelAdmin):
+class MarketOutcomeAdmin(UnfoldModelAdmin):
     """Admin configuration for the MarketOutcome model."""
     list_display = ('outcome_display', 'market', 'result_status', 'is_active')
     list_filter = ('is_active', 'result_status', 'market__category', 'market__bookmaker')
@@ -150,7 +168,7 @@ class MarketOutcomeAdmin(admin.ModelAdmin):
     outcome_display.admin_order_field = 'outcome_name'
 
 @admin.register(Configuration)
-class ConfigurationAdmin(admin.ModelAdmin):
+class ConfigurationAdmin(UnfoldModelAdmin):
     """Admin configuration for the Configuration model."""
     list_display = ('provider_name', 'email', 'current_season', 'is_active', 'api_key_display', 'updated_at')
     list_filter = ('provider_name', 'is_active')

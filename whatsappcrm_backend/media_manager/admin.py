@@ -1,6 +1,7 @@
 # media_manager/admin.py
 from django.contrib import admin
 from django.utils.html import format_html
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import MediaAsset
 
 @admin.action(description='Sync selected assets with WhatsApp')
@@ -30,7 +31,7 @@ def sync_assets_with_whatsapp(modeladmin, request, queryset):
         modeladmin.message_user(request, message)
 
 
-class MediaAssetAdmin(admin.ModelAdmin):
+class MediaAssetAdmin(UnfoldModelAdmin):
     list_display = (
         'name', 'media_type', 'status', 'file_preview',
         'whatsapp_media_id', 'uploaded_to_whatsapp_at', 'file_size_display', 'updated_at'

@@ -1,10 +1,11 @@
 # whatsappcrm_backend/meta_integration/admin.py
 
 from django.contrib import admin
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline as UnfoldTabularInline, StackedInline as UnfoldStackedInline
 from .models import MetaAppConfig, WebhookEventLog
 
 @admin.register(MetaAppConfig)
-class MetaAppConfigAdmin(admin.ModelAdmin):
+class MetaAppConfigAdmin(UnfoldModelAdmin):
     list_display = ('name', 'phone_number_id', 'waba_id', 'api_version', 'is_active', 'updated_at')
     list_filter = ('is_active', 'api_version')
     search_fields = ('name', 'phone_number_id', 'waba_id')
@@ -33,7 +34,7 @@ class MetaAppConfigAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 @admin.register(WebhookEventLog)
-class WebhookEventLogAdmin(admin.ModelAdmin):
+class WebhookEventLogAdmin(UnfoldModelAdmin):
     list_display = ('id', 'event_type', 'event_identifier', 'app_config_name', 'received_at', 'processing_status', 'waba_id_received', 'phone_number_id_received')
     list_filter = ('event_type', 'processing_status', 'received_at', 'app_config', 'waba_id_received', 'phone_number_id_received')
     search_fields = ('event_identifier', 'payload', 'processing_notes', 'waba_id_received', 'phone_number_id_received')
