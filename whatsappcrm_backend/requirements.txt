@@ -6,7 +6,10 @@ drf-nested-routers>=0.95.0
 python-dotenv>=1.0.0
 
 # Admin interface theme
-django-unfold>=0.91.0
+# Pinned <0.82 deliberately: Unfold 0.82.0+ requires Python >=3.11 and the
+# backend image is python:3.10-slim-bullseye, so a newer pin fails the image
+# build outright. Raise this only together with the Dockerfile's Python.
+django-unfold>=0.81.0,<0.82.0
 
 # REST API framework - Updated to latest secure versions
 djangorestframework>=3.15.2,<4.0
