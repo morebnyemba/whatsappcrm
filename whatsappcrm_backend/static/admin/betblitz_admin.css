@@ -1,0 +1,85 @@
+/*
+ * BetBlitz admin polish.
+ *
+ * Loaded via JAZZMIN_SETTINGS["custom_css"]. Intentionally light-touch: it
+ * refines Jazzmin/AdminLTE's own components rather than restyling them, so
+ * the theme colours configured in JAZZMIN_UI_TWEAKS still drive the palette
+ * and future Jazzmin upgrades don't fight this file.
+ */
+
+/* --- Dashboard KPI cards ------------------------------------------------ */
+
+.betblitz-dashboard .small-box,
+.betblitz-dashboard .info-box {
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.betblitz-dashboard .small-box:hover,
+.betblitz-dashboard .info-box:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.10), 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+/* Numbers are the point of these cards — let them dominate. */
+.betblitz-dashboard .info-box-number {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.betblitz-dashboard .info-box-text {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6c757d;
+}
+
+.betblitz-dashboard .small-box h3 {
+  font-weight: 700;
+}
+
+/* Section headings between card rows. */
+.betblitz-dashboard h5 {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 0.75rem;
+}
+
+/* The attention row should read as urgent without being garish. */
+.betblitz-dashboard .small-box.bg-danger .icon,
+.betblitz-dashboard .small-box.bg-warning .icon {
+  opacity: 0.28;
+}
+
+/* --- General list/table readability ------------------------------------- */
+
+/* Money and odds columns line up far better in a tabular figure face. */
+.change-list table td,
+.change-list table th {
+  font-variant-numeric: tabular-nums;
+}
+
+.change-list #result_list tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.025);
+}
+
+/* Give the changelist a little breathing room. */
+.change-list #result_list tbody td {
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+/* --- Small touches ------------------------------------------------------ */
+
+.card {
+  border-radius: 8px;
+}
+
+/* Jazzmin renders the model list as cards; soften them to match the KPIs. */
+.dashboard .card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+}

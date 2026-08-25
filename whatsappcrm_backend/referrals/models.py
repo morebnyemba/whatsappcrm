@@ -170,6 +170,10 @@ class AgentDepositBonus(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        # Django's default pluralisation would render this "Agent deposit
+        # bonuss" in the admin sidebar.
+        verbose_name = "Agent Deposit Bonus"
+        verbose_name_plural = "Agent Deposit Bonuses"
 
 class ReferralSettings(models.Model):
     """
@@ -200,6 +204,12 @@ class ReferralSettings(models.Model):
         validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('1.00'))]
     )
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # Singleton: Django would otherwise render this "Referral settingss"
+        # in the admin sidebar.
+        verbose_name = "Agent Program Settings"
+        verbose_name_plural = "Agent Program Settings"
 
     def __str__(self):
         return "Agent Program Settings"

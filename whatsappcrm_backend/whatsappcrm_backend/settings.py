@@ -144,8 +144,12 @@ USE_I18N = True
 USE_TZ = True 
 
 # Static files (CSS, JavaScript, Images)
-STATIC_URL = '/static/' 
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles' # For production `collectstatic`
+# Project-level static assets (e.g. the admin dashboard's stylesheet, wired up
+# as JAZZMIN_SETTINGS["custom_css"]). Collected into STATIC_ROOT by
+# `collectstatic`, which entrypoint.sh already runs for the web service.
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 # Media files (User-uploaded content)
 MEDIA_URL = '/media/'
@@ -369,41 +373,80 @@ LOGGING = {
 WHATSAPP_APP_SECRET = os.getenv('WHATSAPP_APP_SECRET', None)
 # --- Jazzmin Admin Theme Settings ---
 JAZZMIN_SETTINGS = {
-    "site_title": "AutoWhasapp",
-    "site_header": "AutoWhatsapp",
-    "site_brand": "A-W",
+    "site_title": "BetBlitz Admin",
+    "site_header": "BetBlitz",
+    "site_brand": "BetBlitz",
     "site_logo_classes": "img-circle",
     # "site_logo": "path/to/your/logo.png", # Optional: Add your logo
-    "welcome_sign": "Welcome to the AutoWhatsapp Admin",
+    "welcome_sign": "BetBlitz Operations",
     "copyright": "Slyker Tech Web Services.",
-    "search_model": ["auth.User", "meta_integration.MetaAppConfig", "conversations.Contact", "flows.Flow"],
+    # Jazzmin renders one search box per entry, so keep this short -- more
+    # than a couple turns the navbar into a row of cramped inputs. Contacts
+    # (find a player) and fixtures (find a match) cover the common lookups.
+    "search_model": ["conversations.Contact", "football_data_app.FootballFixture"],
     "user_avatar": None,
     "topmenu_links": [
-        {"name": "Home", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "Pending withdrawals", "url": "admin:customer_data_pendingwithdrawal_changelist",
+         "permissions": ["customer_data.view_wallettransaction"]},
+        {"name": "Bet tickets", "url": "admin:customer_data_betticket_changelist",
+         "permissions": ["customer_data.view_betticket"]},
         {"model": "auth.User"},
     ],
     "show_sidebar": True,
     "navigation_expanded": True,
     "hide_apps": [],
     "hide_models": [],
+    # Operator-first ordering: the money and betting apps sit above the
+    # plumbing, since that's what the admin is opened for day to day.
+    "order_with_respect_to": [
+        "customer_data", "football_data_app", "referrals",
+        "conversations", "flows", "meta_integration", "paynow_integration", "auth",
+    ],
     "icons": {
-        "football_data_app": "fas fa-football", # Example icon
-         "football_data_app.FootballFixture": "fas fa-calendar-alt",
+        "football_data_app": "fas fa-futbol",
+        "football_data_app.FootballFixture": "fas fa-calendar-alt",
+        "football_data_app.League": "fas fa-trophy",
+        "football_data_app.Team": "fas fa-shield-alt",
+        "football_data_app.Market": "fas fa-store",
+        "football_data_app.MarketOutcome": "fas fa-percentage",
+        "football_data_app.MarketCategory": "fas fa-tags",
+        "football_data_app.Bookmaker": "fas fa-building",
+        "football_data_app.Configuration": "fas fa-sliders-h",
+        "football_data_app.FixturePrediction": "fas fa-chart-line",
         "auth": "fas fa-users-cog", "auth.user": "fas fa-user", "auth.Group": "fas fa-users",
         "meta_integration": "fab fa-whatsapp-square",
         "meta_integration.MetaAppConfig": "fas fa-cogs", "meta_integration.WebhookEventLog": "fas fa-history",
         "conversations": "fas fa-comments",
         "conversations.Contact": "fas fa-address-book", "conversations.Message": "fas fa-envelope",
+        "conversations.ContactSession": "fas fa-clock",
         "flows": "fas fa-project-diagram",
         "flows.Flow": "fas fa-bezier-curve", "flows.FlowStep": "fas fa-shoe-prints",
         "flows.FlowTransition": "fas fa-route", "flows.ContactFlowState": "fas fa-map-signs",
-        "customer_data": "fas fa-id-card", "customer_data.CustomerProfile": "fas fa-user-tag",
+        "flows.WhatsAppFlow": "fab fa-whatsapp",
+        "customer_data": "fas fa-coins",
+        "customer_data.CustomerProfile": "fas fa-user-tag",
+        "customer_data.UserWallet": "fas fa-wallet",
+        "customer_data.WalletTransaction": "fas fa-exchange-alt",
+        "customer_data.PendingWithdrawal": "fas fa-hand-holding-usd",
+        "customer_data.BetTicket": "fas fa-ticket-alt",
+        "customer_data.Bet": "fas fa-dice",
+        "customer_data.ResponsibleGamblingControls": "fas fa-shield-virus",
+        "referrals": "fas fa-user-friends",
+        "referrals.ReferralProfile": "fas fa-id-badge",
+        "referrals.AgentApplication": "fas fa-user-plus",
+        "referrals.AgentEarning": "fas fa-money-bill-wave",
+        "referrals.AgentDeduction": "fas fa-file-invoice-dollar",
+        "referrals.AgentDepositBonus": "fas fa-gift",
+        "referrals.ReferralSettings": "fas fa-percent",
+        "paynow_integration": "fas fa-credit-card",
     },
     "default_icon_parents": "fas fa-chevron-circle-right",
     "default_icon_children": "fas fa-circle",
-    "related_modal_active": False,
+    "related_modal_active": True,
     "show_ui_builder": False, # Set to True in dev to customize Jazzmin theme via UI
     "changeform_format": "horizontal_tabs",
+    "custom_css": "admin/betblitz_admin.css",
 }
 
 JAZZMIN_UI_TWEAKS = {
