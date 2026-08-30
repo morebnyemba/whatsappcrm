@@ -1142,8 +1142,28 @@ def run_score_and_settlement_v3_task():
             logger.info("TASK END: run_score_and_settlement_v3_task - No active leagues")
             return
         
+        # get_live_fixtures() is a single global call (GET /fixtures?live=all,
+        # not scoped to a league) -- fetch it once here and hand the same
+        # result to every per-league task below, instead of each of the
+        # league_count tasks independently re-requesting the exact same
+        # global list. Previously that meant one call per active league every
+        # 5 minutes, which burns through the API-Football rate limit/quota on
+        # (league_count - 1) redundant requests and, when the endpoint is
+        # unavailable (e.g. plan restriction -> 403), turns into a storm of
+        # failing+retrying per-league tasks instead of one clean skip.
+        client = APIFootballV3Client()
+        try:
+            live_fixtures_data = client.get_live_fixtures()
+            logger.info(f"Fetched {len(live_fixtures_data) if live_fixtures_data else 0} live fixture(s) globally, sharing across {league_count} league task(s)")
+        except Exception as e:
+            logger.warning(f"run_score_and_settlement_v3_task: get_live_fixtures() failed, proceeding without live-fixture data this cycle: {e}")
+            live_fixtures_data = []
+
         logger.info(f"Creating {league_count} score fetching tasks (one per league)...")
-        tasks = [fetch_scores_for_league_v3_task.s(league_id) for league_id in active_leagues]
+        tasks = [
+            fetch_scores_for_league_v3_task.s(league_id, live_fixtures_data=live_fixtures_data)
+            for league_id in active_leagues
+        ]
         
         if tasks:
             group(tasks).apply_async()
@@ -1158,9 +1178,20 @@ def run_score_and_settlement_v3_task():
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=900, queue='football_io')
-def fetch_scores_for_league_v3_task(self, league_id: int):
+def fetch_scores_for_league_v3_task(self, league_id: int, live_fixtures_data: Optional[list] = None):
     """
     Fetches live and finished match scores for a league from API-Football v3.
+
+    `live_fixtures_data`, when provided, is the already-fetched global
+    GET /fixtures?live=all response (see run_score_and_settlement_v3_task,
+    which fetches it once and shares it across every league task rather than
+    each league re-requesting the same non-league-scoped endpoint). If not
+    provided -- e.g. this task is invoked directly/manually -- it is fetched
+    here instead, but failures are logged and treated as "no live fixtures
+    this cycle" rather than aborting the whole league's score/settlement run:
+    that global endpoint being unavailable (a plan restriction, a transient
+    outage) is not this league's fault and finished-fixture settlement below
+    should still proceed.
     """
     logger.info("="*80)
     logger.info(f"TASK START: fetch_scores_for_league_v3_task - League ID: {league_id}")
@@ -1206,11 +1237,19 @@ def fetch_scores_for_league_v3_task(self, league_id: int):
             return
         
         client = APIFootballV3Client()
-        
-        logger.info(f"Calling APIFootballV3Client.get_live_fixtures()...")
-        live_fixtures = client.get_live_fixtures()
-        logger.info(f"Received {len(live_fixtures) if live_fixtures else 0} live fixtures from API")
-        
+
+        if live_fixtures_data is not None:
+            live_fixtures = live_fixtures_data
+            logger.info(f"Using {len(live_fixtures)} live fixture(s) shared from run_score_and_settlement_v3_task")
+        else:
+            logger.info(f"Calling APIFootballV3Client.get_live_fixtures()...")
+            try:
+                live_fixtures = client.get_live_fixtures()
+                logger.info(f"Received {len(live_fixtures) if live_fixtures else 0} live fixtures from API")
+            except APIFootballV3Exception as e:
+                logger.warning(f"fetch_scores_for_league_v3_task: get_live_fixtures() failed, continuing without live-fixture data for league {league_id}: {e}")
+                live_fixtures = []
+
         # Get current season from Configuration or settings
         current_season = get_current_season()
         
