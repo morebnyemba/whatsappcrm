@@ -35,10 +35,12 @@ from django.utils import timezone
 
 from customer_data.models import BetTicket, Bet
 from .models import League, Team, FootballFixture, Bookmaker, MarketCategory, Market, MarketOutcome
-from .api_football_v3_client import APIFootballV3Client
+from .api_football_v3_client import APIFootballV3Client, APIFootballV3Exception
 from .tasks_api_football_v3 import (
     _process_api_football_v3_live_odds_data,
     fetch_live_odds_v3_task,
+    fetch_scores_for_league_v3_task,
+    run_score_and_settlement_v3_task,
 )
 from . import betting_ux as ux
 
@@ -383,3 +385,93 @@ class LiveFixturesInBrowseTests(TestCase):
         matching = [o for o in opts if o['id'] == str(live_fx.id)]
         self.assertEqual(len(matching), 1)
         self.assertIn('LIVE', matching[0]['description'])
+
+
+class ScoreAndSettlementDispatchTests(TestCase):
+    """run_score_and_settlement_v3_task must fetch the global GET
+    /fixtures?live=all response exactly once per cycle and hand the same
+    data to every per-league task, instead of each league task
+    independently re-requesting that same non-league-scoped endpoint.
+    Previously that meant one call per active league every 5 minutes --
+    almost all of them redundant -- and, being unguarded in the per-league
+    task, a single failure there (e.g. a 403 because the API-Football plan
+    doesn't include this endpoint) raised out of the whole league's
+    score/settlement run and forced a retry, even though that failure has
+    nothing to do with that specific league."""
+
+    def setUp(self):
+        self.league1 = League.objects.create(name='L1', api_id='v3_1', sport_key='soccer', active=True)
+        self.league2 = League.objects.create(name='L2', api_id='v3_2', sport_key='soccer', active=True)
+
+    def test_fetches_live_fixtures_once_and_shares_across_league_tasks(self):
+        live_data = [{'fixture': {'id': 42}}]
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', return_value=live_data) as mock_get_live, \
+                patch('football_data_app.tasks_api_football_v3.group') as mock_group:
+            mock_group.return_value.apply_async = lambda: None
+            run_score_and_settlement_v3_task()
+
+        mock_get_live.assert_called_once()
+        signatures = mock_group.call_args[0][0]
+        self.assertEqual(len(signatures), 2)
+        for sig in signatures:
+            self.assertEqual(sig.kwargs.get('live_fixtures_data'), live_data)
+
+    def test_get_live_fixtures_failure_does_not_block_dispatch(self):
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', side_effect=RuntimeError('boom')), \
+                patch('football_data_app.tasks_api_football_v3.group') as mock_group:
+            mock_group.return_value.apply_async = lambda: None
+            run_score_and_settlement_v3_task()  # must not raise
+
+        signatures = mock_group.call_args[0][0]
+        self.assertEqual(len(signatures), 2)
+        for sig in signatures:
+            self.assertEqual(sig.kwargs.get('live_fixtures_data'), [])
+
+
+class FetchScoresForLeagueSharedLiveDataTests(TestCase):
+    """fetch_scores_for_league_v3_task must use live_fixtures_data when the
+    dispatcher already fetched it, rather than re-requesting the same
+    global endpoint per league, but still work standalone (e.g. a manual
+    invocation) with a failure there treated as "no live fixtures this
+    cycle" rather than aborting the league's whole score/settlement run."""
+
+    def setUp(self):
+        self.league = League.objects.create(name='EPL', api_id='v3_39', sport_key='soccer', active=True)
+        self.home = Team.objects.create(name='Home Team')
+        self.away = Team.objects.create(name='Away Team')
+        self.fixture = FootballFixture.objects.create(
+            league=self.league, home_team=self.home, away_team=self.away, api_id='v3_777',
+            match_date=timezone.now() - timedelta(minutes=20),
+            status=FootballFixture.FixtureStatus.LIVE,
+        )
+
+    def test_uses_shared_live_fixtures_data_without_calling_the_api_again(self):
+        live_data = [{
+            'fixture': {'id': 777, 'status': {'short': 'LIVE', 'elapsed': 20}},
+            'league': {'id': 39},
+            'goals': {'home': 1, 'away': 0},
+        }]
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures') as mock_get_live, \
+                patch.object(APIFootballV3Client, 'get_fixtures', return_value=[]):
+            fetch_scores_for_league_v3_task(self.league.id, live_fixtures_data=live_data)
+        mock_get_live.assert_not_called()
+        self.fixture.refresh_from_db()
+        self.assertEqual(self.fixture.status, FootballFixture.FixtureStatus.LIVE)
+        self.assertEqual(self.fixture.home_team_score, 1)
+
+    def test_falls_back_to_fetching_when_not_given_shared_data(self):
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures', return_value=[]) as mock_get_live, \
+                patch.object(APIFootballV3Client, 'get_fixtures', return_value=[]):
+            fetch_scores_for_league_v3_task(self.league.id)
+        mock_get_live.assert_called_once()
+
+    def test_live_fixtures_fetch_failure_does_not_abort_the_task(self):
+        with patch.dict(os.environ, {'API_FOOTBALL_V3_KEY': 'test-key'}), \
+                patch.object(APIFootballV3Client, 'get_live_fixtures',
+                             side_effect=APIFootballV3Exception('403 forbidden')), \
+                patch.object(APIFootballV3Client, 'get_fixtures', return_value=[]):
+            fetch_scores_for_league_v3_task(self.league.id)  # must not raise/retry
