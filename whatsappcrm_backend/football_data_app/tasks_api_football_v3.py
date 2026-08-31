@@ -5,7 +5,7 @@ This module provides robust tasks for the new recommended API-Football v3 provid
 
 import logging
 from django.conf import settings
-from celery import chord, shared_task, chain, group
+from celery import shared_task, group
 from django.db import transaction, models
 from django.utils import timezone
 from datetime import timedelta, datetime, timezone as dt_timezone
@@ -542,7 +542,8 @@ def run_api_football_v3_full_update_task():
     try:
         pipeline = (
             fetch_and_update_leagues_v3_task.s() |
-            _prepare_and_launch_event_odds_chord_v3.s()
+            fetch_events_global_v3_task.s() |
+            dispatch_odds_fetching_after_events_v3_task.s()
         )
         result = pipeline.apply_async()
         logger.info(f"Pipeline scheduled successfully with ID: {result.id if hasattr(result, 'id') else 'N/A'}")
@@ -630,261 +631,203 @@ def fetch_and_update_leagues_v3_task(self, _=None):
         raise self.retry(exc=e)
 
 
-@shared_task(name="football_data_app._prepare_and_launch_event_odds_chord_v3", queue='football_io')
-def _prepare_and_launch_event_odds_chord_v3(league_ids: List[int]):
+@shared_task(bind=True, max_retries=3, default_retry_delay=300, queue='football_io')
+def fetch_events_global_v3_task(self, _=None):
     """
-    Intermediate task: Receives league_ids and launches event fetching chord.
+    Step 2: Fetches upcoming fixtures for every tracked league in ONE global
+    request instead of one request per league.
+
+    GET /fixtures accepts a date range with no `league` filter and returns
+    fixtures across every league in that window -- the same "global, not
+    per-league" shape as get_live_fixtures(). The previous implementation
+    called client.get_fixtures(league_id=...) once per active League row via
+    a chord (one Celery task per league); with 1000+ tracked leagues that is
+    1000+ API requests every ~30 minutes just for this one pipeline step,
+    which can exhaust a plan's request quota well before every league is
+    even reached -- starving live scores and odds for the rest of the
+    window, and leaving most leagues' fixtures stale. Fetching the window
+    once and fanning the response out to leagues locally keeps full
+    coverage of every tracked league at a small, constant request cost.
     """
     logger.info("="*80)
-    logger.info("TASK START: _prepare_and_launch_event_odds_chord_v3")
-    logger.info("="*80)
-    
-    if not league_ids:
-        logger.warning("="*80)
-        logger.warning("No league IDs received from previous task. Skipping event/odds processing.")
-        logger.warning("")
-        logger.warning("This usually means:")
-        logger.warning("1. No leagues exist in the database yet, OR")
-        logger.warning("2. The league fetch from API-Football v3 returned no results")
-        logger.warning("")
-        logger.warning("FIRST-TIME SETUP: If this is your first run, ensure you have:")
-        logger.warning("1. A valid API-Football v3 API key configured")
-        logger.warning(f"2. Run: {LEAGUE_SETUP_COMMAND}")
-        logger.warning("")
-        logger.warning("The fetch_and_update_leagues_v3_task should have populated leagues automatically.")
-        logger.warning("Check the logs above for any API errors or authentication issues.")
-        logger.warning("="*80)
-        logger.info("TASK END: _prepare_and_launch_event_odds_chord_v3 - No leagues to process")
-        return
-    
-    logger.info(f"Received {len(league_ids)} league IDs from previous task: {league_ids}")
-    logger.info(f"Preparing to fetch events for {len(league_ids)} leagues...")
-    
-    try:
-        event_fetch_tasks_group = group([
-            fetch_events_for_league_v3_task.s(league_id) for league_id in league_ids
-        ])
-        
-        odds_dispatch_callback = dispatch_odds_fetching_after_events_v3_task.s()
-        
-        logger.info(f"Creating chord with {len(league_ids)} event fetch tasks...")
-        task_chord = chord(event_fetch_tasks_group)(odds_dispatch_callback)
-        result = task_chord.apply_async()
-        
-        logger.info(f"Chord dispatched successfully. Chord ID: {result.id if hasattr(result, 'id') else 'N/A'}")
-        logger.info(f"Event fetch tasks will execute in parallel for {len(league_ids)} leagues")
-        logger.info("After all event fetches complete, odds dispatch task will be triggered")
-        logger.info("="*80)
-        logger.info("TASK END: _prepare_and_launch_event_odds_chord_v3 - SUCCESS")
-        logger.info("="*80)
-    except Exception as e:
-        logger.error(f"TASK ERROR: Failed to create or dispatch chord: {e}", exc_info=True)
-        raise
-
-
-@shared_task(bind=True, max_retries=2, default_retry_delay=600, queue='football_io')
-def fetch_events_for_league_v3_task(self, league_id: int):
-    """Fetches and updates events (fixtures) for a single league from API-Football v3."""
-    logger.info("="*80)
-    logger.info(f"TASK START: fetch_events_for_league_v3_task - League ID: {league_id}")
+    logger.info("TASK START: fetch_events_global_v3_task (Event Update Pipeline)")
     logger.info(f"Task ID: {self.request.id}, Retry: {self.request.retries}/{self.max_retries}")
     logger.info("="*80)
-    
-    events_processed_count = 0
-    
+
+    leagues_by_api_league_id = {}
+    for league in League.objects.filter(active=True, api_id__startswith='v3_'):
+        try:
+            leagues_by_api_league_id[int(league.api_id.replace('v3_', ''))] = league
+        except ValueError:
+            logger.warning(f"League {league.id} has malformed api_id '{league.api_id}', skipping")
+
+    league_count = len(leagues_by_api_league_id)
+    logger.info(f"Tracking {league_count} active API-Football v3 league(s)")
+
+    if not league_count:
+        logger.warning("="*80)
+        logger.warning("No active leagues found. Skipping event processing.")
+        logger.warning(f"The fetch_and_update_leagues_v3_task should have populated leagues automatically. Or run: {LEAGUE_SETUP_COMMAND}")
+        logger.warning("="*80)
+        logger.info("TASK END: fetch_events_global_v3_task - No leagues to process")
+        return [{"status": "no_leagues", "events_processed": 0}]
+
+    client = APIFootballV3Client()
+    from_date = datetime.now()
+    to_date = from_date + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)
+
     try:
-        logger.info(f"Fetching league from database (ID: {league_id})...")
-        league = League.objects.get(id=league_id)
-        logger.info(f"League found: {league.name} (API ID: {league.api_id})")
-        
-        # Extract the numeric ID from v3_ prefix
-        if not league.api_id.startswith('v3_'):
-            logger.warning(f"League {league_id} does not have v3_ prefix, skipping")
-            return {"league_id": league_id, "status": "skipped", "message": "Not a v3 league"}
-        
-        api_league_id = int(league.api_id.replace('v3_', ''))
-        
-        client = APIFootballV3Client()
-        
-        # Calculate date range for upcoming fixtures
-        from_date = datetime.now()
-        to_date = from_date + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)
-        
-        # Get current season from Configuration or settings
-        current_season = get_current_season()
-        
-        logger.info(f"Calling APIFootballV3Client.get_fixtures(league_id={api_league_id}, season={current_season}, date_from={from_date.date()}, date_to={to_date.date()})...")
+        logger.info(f"Calling APIFootballV3Client.get_fixtures(date_from={from_date.date()}, date_to={to_date.date()}) globally across all leagues...")
         fixtures_data = client.get_fixtures(
-            league_id=api_league_id,
-            season=current_season,
             date_from=from_date.strftime('%Y-%m-%d'),
-            date_to=to_date.strftime('%Y-%m-%d')
+            date_to=to_date.strftime('%Y-%m-%d'),
         )
-        
-        logger.info(f"API returned {len(fixtures_data) if fixtures_data else 0} fixtures for league {league.name}")
-        
-        fixture_ids_for_odds = []  # Track fixtures that need odds fetching
-        
-        if fixtures_data:
-            logger.info(f"Processing {len(fixtures_data)} fixtures for league {league.name}...")
-            with transaction.atomic():
-                for idx, fixture_item in enumerate(fixtures_data, 1):
-                    fixture_info = fixture_item.get('fixture', {})
-                    teams_info = fixture_item.get('teams', {})
-                    goals_info = fixture_item.get('goals', {})
-                    
-                    fixture_id = fixture_info.get('id')
-                    fixture_timestamp = fixture_info.get('date')
-                    fixture_status = fixture_info.get('status', {}).get('short', '')
-                    
-                    home_team_data = teams_info.get('home', {})
-                    away_team_data = teams_info.get('away', {})
-                    
-                    home_team_name = home_team_data.get('name')
-                    away_team_name = away_team_data.get('name')
-                    home_team_id = home_team_data.get('id')
-                    away_team_id = away_team_data.get('id')
-                    home_team_logo = home_team_data.get('logo')
-                    away_team_logo = away_team_data.get('logo')
-                    
-                    if not fixture_id or not home_team_name or not away_team_name:
-                        logger.warning(f"Skipping fixture {idx} - missing required data")
-                        continue
-                    
-                    # Create or get teams
-                    home_team, home_created = Team.objects.get_or_create(
-                        name=home_team_name,
-                        defaults={
-                            'api_team_id': f"v3_{home_team_id}" if home_team_id else None,
-                            'logo_url': home_team_logo
-                        }
-                    )
-                    if home_created:
-                        logger.debug(f"Created new team: {home_team_name}")
-                    
-                    away_team, away_created = Team.objects.get_or_create(
-                        name=away_team_name,
-                        defaults={
-                            'api_team_id': f"v3_{away_team_id}" if away_team_id else None,
-                            'logo_url': away_team_logo
-                        }
-                    )
-                    if away_created:
-                        logger.debug(f"Created new team: {away_team_name}")
-                    
-                    # Parse match datetime
-                    match_datetime = parse_api_football_v3_datetime(fixture_timestamp)
-                    
-                    # Determine fixture status
-                    status_map = {
-                        'NS': FootballFixture.FixtureStatus.SCHEDULED,  # Not Started
-                        'TBD': FootballFixture.FixtureStatus.SCHEDULED,  # Time To Be Defined
-                        'LIVE': FootballFixture.FixtureStatus.LIVE,
-                        '1H': FootballFixture.FixtureStatus.LIVE,  # First Half
-                        'HT': FootballFixture.FixtureStatus.LIVE,  # Halftime
-                        '2H': FootballFixture.FixtureStatus.LIVE,  # Second Half
-                        'ET': FootballFixture.FixtureStatus.LIVE,  # Extra Time
-                        'P': FootballFixture.FixtureStatus.LIVE,  # Penalty
-                        'FT': FootballFixture.FixtureStatus.FINISHED,  # Full Time
-                        'AET': FootballFixture.FixtureStatus.FINISHED,  # After Extra Time
-                        'PEN': FootballFixture.FixtureStatus.FINISHED,  # After Penalty
-                        'PST': FootballFixture.FixtureStatus.POSTPONED,
-                        'CANC': FootballFixture.FixtureStatus.CANCELLED,
-                        'ABD': FootballFixture.FixtureStatus.CANCELLED,  # Abandoned
-                    }
-                    status = status_map.get(fixture_status, FootballFixture.FixtureStatus.SCHEDULED)
-                    
-                    # Get scores if available
-                    home_score = goals_info.get('home')
-                    away_score = goals_info.get('away')
-                    
-                    # Clean up score values
-                    try:
-                        home_score = int(home_score) if home_score is not None and home_score != '' else None
-                    except (ValueError, TypeError):
-                        home_score = None
-                    
-                    try:
-                        away_score = int(away_score) if away_score is not None and away_score != '' else None
-                    except (ValueError, TypeError):
-                        away_score = None
-                    
-                    # Create or update fixture
-                    fixture_api_id = f"v3_{fixture_id}"
-                    fixture, fixture_created = FootballFixture.objects.update_or_create(
-                        api_id=fixture_api_id,
-                        defaults={
-                            'league': league,
-                            'home_team': home_team,
-                            'away_team': away_team,
-                            'match_date': match_datetime,
-                            'match_updated': timezone.now(),
-                            'status': status,
-                            'home_team_score': home_score,
-                            'away_team_score': away_score,
-                        }
-                    )
-                    events_processed_count += 1
-                    
-                    if fixture_created:
-                        logger.debug(f"Created fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id})")
-                    else:
-                        logger.debug(f"Updated fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id})")
-                    
-                    # Add fixture to odds fetching list if it's scheduled and upcoming
-                    if status == FootballFixture.FixtureStatus.SCHEDULED and match_datetime:
-                        fixture_ids_for_odds.append(fixture.id)
-            
-            logger.info(f"Successfully processed {events_processed_count} fixtures in database transaction")
-
-            # Odds are no longer fetched here per-fixture. They are fetched in
-            # bulk per league-day by dispatch_odds_fetching_after_events_v3_task
-            # (the chord callback), which runs once after all leagues' events are
-            # in and de-duplicates via last_odds_update staleness — far fewer API
-            # requests and no double-fetch race.
-            if fixture_ids_for_odds:
-                logger.info(f"{len(fixture_ids_for_odds)} scheduled fixture(s) will get bulk odds via the odds-dispatch callback.")
-
-        # Update league's last fetch timestamp
-        league.last_fetched_events = timezone.now()
-        league.save(update_fields=['last_fetched_events'])
-        logger.info(f"Updated league.last_fetched_events timestamp for {league.name}")
-        
-        logger.info("="*80)
-        logger.info(f"TASK END: fetch_events_for_league_v3_task - SUCCESS")
-        logger.info(f"League: {league.name}, Events Processed: {events_processed_count}")
-        logger.info("="*80)
-        return {"league_id": league_id, "status": "success", "events_processed": events_processed_count}
-        
-    except League.DoesNotExist:
-        logger.error(f"TASK ERROR: League with ID {league_id} does not exist in database")
-        logger.info("="*80)
-        logger.info(f"TASK END: fetch_events_for_league_v3_task - FAILED (League not found)")
-        logger.info("="*80)
-        return {"league_id": league_id, "status": "error", "message": "League not found"}
+        logger.info(f"API returned {len(fixtures_data) if fixtures_data else 0} fixture(s) globally")
     except APIFootballV3Exception as e:
-        logger.error(f"TASK ERROR: API-Football v3 API error for league {league_id}: {e}", exc_info=True)
-        if self.request.retries >= self.max_retries:
-            # This task runs inside a chord alongside every other league (see
-            # _prepare_and_launch_event_odds_chord_v3): letting the exception
-            # propagate here after retries are exhausted would mark this task
-            # FAILURE, which breaks the whole chord silently and means
-            # dispatch_odds_fetching_after_events_v3_task -- the only place
-            # odds ever get dispatched -- never runs for the entire cycle.
-            # Degrade to an error result instead so the chord can still complete.
-            logger.error(f"Max retries exceeded for league {league_id}; giving up without breaking the odds-dispatch chord.")
-            logger.info("="*80)
-            logger.info(f"TASK END: fetch_events_for_league_v3_task - FAILED (max retries exceeded)")
-            logger.info("="*80)
-            return {"league_id": league_id, "status": "error", "message": str(e)}
-        logger.error(f"Retry {self.request.retries + 1}/{self.max_retries} will be attempted in {self.default_retry_delay}s")
+        logger.error(f"TASK ERROR: API-Football v3 error during global event fetch: {e}", exc_info=True)
         raise self.retry(exc=e)
     except Exception as e:
-        logger.error(f"TASK ERROR: Unexpected error fetching events for league {league_id}: {e}", exc_info=True)
-        logger.info("="*80)
-        logger.info(f"TASK END: fetch_events_for_league_v3_task - FAILED")
-        logger.info("="*80)
-        return {"league_id": league_id, "status": "error", "message": str(e)}
+        logger.error(f"TASK ERROR: Unexpected error during global event fetch: {e}", exc_info=True)
+        raise self.retry(exc=e)
+
+    status_map = {
+        'NS': FootballFixture.FixtureStatus.SCHEDULED,  # Not Started
+        'TBD': FootballFixture.FixtureStatus.SCHEDULED,  # Time To Be Defined
+        'LIVE': FootballFixture.FixtureStatus.LIVE,
+        '1H': FootballFixture.FixtureStatus.LIVE,  # First Half
+        'HT': FootballFixture.FixtureStatus.LIVE,  # Halftime
+        '2H': FootballFixture.FixtureStatus.LIVE,  # Second Half
+        'ET': FootballFixture.FixtureStatus.LIVE,  # Extra Time
+        'P': FootballFixture.FixtureStatus.LIVE,  # Penalty
+        'FT': FootballFixture.FixtureStatus.FINISHED,  # Full Time
+        'AET': FootballFixture.FixtureStatus.FINISHED,  # After Extra Time
+        'PEN': FootballFixture.FixtureStatus.FINISHED,  # After Penalty
+        'PST': FootballFixture.FixtureStatus.POSTPONED,
+        'CANC': FootballFixture.FixtureStatus.CANCELLED,
+        'ABD': FootballFixture.FixtureStatus.CANCELLED,  # Abandoned
+    }
+
+    events_processed_count = 0
+    leagues_seen = set()
+
+    if fixtures_data:
+        logger.info(f"Processing {len(fixtures_data)} fixtures across all tracked leagues...")
+        with transaction.atomic():
+            for idx, fixture_item in enumerate(fixtures_data, 1):
+                fixture_info = fixture_item.get('fixture', {})
+                league_info = fixture_item.get('league', {})
+                teams_info = fixture_item.get('teams', {})
+                goals_info = fixture_item.get('goals', {})
+
+                api_league_id = league_info.get('id')
+                league = leagues_by_api_league_id.get(api_league_id)
+                if league is None:
+                    # A league we're not tracking (or haven't synced via
+                    # fetch_and_update_leagues_v3_task yet) -- skip it, we
+                    # only store fixtures for leagues that already exist.
+                    continue
+
+                fixture_id = fixture_info.get('id')
+                fixture_timestamp = fixture_info.get('date')
+                fixture_status = fixture_info.get('status', {}).get('short', '')
+
+                home_team_data = teams_info.get('home', {})
+                away_team_data = teams_info.get('away', {})
+
+                home_team_name = home_team_data.get('name')
+                away_team_name = away_team_data.get('name')
+                home_team_id = home_team_data.get('id')
+                away_team_id = away_team_data.get('id')
+                home_team_logo = home_team_data.get('logo')
+                away_team_logo = away_team_data.get('logo')
+
+                if not fixture_id or not home_team_name or not away_team_name:
+                    logger.warning(f"Skipping fixture {idx} - missing required data")
+                    continue
+
+                # Create or get teams
+                home_team, home_created = Team.objects.get_or_create(
+                    name=home_team_name,
+                    defaults={
+                        'api_team_id': f"v3_{home_team_id}" if home_team_id else None,
+                        'logo_url': home_team_logo
+                    }
+                )
+                if home_created:
+                    logger.debug(f"Created new team: {home_team_name}")
+
+                away_team, away_created = Team.objects.get_or_create(
+                    name=away_team_name,
+                    defaults={
+                        'api_team_id': f"v3_{away_team_id}" if away_team_id else None,
+                        'logo_url': away_team_logo
+                    }
+                )
+                if away_created:
+                    logger.debug(f"Created new team: {away_team_name}")
+
+                # Parse match datetime
+                match_datetime = parse_api_football_v3_datetime(fixture_timestamp)
+
+                status = status_map.get(fixture_status, FootballFixture.FixtureStatus.SCHEDULED)
+
+                # Get scores if available
+                home_score = goals_info.get('home')
+                away_score = goals_info.get('away')
+
+                try:
+                    home_score = int(home_score) if home_score is not None and home_score != '' else None
+                except (ValueError, TypeError):
+                    home_score = None
+
+                try:
+                    away_score = int(away_score) if away_score is not None and away_score != '' else None
+                except (ValueError, TypeError):
+                    away_score = None
+
+                # Create or update fixture
+                fixture_api_id = f"v3_{fixture_id}"
+                fixture, fixture_created = FootballFixture.objects.update_or_create(
+                    api_id=fixture_api_id,
+                    defaults={
+                        'league': league,
+                        'home_team': home_team,
+                        'away_team': away_team,
+                        'match_date': match_datetime,
+                        'match_updated': timezone.now(),
+                        'status': status,
+                        'home_team_score': home_score,
+                        'away_team_score': away_score,
+                    }
+                )
+                events_processed_count += 1
+                leagues_seen.add(league.id)
+
+                if fixture_created:
+                    logger.debug(f"Created fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id}, League: {league.name})")
+                else:
+                    logger.debug(f"Updated fixture: {home_team_name} vs {away_team_name} (Fixture ID: {fixture_id}, League: {league.name})")
+
+        logger.info(f"Successfully processed {events_processed_count} fixtures across {len(leagues_seen)} league(s) in database transaction")
+
+    # Odds are not fetched here. They are fetched in bulk per league-day by
+    # dispatch_odds_fetching_after_events_v3_task, which de-duplicates via
+    # last_odds_update staleness -- far fewer API requests and no double-fetch
+    # race. It also runs on its own periodic schedule, so it still catches
+    # up even if this task fails.
+
+    # Mark every tracked league as checked this cycle, whether or not it had
+    # any fixtures in the window (zero upcoming matches right now still
+    # means "checked", not "never fetched").
+    tracked_league_ids = [league.id for league in leagues_by_api_league_id.values()]
+    updated = League.objects.filter(id__in=tracked_league_ids).update(last_fetched_events=timezone.now())
+    logger.info(f"Updated last_fetched_events for {updated} league(s)")
+
+    logger.info("="*80)
+    logger.info("TASK END: fetch_events_global_v3_task - SUCCESS")
+    logger.info(f"Leagues tracked: {league_count}, Fixtures processed: {events_processed_count}")
+    logger.info("="*80)
+    return [{"status": "success", "events_processed": events_processed_count, "leagues_with_fixtures": len(leagues_seen)}]
 
 
 @shared_task(bind=True, name="football_data_app.dispatch_odds_fetching_after_events_v3", queue='football_io')

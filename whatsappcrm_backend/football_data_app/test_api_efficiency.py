@@ -104,54 +104,76 @@ class BulkOddsTaskTests(TestCase):
         self.assertTrue(self.fixture.markets.filter(category__name='Match Winner').exists())
 
 
-class EventFetchChordSafetyTests(TestCase):
+class GlobalEventFetchTests(TestCase):
     """
-    fetch_events_for_league_v3_task runs inside a chord (one task per league,
-    all leagues) whose callback is the only place odds ever get dispatched.
-    A task that ends in Celery FAILURE state (not just a retry) breaks the
-    whole chord silently, so once retries are exhausted the task must return
-    an error result instead of letting the exception propagate.
+    fetch_events_global_v3_task replaced the old per-league chord (one API
+    request per league, every cycle) with a single global date-range
+    request whose response is fanned out to leagues locally -- see the
+    task's docstring for why the chord was a quota-burning bottleneck at
+    scale (1000+ tracked leagues).
     """
 
     def setUp(self):
-        self.league = League.objects.create(name='EPL', api_id='v3_39', sport_key='soccer')
+        self.league = League.objects.create(name='EPL', api_id='v3_39', sport_key='soccer', active=True)
+        self.other_league = League.objects.create(name='La Liga', api_id='v3_140', sport_key='soccer', active=True)
 
-    def test_returns_error_dict_after_max_retries_instead_of_raising(self):
+    def _fixture_item(self, league_id, fixture_id, home='Home FC', away='Away FC'):
+        return {
+            'fixture': {'id': fixture_id, 'date': '2024-08-01T15:00:00+00:00', 'status': {'short': 'NS'}},
+            'league': {'id': league_id},
+            'teams': {'home': {'id': 1, 'name': home}, 'away': {'id': 2, 'name': away}},
+            'goals': {'home': None, 'away': None},
+        }
+
+    def test_single_global_request_covers_every_tracked_league(self):
+        from . import tasks_api_football_v3 as T
+
+        fake_client = mock.Mock()
+        fake_client.get_fixtures.return_value = [
+            self._fixture_item(39, 5001, 'Arsenal', 'Chelsea'),
+            self._fixture_item(140, 5002, 'Barcelona', 'Real Madrid'),
+        ]
+        with mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
+            result = T.fetch_events_global_v3_task.run()
+
+        # Exactly one API call total, regardless of how many leagues are tracked.
+        fake_client.get_fixtures.assert_called_once()
+        _, kwargs = fake_client.get_fixtures.call_args
+        self.assertNotIn('league_id', kwargs)
+
+        self.assertEqual(result[0]['status'], 'success')
+        self.assertEqual(result[0]['events_processed'], 2)
+        self.assertTrue(FootballFixture.objects.filter(api_id='v3_5001', league=self.league).exists())
+        self.assertTrue(FootballFixture.objects.filter(api_id='v3_5002', league=self.other_league).exists())
+
+        self.league.refresh_from_db()
+        self.other_league.refresh_from_db()
+        self.assertIsNotNone(self.league.last_fetched_events)
+        self.assertIsNotNone(self.other_league.last_fetched_events)
+
+    def test_fixtures_for_untracked_leagues_are_skipped(self):
+        from . import tasks_api_football_v3 as T
+
+        fake_client = mock.Mock()
+        fake_client.get_fixtures.return_value = [self._fixture_item(9999, 5003)]
+        with mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
+            result = T.fetch_events_global_v3_task.run()
+
+        self.assertEqual(result[0]['events_processed'], 0)
+        self.assertFalse(FootballFixture.objects.filter(api_id='v3_5003').exists())
+
+    def test_retries_on_api_error(self):
         from . import tasks_api_football_v3 as T
         from .api_football_v3_client import APIFootballV3Exception
 
         fake_client = mock.Mock()
         fake_client.get_fixtures.side_effect = APIFootballV3Exception("boom")
-        with mock.patch.object(T, 'get_current_season', return_value=2024), \
-             mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
-            task = T.fetch_events_for_league_v3_task
-            # Simulate the final attempt: retries already exhausted.
-            task.push_request(retries=task.max_retries)
-            try:
-                result = task.run(self.league.id)
-            finally:
-                task.pop_request()
-
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['league_id'], self.league.id)
-
-    def test_retries_while_attempts_remain(self):
-        from . import tasks_api_football_v3 as T
-        from .api_football_v3_client import APIFootballV3Exception
-
-        fake_client = mock.Mock()
-        fake_client.get_fixtures.side_effect = APIFootballV3Exception("boom")
-        with mock.patch.object(T, 'get_current_season', return_value=2024), \
-             mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
-            task = T.fetch_events_for_league_v3_task
+        with mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
+            task = T.fetch_events_global_v3_task
             task.push_request(retries=0)
             try:
-                # self.retry(exc=e) re-raises the original exception (chained
-                # through celery's Retry) rather than returning -- confirming
-                # the task still retries normally while attempts remain, and
-                # only degrades to an error dict once retries are exhausted.
                 with self.assertRaises(APIFootballV3Exception):
-                    task.run(self.league.id)
+                    task.run()
             finally:
                 task.pop_request()
 
