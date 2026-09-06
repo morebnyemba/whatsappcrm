@@ -673,7 +673,15 @@ def fetch_events_global_v3_task(self, _=None):
         return [{"status": "no_leagues", "events_processed": 0}]
 
     client = APIFootballV3Client()
-    from_date = datetime.now()
+    # timezone.now() (UTC, aware) rather than the stdlib datetime.now() (naive,
+    # server-local): client.get_fixtures() sends no explicit `timezone` param
+    # here, so API-Football v3 interprets date_from/date_to as UTC dates
+    # (see APIFootballV3Client.get_fixtures's timezone="UTC" default). Deriving
+    # the window from server-local time instead would shift it by the server's
+    # UTC offset (this deployment runs TIME_ZONE='Africa/Harare', UTC+2), so a
+    # fixture kicking off in the last couple of hours of a UTC day could fall
+    # outside the requested window and never get ingested.
+    from_date = timezone.now()
     to_date = from_date + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)
 
     try:
@@ -709,6 +717,8 @@ def fetch_events_global_v3_task(self, _=None):
 
     events_processed_count = 0
     leagues_seen = set()
+    untracked_league_ids = set()
+    untracked_fixtures_count = 0
 
     if fixtures_data:
         logger.info(f"Processing {len(fixtures_data)} fixtures across all tracked leagues...")
@@ -723,8 +733,14 @@ def fetch_events_global_v3_task(self, _=None):
                 league = leagues_by_api_league_id.get(api_league_id)
                 if league is None:
                     # A league we're not tracking (or haven't synced via
-                    # fetch_and_update_leagues_v3_task yet) -- skip it, we
-                    # only store fixtures for leagues that already exist.
+                    # fetch_and_update_leagues_v3_task yet, or it's marked
+                    # inactive) -- skip it, we only store fixtures for
+                    # leagues that already exist. Counted (not logged per
+                    # fixture, to avoid flooding logs on a busy window) so
+                    # a sustained gap in league coverage is diagnosable
+                    # instead of silently dropping matches with no trace.
+                    untracked_league_ids.add(api_league_id)
+                    untracked_fixtures_count += 1
                     continue
 
                 fixture_id = fixture_info.get('id')
@@ -810,6 +826,15 @@ def fetch_events_global_v3_task(self, _=None):
 
         logger.info(f"Successfully processed {events_processed_count} fixtures across {len(leagues_seen)} league(s) in database transaction")
 
+        if untracked_fixtures_count:
+            logger.warning(
+                f"Skipped {untracked_fixtures_count} fixture(s) from {len(untracked_league_ids)} "
+                f"untracked/inactive league(s) this cycle (API league IDs: "
+                f"{sorted(untracked_league_ids)[:20]}{'…' if len(untracked_league_ids) > 20 else ''}). "
+                f"These matches will not appear anywhere downstream until their league is added via "
+                f"{LEAGUE_SETUP_COMMAND} or re-activated in admin."
+            )
+
     # Odds are not fetched here. They are fetched in bulk per league-day by
     # dispatch_odds_fetching_after_events_v3_task, which de-duplicates via
     # last_odds_update staleness -- far fewer API requests and no double-fetch
@@ -892,6 +917,34 @@ def dispatch_odds_fetching_after_events_v3_task(self, results_from_event_fetches
 
     fixture_count = len(fixtures_needing_odds)
     logger.info(f"Fixtures needing odds update: {fixture_count} across {len(league_day_pairs)} league-day group(s)")
+
+    # Diagnostic only (no filtering decision depends on this): among every
+    # upcoming SCHEDULED v3 fixture in the lead-time window, how many still
+    # have zero active markets right now. betting_ux._bettable_fixtures_qs()
+    # requires markets__is_active=True even for otherwise-eligible SCHEDULED
+    # fixtures, so every fixture counted here is currently invisible on
+    # WhatsApp and the dashboard despite being a validly stored, upcoming
+    # match -- either because its odds fetch hasn't run yet (last_odds_update
+    # is recent/null and it'll likely appear next cycle) or because the
+    # provider has never returned odds for it at all (a fixture this pipeline
+    # will keep retrying every staleness window, forever, if the league/match
+    # simply has no bookmaker coverage). Logged here, not filtered on, so
+    # this never changes which fixtures get queued for an odds fetch above.
+    oddsless_count = FootballFixture.objects.filter(
+        status=FootballFixture.FixtureStatus.SCHEDULED,
+        match_date__range=(now, now + timedelta(days=API_FOOTBALL_V3_LEAD_TIME_DAYS)),
+        api_id__startswith='v3_',
+    ).annotate(active_market_count=models.Count('markets', filter=models.Q(markets__is_active=True))
+    ).filter(active_market_count=0).count()
+    if oddsless_count:
+        logger.warning(
+            f"{oddsless_count} upcoming SCHEDULED fixture(s) in the next "
+            f"{API_FOOTBALL_V3_LEAD_TIME_DAYS} day(s) currently have zero active markets, and are "
+            f"therefore NOT appearing in WhatsApp or the dashboard (both require an active market "
+            f"for a SCHEDULED fixture to be considered bettable). This is expected transiently right "
+            f"after a fixture is first discovered; persistently high counts indicate the provider "
+            f"has no odds coverage for those fixtures/leagues."
+        )
 
     if not league_day_pairs:
         logger.info("No fixtures require an odds update at this time.")
