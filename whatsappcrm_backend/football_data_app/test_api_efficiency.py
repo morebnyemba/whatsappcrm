@@ -177,6 +177,61 @@ class GlobalEventFetchTests(TestCase):
             finally:
                 task.pop_request()
 
+    def test_untracked_league_fixtures_are_counted_and_logged(self):
+        """
+        A fixture whose league isn't tracked (or isn't active) is correctly
+        dropped, but that used to happen with zero observability -- nothing
+        distinguished "provider sent nothing this cycle" from "provider sent
+        fixtures for a league we silently ignore". Regression: the drop must
+        now surface as a WARNING naming the count and the untracked league id,
+        so a persistent coverage gap is diagnosable instead of invisible.
+        """
+        from . import tasks_api_football_v3 as T
+
+        fake_client = mock.Mock()
+        fake_client.get_fixtures.return_value = [
+            self._fixture_item(39, 5001, 'Arsenal', 'Chelsea'),  # tracked
+            self._fixture_item(9999, 5003, 'Unknown FC', 'Other FC'),  # untracked
+        ]
+        with mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client):
+            with self.assertLogs('football_data_app.tasks_api_football_v3', level='WARNING') as logs:
+                result = T.fetch_events_global_v3_task.run()
+
+        self.assertEqual(result[0]['events_processed'], 1)
+        self.assertTrue(FootballFixture.objects.filter(api_id='v3_5001').exists())
+        self.assertFalse(FootballFixture.objects.filter(api_id='v3_5003').exists())
+        self.assertTrue(any('untracked/inactive league' in msg for msg in logs.output))
+        self.assertTrue(any('Skipped 1 fixture(s)' in msg for msg in logs.output))
+
+    def test_uses_timezone_aware_utc_now_not_naive_local_now(self):
+        """
+        Regression for a bug where the fetch window was computed with the
+        stdlib's naive datetime.now() (server-local time) instead of Django's
+        timezone.now() (UTC, aware) -- client.get_fixtures() here sends no
+        explicit `timezone` param, so API-Football v3 interprets date_from/
+        date_to as UTC dates (see the client's timezone="UTC" default). On a
+        server whose local time isn't UTC (this deployment runs
+        TIME_ZONE='Africa/Harare', UTC+2), the naive local "now" silently
+        shifted the requested window away from the true UTC day boundary.
+        """
+        from . import tasks_api_football_v3 as T
+        from datetime import timezone as dt_timezone, datetime as real_datetime
+
+        # A fixed instant where Africa/Harare's local date is a day ahead of
+        # the UTC date -- if the window were built from naive local time,
+        # date_from would be computed for the wrong (later) UTC day.
+        fixed_now = real_datetime(2024, 8, 1, 23, 30, tzinfo=dt_timezone.utc)
+
+        fake_client = mock.Mock()
+        fake_client.get_fixtures.return_value = []
+        with mock.patch.object(T, 'APIFootballV3Client', return_value=fake_client), \
+             mock.patch.object(T.timezone, 'now', return_value=fixed_now):
+            T.fetch_events_global_v3_task.run()
+
+        _, kwargs = fake_client.get_fixtures.call_args
+        self.assertEqual(kwargs['date_from'], '2024-08-01')
+        self.assertEqual(kwargs['date_to'], '2024-08-08')
+
 
 class StandaloneOddsDispatchTests(TestCase):
     """
@@ -204,6 +259,26 @@ class StandaloneOddsDispatchTests(TestCase):
         fake_group.assert_called_once()
         dispatched_tasks = fake_group.call_args[0][0]
         self.assertEqual(len(dispatched_tasks), 1)  # one league-day pair: our fixture
+
+    def test_logs_diagnostic_count_of_fixtures_hidden_for_lack_of_markets(self):
+        """
+        betting_ux._bettable_fixtures_qs() hides any SCHEDULED fixture with
+        zero active markets, regardless of why (odds fetch merely pending, or
+        the provider never has odds for it). That's a real, silent match-loss
+        path from the user's perspective ("the match is in the database but
+        never shows up in WhatsApp"), so this dispatch cycle -- which already
+        walks the same upcoming-fixture window -- must surface the count
+        rather than leaving it undiagnosable. This fixture (SCHEDULED, in
+        window, no markets at all) must be counted and logged.
+        """
+        from . import tasks_api_football_v3 as T
+        with mock.patch.object(T, 'group') as fake_group:
+            fake_group.return_value.apply_async = mock.Mock()
+            with self.assertLogs('football_data_app.tasks_api_football_v3', level='WARNING') as logs:
+                T.dispatch_odds_fetching_after_events_v3_task.run()
+
+        self.assertTrue(any('zero active markets' in msg for msg in logs.output))
+        self.assertTrue(any('1 upcoming SCHEDULED fixture(s)' in msg for msg in logs.output))
 
 
 class ApiFootballBulkOddsTests(TestCase):

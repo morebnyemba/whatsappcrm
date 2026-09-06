@@ -36,9 +36,19 @@ staticfiles/
 backups/
 *.sql
 
-# Django migrations (user will create their own)
-# Excludes Django migration files following the standard 4-digit naming convention (e.g., 0001_initial.py)
-**/migrations/[0-9][0-9][0-9][0-9]_*.py
+# Django migration files themselves are NOT ignored: they're schema history and
+# must be version-controlled identically to every other environment (dev, CI,
+# staging, prod) that runs `manage.py migrate` against this codebase. The
+# previous rule here silently excluded every migration matching Django's
+# standard 000N_*.py naming from git entirely -- `git add -A`/`git add .`
+# after `makemigrations` would report the new file as added but it was
+# actually dropped, since gitignore doesn't affect already-tracked files but
+# silently blocks newly created ones. That let six apps' models (including
+# football_data_app's FootballFixture/Market/Configuration) drift for months
+# from what's actually committed, with no error until a fresh checkout (a new
+# environment, CI, or a clean redeploy) ran `migrate` against models.py and
+# hit missing-column errors for fields the working tree's models.py had had
+# all along.
 **/migrations/__pycache__/
 
 # Environment
